@@ -20,7 +20,7 @@ try:
     PASSWORD = os.getenv('RAILWAY_PASSWORD') # OKX specific
     TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
     TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
+    
     if not all([API_KEY, SECRET_KEY, PASSWORD, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]):
         raise ValueError("One or more environment variables are missing.")
 
@@ -194,7 +194,7 @@ def get_current_position() -> dict | None:
                         entry_price = float(position['info']['avgPx'])
                         pos_side = 'long' if pos_amount > 0 else 'short'
                         pos_size = pos_amount # ขนาดในหน่วย BTC (contract size)
-
+                        
                         logger.info(f"📊 ตรวจพบโพซิชันปัจจุบัน: {pos_side.upper()} Size: {pos_size:.6f} BTC, Entry: {entry_price:.2f}")
                         return {
                             'symbol': SYMBOL,
@@ -255,11 +255,11 @@ def calculate_ema(prices, period):
     ema = []
     if not prices:
         return ema
-
+    
     # Calculate SMA for the first period
     if len(prices) < period:
         return ema # ไม่สามารถคำนวณได้ถ้าข้อมูลไม่พอ
-
+    
     sma = sum(prices[:period]) / period
     ema.append(sma)
 
@@ -279,7 +279,7 @@ def check_ema_cross() -> str | None:
         return None
 
     closes = [float(candle[4]) for candle in ohlcv]
-
+    
     ema_short = calculate_ema(closes, EMA_SHORT_PERIOD)
     ema_long = calculate_ema(closes, EMA_LONG_PERIOD)
 
@@ -301,12 +301,12 @@ def check_ema_cross() -> str | None:
     if prev_ema_short <= prev_ema_long and current_ema_short > current_ema_long:
         logger.info(f"🌟 ตรวจพบสัญญาณ EMA Cross: LONG (Golden Cross: EMA50({current_ema_short:.2f}) > EMA200({current_ema_long:.2f}))")
         return "long"
-
+    
     # Death Cross (สัญญาณขาย)
     if prev_ema_short >= prev_ema_long and current_ema_short < current_ema_long:
         logger.info(f"🔻 ตรวจพบสัญญาณ EMA Cross: SHORT (Death Cross: EMA50({current_ema_short:.2f}) < EMA200({current_ema_long:.2f}))")
         return "short"
-
+    
     logger.info("💤 ไม่พบสัญญาณ EMA Cross.")
     return None
 
@@ -315,34 +315,34 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
     เปิด Market Order สำหรับ Long หรือ Short.
     """
     global current_position_size
-
+    
     try:
         balance = get_portfolio_balance()
         if balance <= 0:
             send_telegram("⛔️ Error: ไม่สามารถดึงยอดคงเหลือได้ หรือยอดคงเหลือเป็นศูนย์.")
             return False, None
-
+        
         # เงินที่จะใช้เป็น Margin (80% ของยอดคงเหลือ)
         use_balance = balance * PORTFOLIO_PERCENT_TRADE 
-
+        
         if use_balance <= 0:
             send_telegram("⛔️ Error: ยอดเงินสำหรับเปิดออเดอร์ไม่เพียงพอ (ใช้ 0% ของพอร์ต).")
             return False, None
-
+        
         # ตั้งค่า Leverage (แม้จะตั้งตอนเริ่มต้นแล้ว แต่ก็ใส่ซ้ำได้เพื่อความชัวร์)
         exchange.set_leverage(LEVERAGE, SYMBOL) 
         time.sleep(exchange.rateLimit / 1000) 
         logger.info(f"📈 ตั้งค่า Leverage เป็น {LEVERAGE}x สำหรับ {SYMBOL}.")
 
         market = exchange.market(SYMBOL)
-
+        
         # คำนวณขนาดออเดอร์เป็น BTC (Contract Size)
         # target_contract_value_usdt คือมูลค่าสัญญาที่เราต้องการเทรด (รวม leverage)
         target_contract_value_usdt = use_balance * LEVERAGE 
-
+        
         # แปลงมูลค่าสัญญาเป็นจำนวน BTC (Contract Amount)
         order_amount_btc = target_contract_value_usdt / current_price
-
+        
         # ปรับให้เป็น precision ที่ Exchange ต้องการ
         # ใช้ market['precision']['amount'] สำหรับปริมาณ (BTC)
         order_amount_btc = float(exchange.amount_to_precision(SYMBOL, order_amount_btc))
@@ -357,20 +357,20 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         elif order_amount_btc > max_amount:
             logger.warning(f"⚠️ ขนาดออเดอร์ที่คำนวณได้ ({order_amount_btc:.6f} BTC) สูงกว่าขั้นสูง ({max_amount:.6f} BTC). ปรับขนาดเป็นขั้นสูง.")
             order_amount_btc = max_amount
-
+        
         if order_amount_btc <= 0:
             send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ precision/ขั้นต่ำ.")
             return False, None
-
+        
         side = 'buy' if direction == 'long' else 'sell'
-
+        
         # พารามิเตอร์เพิ่มเติมสำหรับ OKX
         params = {
             'tdMode': 'cross', # ใช้ Cross Margin
             'ordType': 'market',
             'posSide': 'long' if direction == 'long' else 'short' # ระบุ side ของโพซิชัน (สำคัญสำหรับ OKX)
         }
-
+        
         order = None
         for i in range(3): # ลองเปิดออเดอร์ 3 ครั้ง
             try:
@@ -391,7 +391,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 logger.error(f"❌ Unexpected error creating market order: {type(e).__name__}: {e}")
                 send_telegram(f"⛔️ Unexpected Error: ไม่สามารถสร้างออเดอร์ตลาดได้\nรายละเอียด: {type(e).__name__}: {e}")
                 return False, None
-
+        
         if not order: # ถ้าเปิดออเดอร์ไม่สำเร็จก็ออกจากฟังก์ชันเลย
             logger.error("❌ Failed to create market order after 3 attempts.")
             send_telegram("⛔️ Error: ล้มเหลวในการสร้างออเดอร์ตลาดหลังจาก 3 ครั้ง.")
@@ -409,7 +409,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 current_position_size = confirmed_pos_info['size']
                 return True, confirmed_pos_info['entry_price']
             logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/20)...")
-
+            
         logger.error("❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order.")
         send_telegram("⛔️ Error: ไม่สามารถยืนยันโพซิชันหลังเปิดออเดอร์ได้.")
         return False, None
@@ -432,7 +432,7 @@ def set_tpsl_for_position(direction: str, entry_price: float, position_size: flo
         else: # short
             tp_price = entry_price - TP_POINTS
             sl_price = entry_price + SL_POINTS
-
+        
         # ปรับราคา TP/SL ให้ตรงตาม precision ของ Exchange
         market = exchange.market(SYMBOL)
         tp_price = float(exchange.price_to_precision(SYMBOL, tp_price))
@@ -453,7 +453,7 @@ def set_tpsl_for_position(direction: str, entry_price: float, position_size: flo
 
         response = exchange.privatePostSet_tpsl_order(params)
         time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
-
+        
         if response and response['code'] == '0':
             logger.info(f"✅ ตั้งค่า TP: {tp_price:.2f} และ SL: {sl_price:.2f} สำเร็จ.")
             send_telegram(f"✅ ตั้งค่า TP/SL สำเร็จ!\n"
@@ -486,7 +486,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
     try:
         # ตรวจสอบว่าราคาวิ่งไปในทิศทางที่ต้องการพอสมควรแล้วหรือไม่ (เช่น 0.5% ของ Entry Price เพื่อให้คุ้มค่าธรรมเนียม)
         breakeven_threshold_points = 100 # เช่น 100 จุดจากราคาเข้า
-
+        
         if direction == 'long':
             if current_price < entry_price + breakeven_threshold_points:
                 logger.info(f"ℹ️ ราคาปัจจุบัน {current_price:.2f} ยังไม่ถึงจุดเบรคอีเวนสำหรับ Long (เป้าหมาย > {entry_price + breakeven_threshold_points:.2f}).")
@@ -499,7 +499,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
                 return False
             sl_to_set = entry_price # ตั้ง SL ที่ราคา Entry
             tp_to_set = entry_price - TP_POINTS # TP ยังคงเดิม
-
+        
         # ปรับราคา SL/TP ให้ตรงตาม precision ของ Exchange
         market = exchange.market(SYMBOL)
         sl_to_set = float(exchange.price_to_precision(SYMBOL, sl_to_set))
@@ -519,7 +519,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
 
         response = exchange.privatePostSet_tpsl_order(params)
         time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
-
+        
         if response and response['code'] == '0':
             logger.info(f"✅ เลื่อน Stop Loss ไปที่ Break-even: {sl_to_set:.2f} สำเร็จ.")
             send_telegram(f"✅ เลื่อน SL เป็นกันทุนสำหรับ <b>{direction.upper()}</b> สำเร็จ!\n"
@@ -552,11 +552,11 @@ def check_and_send_daily_report():
     # ตรวจสอบว่าถึงเวลาส่งรายงานประจำวันแล้วหรือไม่ และยังไม่ได้ส่งสำหรับวันนี้
     if now.hour == DAILY_REPORT_TIME.hour and now.minute >= DAILY_REPORT_TIME.minute and \
        (last_daily_report_date is None or last_daily_report_date < today_date):
-
+        
         logger.info("✅ ตรวจพบว่าถึงเวลาส่งรายงานประจำวันแล้ว และยังไม่ได้ส่งสำหรับวันนี้. กำลังส่งรายงาน...")
 
         report_date_str = today_date.strftime('%Y-%m-%d')
-
+        
         # รีเซ็ตสถิติประจำวันสำหรับวันนี้ ถ้าเป็นวันใหม่
         if last_daily_report_date is None or last_daily_report_date < today_date:
             logger.info(f"🔄 รีเซ็ตสถิติประจำวันสำหรับวันนี้ {report_date_str}.")
@@ -575,9 +575,9 @@ def check_and_send_daily_report():
             f"📈 PnL วันนี้ (ประมาณ): <b>{daily_stats.get(report_date_str, {}).get('pnl_usdt', 0.0):.2f} USDT</b>"
         )
         send_telegram(report_message)
-
+        
         logger.info("✅ ส่งรายงานประจำวันแล้ว.")
-
+        
         # คำนวณเวลาสำหรับรายงานถัดไป (พรุ่งนี้เวลา 00:05)
         next_report_time = datetime.datetime.combine(today_date + datetime.timedelta(days=1), DAILY_REPORT_TIME, tzinfo=pytz.timezone('Asia/Bangkok'))
         time_until_next_report = next_report_time - now
@@ -586,11 +586,11 @@ def check_and_send_daily_report():
         send_telegram(f"กำหนดส่งรายงานประจำวันถัดไปในอีก {hours} ชั่วโมง {minutes} นาที (เวลา {DAILY_REPORT_TIME.strftime('%H:%M')}).")
     else:
         logger.info(f"💤 ยังไม่ถึงเวลาส่งรายงานประจำวัน หรือส่งไปแล้วสำหรับวันนี้ ({today_date}).")
-
+    
 # --- Main Loop ---
 async def main():
     logger.info("🚀 บอทเข้าสู่ Main Loop แล้ว...")
-
+    
     # โหลดสถิติเมื่อเริ่มต้น
     load_daily_stats()
     # เนื่องจาก check_and_send_daily_report() ใช้ `send_telegram` ซึ่งใช้ asyncio.run()
@@ -611,11 +611,11 @@ async def main():
     except Exception as e:
         logger.error(f"❌ Error setting initial leverage: {type(e).__name__}: {e}")
         send_telegram(f"⛔️ Error: ไม่สามารถตั้ง Leverage ได้ตั้งแต่เริ่มต้น\nรายละเอียด: {type(e).__name__}: {e}")
-
+        
     while True:
         try:
             current_position = get_current_position()
-
+            
             # ดึงราคาปัจจุบัน
             ticker = exchange.fetch_ticker(SYMBOL)
             time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
@@ -627,7 +627,7 @@ async def main():
                 logger.info(f"📊 โพซิชัน {current_position['side'].upper()} อยู่ที่ {current_position['entry_price']:.2f}.")
                 # ตรวจสอบและเลื่อน SL ไปที่ Break-even (ถ้า Logic ต้องการ)
                 move_sl_to_breakeven(current_position['side'], current_position['entry_price'], current_price, current_position['size'])
-
+                
                 # Logic สำหรับการปิดโพซิชันเมื่อถึง TP/SL จะถูกจัดการโดย Exchange (เนื่องจากตั้ง Market TP/SL)
                 # บอทจะรู้ว่าโพซิชันปิดไปแล้วในรอบถัดไปเมื่อ get_current_position() คืนค่า None
                 pass
@@ -635,17 +635,17 @@ async def main():
                 # ไม่มีโพซิชันเปิดอยู่
                 logger.info("🚫 ไม่มีโพซิชันเปิดอยู่. กำลังมองหาสัญญาณ...")
                 signal = check_ema_cross()
-
+                
                 if signal:
                     # ตรวจสอบอีกครั้งว่ายังมีโพซิชันเปิดอยู่หรือไม่ (ป้องกัน double-open)
                     recheck_position = get_current_position()
                     if recheck_position:
                         logger.warning("⚠️ ตรวจพบสัญญาณ แต่มีโพซิชันเปิดอยู่แล้ว. จะไม่เปิดออเดอร์ใหม่.")
                         continue # ข้ามไปรอบถัดไป
-
+                    
                     # ลองเปิดออเดอร์
                     order_success, entry_price = open_market_order(signal, current_price)
-
+                    
                     if order_success and entry_price:
                         # ถ้าเปิดออเดอร์สำเร็จ ให้ตั้ง TP/SL ทันที
                         current_pos_after_open = get_current_position() # ดึงโพซิชันอีกครั้งเพื่อความชัวร์
@@ -657,7 +657,7 @@ async def main():
                             send_telegram("⛔️ Error: ออเดอร์เปิดแล้ว แต่ไม่สามารถยืนยันโพซิชันเพื่อตั้ง TP/SL ได้ (อาจปิดไปแล้ว หรือขนาดเป็น 0).")
                     else:
                         logger.warning(f"⚠️ ไม่สามารถเปิด Market Order {signal.upper()} ได้.")
-
+            
             # ตรวจสอบและส่งรายงานประจำวัน (ถ้าถึงเวลา)
             check_and_send_daily_report()
 
