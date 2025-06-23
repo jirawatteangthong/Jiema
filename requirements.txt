@@ -1,2 +1,4 @@
 ccxt
 requests
+python-telegram-bot
+pytz
