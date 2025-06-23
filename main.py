@@ -39,27 +39,12 @@ exchange = ccxt.okx({
     'enableRateLimit': True,
 })
 
-# ตรวจสอบการเชื่อมต่อ OKX
-try:
-    account_info = exchange.fetch_balance()
-    logger.info("✅ เชื่อมต่อกับ OKX Exchange สำเร็จ")
-    # logger.info(f"Account Info: {account_info}") # Optional: for debugging, but be careful with sensitive info
-    time.sleep(1) # เพิ่มหน่วงเวลา
-except ccxt.NetworkError as e:
-    logger.error(f"❌ Network Error connecting to OKX: {type(e).__name__}: {e}")
-    exit(1)
-except ccxt.ExchangeError as e:
-    logger.error(f"❌ Exchange Error connecting to OKX: {type(e).__name__}: {e}")
-    exit(1)
-except Exception as e:
-    logger.error(f"❌ Unexpected error connecting to OKX: {type(e).__name__}: {e}")
-    exit(1)
-
 # ตั้งค่า Telegram Bot
 bot = Bot(token=TELEGRAM_TOKEN)
 
-async def send_telegram(message: str):
-    """ส่งข้อความ Telegram แบบ asynchronous."""
+# ฟังก์ชันช่วยส่งข้อความ Telegram (เพื่อให้เรียกใช้จากทั้ง async และ non-async context ได้)
+async def _send_telegram_async(message: str):
+    """ฟังก์ชันหลักสำหรับส่งข้อความ Telegram แบบ asynchronous."""
     try:
         await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message, parse_mode='HTML')
         logger.info(f"✉️ Telegram: {message.splitlines()[0]}...") # Log แค่บรรทัดแรกเพื่อความกระชับ
@@ -69,6 +54,39 @@ async def send_telegram(message: str):
     except Exception as e:
         logger.error(f"❌ Error sending Telegram message: {type(e).__name__}: {e}")
 
+def send_telegram(message: str):
+    """เรียกใช้ฟังก์ชันส่งข้อความ Telegram."""
+    try:
+        # ตรวจสอบว่ากำลังรันอยู่ใน Asyncio event loop หรือไม่
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # ถ้ามี loop รันอยู่แล้ว ให้สร้าง Task
+            loop.create_task(_send_telegram_async(message))
+        else:
+            # ถ้าไม่มี loop รันอยู่ ให้รันด้วย asyncio.run()
+            asyncio.run(_send_telegram_async(message))
+    except Exception as e:
+        logger.error(f"❌ Failed to send Telegram message due to event loop issue: {type(e).__name__}: {e}")
+
+
+# ตรวจสอบการเชื่อมต่อ OKX
+try:
+    account_info = exchange.fetch_balance()
+    logger.info("✅ เชื่อมต่อกับ OKX Exchange สำเร็จ")
+    time.sleep(1) # เพิ่มหน่วงเวลา
+except ccxt.NetworkError as e:
+    logger.error(f"❌ Network Error connecting to OKX: {type(e).__name__}: {e}")
+    send_telegram(f"⛔️ บอทหยุดทำงาน: Network Error ในการเชื่อมต่อ OKX\nรายละเอียด: {type(e).__name__}: {e}")
+    exit(1)
+except ccxt.ExchangeError as e:
+    logger.error(f"❌ Exchange Error connecting to OKX: {type(e).__name__}: {e}")
+    send_telegram(f"⛔️ บอทหยุดทำงาน: Exchange Error ในการเชื่อมต่อ OKX\nรายละเอียด: {type(e).__name__}: {e}")
+    exit(1)
+except Exception as e:
+    logger.error(f"❌ Unexpected error connecting to OKX: {type(e).__name__}: {e}")
+    send_telegram(f"⛔️ บอทหยุดทำงาน: เกิดข้อผิดพลาดที่ไม่คาดคิดในการเชื่อมต่อ OKX\nรายละเอียด: {type(e).__name__}: {e}")
+    exit(1)
+
 # --- Global Variables and Constants ---
 SYMBOL = 'BTC/USDT:USDT' # สัญลักษณ์สำหรับ BTC-USDT Perpetual Swap
 TIMEFRAME = '15m' # Timeframe สำหรับ EMA
@@ -77,8 +95,10 @@ EMA_SHORT_PERIOD = 50
 EMA_LONG_PERIOD = 200
 LEVERAGE = 35 # ตั้งค่า Leverage
 PORTFOLIO_PERCENT_TRADE = 0.80 # 80% ของเงินที่จะใช้ในการเทรด (เป็น Margin)
-TP_PERCENT = 0.015 # Take Profit 1.5%
-SL_PERCENT = 0.0075 # Stop Loss 0.75%
+
+# ⚠️ ปรับ TP/SL เป็นจุด
+TP_POINTS = 500 # Take Profit +500 จุดจากราคาเข้า
+SL_POINTS = 1000 # Stop Loss -1000 จุดจากราคาเข้า
 
 DAILY_REPORT_TIME = datetime.time(0, 5) # เวลาส่งรายงานประจำวัน (00:05 AM)
 
@@ -97,7 +117,6 @@ def load_daily_stats():
             with open(daily_stats_file, 'r') as f:
                 data = json.load(f)
                 daily_stats = data.get('daily_stats', {})
-                # แปลง string กลับเป็น datetime.date object
                 last_report_date_str = data.get('last_daily_report_date')
                 if last_report_date_str:
                     last_daily_report_date = datetime.datetime.strptime(last_report_date_str, '%Y-%m-%d').date()
@@ -137,23 +156,23 @@ def get_portfolio_balance() -> float:
         try:
             balance = exchange.fetch_balance({'accountType': 'cross'}) # ดึง balance ของ Cross account
             time.sleep(2) # เพิ่มหน่วงเวลา
-            usdt_balance = balance['USDT']['free'] if 'USDT' in balance else 0.0
+            usdt_balance = balance['USDT']['free'] if 'USDT' in balance and 'free' in balance['USDT'] else 0.0
             logger.info(f"💰 ยอดคงเหลือ USDT: {usdt_balance:.2f}")
             return usdt_balance
         except ccxt.NetworkError as e:
             logger.warning(f"⚠️ Network Error fetching balance (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-            asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถดึงยอดคงเหลือได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ API Error: ไม่สามารถดึงยอดคงเหลือได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
         except ccxt.ExchangeError as e:
             logger.warning(f"⚠️ Exchange Error fetching balance (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-            asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถดึงยอดคงเหลือได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ API Error: ไม่สามารถดึงยอดคงเหลือได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
         except Exception as e:
             logger.error(f"❌ Unexpected error in get_portfolio_balance: {type(e).__name__}: {e}")
-            asyncio.run(send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงยอดคงเหลือได้\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงยอดคงเหลือได้\nรายละเอียด: {type(e).__name__}: {e}")
             return 0.0
     logger.error(f"❌ Failed to fetch portfolio balance after {retries} attempts.")
-    asyncio.run(send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงยอดคงเหลือหลังจาก {retries} ครั้ง."))
+    send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงยอดคงเหลือหลังจาก {retries} ครั้ง.")
     return 0.0
 
 def get_current_position() -> dict | None:
@@ -166,7 +185,8 @@ def get_current_position() -> dict | None:
             positions = exchange.fetch_positions([SYMBOL])
             time.sleep(2) # เพิ่มหน่วงเวลา
             for position in positions:
-                if position['symbol'] == SYMBOL and float(position['info']['posAmt']) != 0: # posAmt คือขนาดโพซิชัน
+                # OKX returns posAmt as a string, convert to float
+                if position['symbol'] == SYMBOL and float(position['info']['posAmt']) != 0: 
                     entry_price = float(position['info']['avgPx'])
                     pos_side = 'long' if float(position['info']['posAmt']) > 0 else 'short'
                     pos_size = float(position['info']['posAmt']) # ขนาดในหน่วย BTC (contract size)
@@ -182,18 +202,18 @@ def get_current_position() -> dict | None:
             return None # ไม่พบโพซิชันที่เปิดอยู่
         except ccxt.NetworkError as e:
             logger.warning(f"⚠️ Network Error fetching positions (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-            asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถดึงโพซิชันได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ API Error: ไม่สามารถดึงโพซิชันได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
         except ccxt.ExchangeError as e:
             logger.warning(f"⚠️ Exchange Error fetching positions (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-            asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถดึงโพซิชันได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ API Error: ไม่สามารถดึงโพซิชันได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
         except Exception as e:
             logger.error(f"❌ Unexpected error in get_current_position: {type(e).__name__}: {e}")
-            asyncio.run(send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงโพซิชันได้\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงโพซิชันได้\nรายละเอียด: {type(e).__name__}: {e}")
             return None
     logger.error(f"❌ Failed to fetch positions after {retries} attempts.")
-    asyncio.run(send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงโพซิชันหลังจาก {retries} ครั้ง."))
+    send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงโพซิชันหลังจาก {retries} ครั้ง.")
     return None
 
 def fetch_ohlcv(symbol, timeframe, limit=200):
@@ -208,18 +228,18 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
             return ohlcv
         except ccxt.NetworkError as e:
             logger.warning(f"⚠️ Network Error fetching OHLCV (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-            asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถดึงข้อมูล OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ API Error: ไม่สามารถดึงข้อมูล OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
         except ccxt.ExchangeError as e:
             logger.warning(f"⚠️ Exchange Error fetching OHLCV (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-            asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถดึงข้อมูล OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ API Error: ไม่สามารถดึงข้อมูล OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
         except Exception as e:
             logger.error(f"❌ Unexpected error in fetch_ohlcv: {type(e).__name__}: {e}")
-            asyncio.run(send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงข้อมูล OHLCV ได้\nรายละเอียด: {type(e).__name__}: {e}"))
+            send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงข้อมูล OHLCV ได้\nรายละเอียด: {type(e).__name__}: {e}")
             return []
     logger.error(f"❌ Failed to fetch OHLCV after {retries} attempts.")
-    asyncio.run(send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงข้อมูล OHLCV หลังจาก {retries} ครั้ง."))
+    send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงข้อมูล OHLCV หลังจาก {retries} ครั้ง.")
     return []
 
 def calculate_ema(prices, period):
@@ -229,6 +249,9 @@ def calculate_ema(prices, period):
         return ema
     
     # Calculate SMA for the first period
+    if len(prices) < period:
+        return ema # ไม่สามารถคำนวณได้ถ้าข้อมูลไม่พอ
+    
     sma = sum(prices[:period]) / period
     ema.append(sma)
 
@@ -242,8 +265,8 @@ def check_ema_cross() -> str | None:
     """
     ตรวจสอบสัญญาณ EMA Cross (Golden Cross หรือ Death Cross).
     """
-    ohlcv = fetch_ohlcv(SYMBOL, TIMEFRAME, EMA_LONG_PERIOD + 1) # ดึงข้อมูลให้พอสำหรับ EMA200 + 1 แท่ง
-    if not ohlcv or len(ohlcv) < EMA_LONG_PERIOD + 1:
+    ohlcv = fetch_ohlcv(SYMBOL, TIMEFRAME, EMA_LONG_PERIOD + 2) # ดึงข้อมูลให้พอสำหรับ EMA200 + 2 แท่ง (ปัจจุบันและแท่งก่อนหน้า)
+    if not ohlcv or len(ohlcv) < EMA_LONG_PERIOD + 2: # ต้องมีข้อมูลเพียงพอสำหรับการคำนวณ EMA200 สองแท่งล่าสุด
         logger.warning("⚠️ ข้อมูล OHLCV ไม่เพียงพอสำหรับการคำนวณ EMA.")
         return None
 
@@ -253,7 +276,7 @@ def check_ema_cross() -> str | None:
     ema_long = calculate_ema(closes, EMA_LONG_PERIOD)
 
     if len(ema_short) < 2 or len(ema_long) < 2:
-        logger.warning("⚠️ EMA calculated arrays are too short.")
+        logger.warning("⚠️ EMA calculated arrays are too short for cross check.")
         return None
 
     # EMA ปัจจุบัน (แท่งล่าสุดที่ปิดแล้ว)
@@ -288,18 +311,19 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
     try:
         balance = get_portfolio_balance()
         if balance <= 0:
-            asyncio.run(send_telegram("⛔️ Error: ไม่สามารถดึงยอดคงเหลือได้ หรือยอดคงเหลือเป็นศูนย์."))
+            send_telegram("⛔️ Error: ไม่สามารถดึงยอดคงเหลือได้ หรือยอดคงเหลือเป็นศูนย์.")
             return False, None
         
         # เงินที่จะใช้เป็น Margin (80% ของยอดคงเหลือ)
         use_balance = balance * PORTFOLIO_PERCENT_TRADE 
         
         if use_balance <= 0:
-            asyncio.run(send_telegram("⛔️ Error: ยอดเงินสำหรับเปิดออเดอร์ไม่เพียงพอ (ใช้ 0% ของพอร์ต)."))
+            send_telegram("⛔️ Error: ยอดเงินสำหรับเปิดออเดอร์ไม่เพียงพอ (ใช้ 0% ของพอร์ต).")
             return False, None
         
-        exchange.set_leverage(LEVERAGE, SYMBOL) # ตั้ง leverage
-        time.sleep(2) # เพิ่มหน่วงเวลา
+        # ตั้งค่า Leverage (แม้จะตั้งตอนเริ่มต้นแล้ว แต่ก็ใส่ซ้ำได้เพื่อความชัวร์)
+        exchange.set_leverage(LEVERAGE, SYMBOL) 
+        time.sleep(2) 
         logger.info(f"📈 ตั้งค่า Leverage เป็น {LEVERAGE}x สำหรับ {SYMBOL}.")
 
         market = exchange.market(SYMBOL)
@@ -316,8 +340,10 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         order_amount_btc = float(exchange.amount_to_precision(SYMBOL, order_amount_btc))
 
         # ตรวจสอบขั้นต่ำ/สูงสุดของปริมาณ
-        min_amount = market['limits']['amount']['min'] if market['limits']['amount'] and market['limits']['amount']['min'] else 0.0001
-        max_amount = market['limits']['amount']['max'] if market['limits']['amount'] and market['limits']['amount']['max'] else 1000.0
+        # OKX limits could be in contract base currency (BTC) or quote currency (USDT value)
+        # Assuming 'amount' limits are in base currency (BTC) for Perpetual Swaps
+        min_amount = market['limits']['amount']['min'] if market['limits']['amount'] and market['limits']['amount']['min'] else 0.00001 # Default min amount
+        max_amount = market['limits']['amount']['max'] if market['limits']['amount'] and market['limits']['amount']['max'] else 1000.0 # Default max amount
 
         if order_amount_btc < min_amount:
             logger.warning(f"⚠️ ขนาดออเดอร์ที่คำนวณได้ ({order_amount_btc:.6f} BTC) ต่ำกว่าขั้นต่ำ ({min_amount:.6f} BTC). ปรับขนาดเป็นขั้นต่ำ.")
@@ -327,7 +353,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             order_amount_btc = max_amount
         
         if order_amount_btc <= 0:
-            asyncio.run(send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ precision/ขั้นต่ำ."))
+            send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ precision/ขั้นต่ำ.")
             return False, None
         
         side = 'buy' if direction == 'long' else 'sell'
@@ -336,8 +362,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         params = {
             'tdMode': 'cross', # ใช้ Cross Margin
             'ordType': 'market',
-            # 'lever': str(LEVERAGE), # Leverage ถูกตั้งค่าด้วย set_leverage แล้ว
-            'px': str(current_price), # ลองส่ง current_price ไปด้วย (บางที OKX อาจใช้เพื่อคำนวณขนาด)
             'posSide': 'long' if direction == 'long' else 'short' # ระบุ side ของโพซิชัน (สำคัญสำหรับ OKX)
         }
         
@@ -351,55 +375,57 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 break
             except ccxt.NetworkError as e:
                 logger.warning(f"⚠️ Network Error creating order (Attempt {i+1}/3): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-                asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {type(e).__name__}: {e}"))
+                send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {type(e).__name__}: {e}")
                 time.sleep(15)
             except ccxt.ExchangeError as e:
                 logger.warning(f"⚠️ Exchange Error creating order (Attempt {i+1}/3): {type(e).__name__}: {e}. Retrying in 15 seconds...")
-                asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {type(e).__name__}: {e}"))
+                send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {type(e).__name__}: {e}")
                 time.sleep(15)
             except Exception as e:
                 logger.error(f"❌ Unexpected error creating market order: {type(e).__name__}: {e}")
-                asyncio.run(send_telegram(f"⛔️ Unexpected Error: ไม่สามารถสร้างออเดอร์ตลาดได้\nรายละเอียด: {type(e).__name__}: {e}"))
+                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถสร้างออเดอร์ตลาดได้\nรายละเอียด: {type(e).__name__}: {e}")
                 return False, None
         
         if not order: # ถ้าเปิดออเดอร์ไม่สำเร็จก็ออกจากฟังก์ชันเลย
             logger.error("❌ Failed to create market order after 3 attempts.")
-            asyncio.run(send_telegram("⛔️ Error: ล้มเหลวในการสร้างออเดอร์ตลาดหลังจาก 3 ครั้ง."))
+            send_telegram("⛔️ Error: ล้มเหลวในการสร้างออเดอร์ตลาดหลังจาก 3 ครั้ง.")
             return False, None
 
         # หลังจากเปิด Market Order แล้ว ให้ดึงโพซิชันอีกครั้งเพื่อยืนยัน Entry Price
         confirmed_pos_info = None
-        for i in range(15): # ⚠️ เพิ่มจำนวนครั้งที่ลองดึงเป็น 15 ครั้ง
-            time.sleep(5) # ⚠️ เพิ่มเวลาหน่วงเป็น 5 วินาทีต่อการลองดึงแต่ละครั้ง
+        # เพิ่มจำนวนครั้งและเวลาหน่วงในการรอการยืนยันโพซิชัน
+        for i in range(20): # ลองดึง 20 ครั้ง (นานสูงสุด 100 วินาที)
+            time.sleep(5) # หน่วงเวลา 5 วินาทีต่อการลองดึงแต่ละครั้ง
             confirmed_pos_info = get_current_position() 
             # ตรวจสอบว่าได้โพซิชันแล้ว และเป็นโพซิชันที่ถูกต้อง (ทิศทางตรงกับที่เราเพิ่งเปิด และขนาดมากกว่า 0)
             if confirmed_pos_info and confirmed_pos_info['side'] == direction and confirmed_pos_info['size'] > 0:
                 logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f} BTC")
                 current_position_size = confirmed_pos_info['size']
                 return True, confirmed_pos_info['entry_price']
-            logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/15)...")
+            logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/20)...")
             
         logger.error("❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order.")
-        asyncio.run(send_telegram("⛔️ Error: ไม่สามารถยืนยันโพซิชันหลังเปิดออเดอร์ได้."))
+        send_telegram("⛔️ Error: ไม่สามารถยืนยันโพซิชันหลังเปิดออเดอร์ได้.")
         return False, None
 
     except Exception as e:
         logger.error(f"❌ Unexpected error in open_market_order: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดขณะเปิดออเดอร์\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดขณะเปิดออเดอร์\nรายละเอียด: {type(e).__name__}: {e}")
         return False, None
 
 def set_tpsl_for_position(direction: str, entry_price: float, position_size: float):
     """
     ตั้งค่า Take Profit (TP) และ Stop Loss (SL) สำหรับโพซิชันที่เปิดอยู่.
+    คำนวณจากจุด (points)
     """
     try:
-        # คำนวณราคา TP และ SL
+        # คำนวณราคา TP และ SL จากจุด
         if direction == 'long':
-            tp_price = entry_price * (1 + TP_PERCENT)
-            sl_price = entry_price * (1 - SL_PERCENT)
+            tp_price = entry_price + TP_POINTS
+            sl_price = entry_price - SL_POINTS
         else: # short
-            tp_price = entry_price * (1 - TP_PERCENT)
-            sl_price = entry_price * (1 + SL_PERCENT)
+            tp_price = entry_price - TP_POINTS
+            sl_price = entry_price + SL_POINTS
         
         # ปรับราคา TP/SL ให้ตรงตาม precision ของ Exchange
         market = exchange.market(SYMBOL)
@@ -407,7 +433,6 @@ def set_tpsl_for_position(direction: str, entry_price: float, position_size: flo
         sl_price = float(exchange.price_to_precision(SYMBOL, sl_price))
 
         # ส่งคำสั่ง TP/SL ผ่าน privatePostSet_tpsl_order (OKX specific)
-        # OKX มี method เฉพาะสำหรับ TP/SL
         params = {
             'instId': SYMBOL.replace('/', '-').replace(':USDT', '-USDT-SWAP'), # 'BTC-USDT-SWAP'
             'tdMode': 'cross',
@@ -423,27 +448,27 @@ def set_tpsl_for_position(direction: str, entry_price: float, position_size: flo
         
         if response and response['code'] == '0':
             logger.info(f"✅ ตั้งค่า TP: {tp_price:.2f} และ SL: {sl_price:.2f} สำเร็จ.")
-            asyncio.run(send_telegram(f"✅ ตั้งค่า TP/SL สำเร็จ!\n"
+            send_telegram(f"✅ ตั้งค่า TP/SL สำเร็จ!\n"
                                     f"ทิศทาง: <b>{direction.upper()}</b>\n"
                                     f"Entry Price: <b>{entry_price:.2f}</b>\n"
                                     f"TP: <b>{tp_price:.2f}</b>\n"
-                                    f"SL: <b>{sl_price:.2f}</b>"))
+                                    f"SL: <b>{sl_price:.2f}</b>")
             return True
         else:
             logger.error(f"❌ ตั้งค่า TP/SL ไม่สำเร็จ: {response}")
-            asyncio.run(send_telegram(f"⛔️ Error: ตั้งค่า TP/SL ไม่สำเร็จ\nรายละเอียด: {response}"))
+            send_telegram(f"⛔️ Error: ตั้งค่า TP/SL ไม่สำเร็จ\nรายละเอียด: {response}")
             return False
     except ccxt.NetworkError as e:
         logger.error(f"❌ Network Error setting TP/SL: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถตั้ง TP/SL ได้\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ API Error: ไม่สามารถตั้ง TP/SL ได้\nรายละเอียด: {type(e).__name__}: {e}")
         return False
     except ccxt.ExchangeError as e:
         logger.error(f"❌ Exchange Error setting TP/SL: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถตั้ง TP/SL ได้\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ API Error: ไม่สามารถตั้ง TP/SL ได้\nรายละเอียด: {type(e).__name__}: {e}")
         return False
     except Exception as e:
         logger.error(f"❌ Unexpected error in set_tpsl_for_position: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดขณะตั้ง TP/SL\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดขณะตั้ง TP/SL\nรายละเอียด: {type(e).__name__}: {e}")
         return False
 
 def move_sl_to_breakeven(direction: str, entry_price: float, current_price: float, position_size: float):
@@ -451,21 +476,21 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
     เลื่อน Stop Loss ไปที่ Break-even Price (Entry Price).
     """
     try:
-        # ตรวจสอบว่าราคาวิ่งไปในทิศทางที่ต้องการพอสมควรแล้วหรือไม่ (เช่น 0.5% ของ TP เพื่อให้คุ้มค่าธรรมเนียม)
-        breakeven_threshold_percent = 0.005 # 0.5% (ตัวอย่าง)
+        # ตรวจสอบว่าราคาวิ่งไปในทิศทางที่ต้องการพอสมควรแล้วหรือไม่ (เช่น 0.5% ของ Entry Price เพื่อให้คุ้มค่าธรรมเนียม)
+        breakeven_threshold_points = 100 # เช่น 100 จุดจากราคาเข้า
         
         if direction == 'long':
-            if current_price < entry_price * (1 + breakeven_threshold_percent):
-                logger.info(f"ℹ️ ราคาปัจจุบัน {current_price:.2f} ยังไม่ถึงจุดเบรคอีเวนสำหรับ Long (เป้าหมาย > {entry_price * (1 + breakeven_threshold_percent):.2f}).")
+            if current_price < entry_price + breakeven_threshold_points:
+                logger.info(f"ℹ️ ราคาปัจจุบัน {current_price:.2f} ยังไม่ถึงจุดเบรคอีเวนสำหรับ Long (เป้าหมาย > {entry_price + breakeven_threshold_points:.2f}).")
                 return False
             sl_to_set = entry_price # ตั้ง SL ที่ราคา Entry
-            tp_to_set = entry_price * (1 + TP_PERCENT) # TP ยังคงเดิม
+            tp_to_set = entry_price + TP_POINTS # TP ยังคงเดิม
         else: # short
-            if current_price > entry_price * (1 - breakeven_threshold_percent):
-                logger.info(f"ℹ️ ราคาปัจจุบัน {current_price:.2f} ยังไม่ถึงจุดเบรคอีเวนสำหรับ Short (เป้าหมาย < {entry_price * (1 - breakeven_threshold_percent):.2f}).")
+            if current_price > entry_price - breakeven_threshold_points:
+                logger.info(f"ℹ️ ราคาปัจจุบัน {current_price:.2f} ยังไม่ถึงจุดเบรคอีเวนสำหรับ Short (เป้าหมาย < {entry_price - breakeven_threshold_points:.2f}).")
                 return False
             sl_to_set = entry_price # ตั้ง SL ที่ราคา Entry
-            tp_to_set = entry_price * (1 - TP_PERCENT) # TP ยังคงเดิม
+            tp_to_set = entry_price - TP_POINTS # TP ยังคงเดิม
         
         # ปรับราคา SL/TP ให้ตรงตาม precision ของ Exchange
         market = exchange.market(SYMBOL)
@@ -488,25 +513,25 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
         
         if response and response['code'] == '0':
             logger.info(f"✅ เลื่อน Stop Loss ไปที่ Break-even: {sl_to_set:.2f} สำเร็จ.")
-            asyncio.run(send_telegram(f"✅ เลื่อน SL เป็นกันทุนสำหรับ <b>{direction.upper()}</b> สำเร็จ!\n"
+            send_telegram(f"✅ เลื่อน SL เป็นกันทุนสำหรับ <b>{direction.upper()}</b> สำเร็จ!\n"
                                     f"Entry Price: <b>{entry_price:.2f}</b>\n"
-                                    f"New SL: <b>{sl_to_set:.2f}</b>"))
+                                    f"New SL: <b>{sl_to_set:.2f}</b>")
             return True
         else:
             logger.error(f"❌ เลื่อน Stop Loss ไม่สำเร็จ: {response}")
-            asyncio.run(send_telegram(f"⛔️ Error: เลื่อน SL ไม่สำเร็จ\nรายละเอียด: {response}"))
+            send_telegram(f"⛔️ Error: เลื่อน SL ไม่สำเร็จ\nรายละเอียด: {response}")
             return False
     except ccxt.NetworkError as e:
         logger.error(f"❌ Network Error moving SL: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถเลื่อน SL ได้\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ API Error: ไม่สามารถเลื่อน SL ได้\nรายละเอียด: {type(e).__name__}: {e}")
         return False
     except ccxt.ExchangeError as e:
         logger.error(f"❌ Exchange Error moving SL: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ API Error: ไม่สามารถเลื่อน SL ได้\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ API Error: ไม่สามารถเลื่อน SL ได้\nรายละเอียด: {type(e).__name__}: {e}")
         return False
     except Exception as e:
         logger.error(f"❌ Unexpected error in move_sl_to_breakeven: {type(e).__name__}: {e}")
-        asyncio.run(send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดขณะเลื่อน SL\nรายละเอียด: {type(e).__name__}: {e}"))
+        send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดขณะเลื่อน SL\nรายละเอียด: {type(e).__name__}: {e}")
         return False
 
 def check_and_send_daily_report():
@@ -521,33 +546,26 @@ def check_and_send_daily_report():
         
         logger.info("✅ ตรวจพบว่าถึงเวลาส่งรายงานประจำวันแล้ว และยังไม่ได้ส่งสำหรับวันนี้. กำลังส่งรายงาน...")
 
-        report_date = today_date.strftime('%Y-%m-%d')
-        yesterday_date_obj = today_date - datetime.timedelta(days=1)
-        yesterday_date_str = yesterday_date_obj.strftime('%Y-%m-%d')
+        report_date_str = today_date.strftime('%Y-%m-%d')
         
         # รีเซ็ตสถิติประจำวันสำหรับวันนี้ ถ้าเป็นวันใหม่
         if last_daily_report_date is None or last_daily_report_date < today_date:
-            logger.info(f"🔄 รีเซ็ตสถิติประจำวันสำหรับวันนี้ {report_date}.")
-            # ถ้าเป็นวันใหม่ และมีข้อมูลเมื่อวาน ให้เก็บสถิติเมื่อวาน
-            if yesterday_date_str in daily_stats:
-                # ไม่ได้เก็บ PnL ของวันนั้นๆ ไว้ในโค้ดนี้
-                # หากต้องการ PnL รายวัน จะต้องมีการเก็บข้อมูลการปิดออเดอร์ PnL ไว้
-                pass
-            daily_stats[report_date] = {'total_trades': 0, 'wins': 0, 'losses': 0, 'pnl_usdt': 0.0} # รีเซ็ตสำหรับวันใหม่
+            logger.info(f"🔄 รีเซ็ตสถิติประจำวันสำหรับวันนี้ {report_date_str}.")
+            daily_stats[report_date_str] = {'total_trades': 0, 'wins': 0, 'losses': 0, 'pnl_usdt': 0.0} # รีเซ็ตสำหรับวันใหม่
             last_daily_report_date = today_date
             save_daily_stats() # บันทึกสถานะหลังจากรีเซ็ต
 
         balance = get_portfolio_balance()
 
         report_message = (
-            f"<b>รายงานประจำวัน - {report_date}</b>\n"
+            f"<b>รายงานประจำวัน - {report_date_str}</b>\n"
             f"💰 ยอดคงเหลือปัจจุบัน: <b>{balance:.2f} USDT</b>\n"
-            f"📊 จำนวนเทรดวันนี้: <b>{daily_stats.get(report_date, {}).get('total_trades', 0)}</b>\n"
-            f"✅ ชนะ: <b>{daily_stats.get(report_date, {}).get('wins', 0)}</b>\n"
-            f"❌ แพ้: <b>{daily_stats.get(report_date, {}).get('losses', 0)}</b>\n"
-            f"📈 PnL วันนี้ (ประมาณ): <b>{daily_stats.get(report_date, {}).get('pnl_usdt', 0.0):.2f} USDT</b>"
+            f"📊 จำนวนเทรดวันนี้: <b>{daily_stats.get(report_date_str, {}).get('total_trades', 0)}</b>\n"
+            f"✅ ชนะ: <b>{daily_stats.get(report_date_str, {}).get('wins', 0)}</b>\n"
+            f"❌ แพ้: <b>{daily_stats.get(report_date_str, {}).get('losses', 0)}</b>\n"
+            f"📈 PnL วันนี้ (ประมาณ): <b>{daily_stats.get(report_date_str, {}).get('pnl_usdt', 0.0):.2f} USDT</b>"
         )
-        asyncio.run(send_telegram(report_message))
+        send_telegram(report_message)
         
         logger.info("✅ ส่งรายงานประจำวันแล้ว.")
         
@@ -556,7 +574,7 @@ def check_and_send_daily_report():
         time_until_next_report = next_report_time - now
         hours, remainder = divmod(time_until_next_report.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
-        asyncio.run(send_telegram(f"กำหนดส่งรายงานประจำวันถัดไปในอีก {hours} ชั่วโมง {minutes} นาที (เวลา {DAILY_REPORT_TIME.strftime('%H:%M')})."))
+        send_telegram(f"กำหนดส่งรายงานประจำวันถัดไปในอีก {hours} ชั่วโมง {minutes} นาที (เวลา {DAILY_REPORT_TIME.strftime('%H:%M')}).")
     else:
         logger.info(f"💤 ยังไม่ถึงเวลาส่งรายงานประจำวัน หรือส่งไปแล้วสำหรับวันนี้ ({today_date}).")
     
@@ -569,8 +587,8 @@ async def main():
     check_and_send_daily_report() # ตรวจสอบและส่งรายงานเมื่อเริ่มทำงาน (ถ้าถึงเวลา)
 
     # ส่งข้อความแจ้งเตือนเมื่อเริ่มทำงาน
-    await send_telegram("<b>บอทเริ่มทำงาน</b>")
-    await send_telegram("ℹ️ ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
+    send_telegram("<b>บอทเริ่มทำงาน</b>")
+    send_telegram("ℹ️ ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
     logger.info("ℹ️ เริ่ม Daily Report Scheduler.")
 
     # ตั้งค่า leverage แค่ครั้งเดียวตอนเริ่มต้น
@@ -580,7 +598,7 @@ async def main():
         logger.info(f"📈 ตั้งค่า Leverage เป็น {LEVERAGE}x สำหรับ {SYMBOL} ในช่วงเริ่มต้น.")
     except Exception as e:
         logger.error(f"❌ Error setting initial leverage: {type(e).__name__}: {e}")
-        await send_telegram(f"⛔️ Error: ไม่สามารถตั้ง Leverage ได้ตั้งแต่เริ่มต้น\nรายละเอียด: {type(e).__name__}: {e}")
+        send_telegram(f"⛔️ Error: ไม่สามารถตั้ง Leverage ได้ตั้งแต่เริ่มต้น\nรายละเอียด: {type(e).__name__}: {e}")
         
     while True:
         try:
@@ -596,14 +614,10 @@ async def main():
                 # มีโพซิชันเปิดอยู่
                 logger.info(f"📊 โพซิชัน {current_position['side'].upper()} อยู่ที่ {current_position['entry_price']:.2f}.")
                 # ตรวจสอบและเลื่อน SL ไปที่ Break-even (ถ้า Logic ต้องการ)
-                # move_sl_to_breakeven(current_position['side'], current_position['entry_price'], current_price, current_position['size'])
+                move_sl_to_breakeven(current_position['side'], current_position['entry_price'], current_price, current_position['size'])
                 
-                # ตรวจสอบว่าโพซิชันถูกปิดหรือยัง (TP/SL หรือ Manual)
-                # Logic การตรวจสอบว่าโพซิชันถูกปิดนั้นซับซ้อนกว่าแค่ `get_current_position()`
-                # เพราะต้องดึง Order History มาเช็คว่าออเดอร์ TP/SL ถูก Execute หรือยัง
-                # ในที่นี้ `get_current_position()` จะคืนค่า None ถ้าไม่มีโพซิชันอยู่แล้ว
-                # หากโพซิชันถูกปิดระหว่างที่บอททำงาน และ `get_current_position()` รีเทิร์น None
-                # บอทจะเข้าสู่เงื่อนไข `if not current_position:` ในรอบถัดไป
+                # Logic สำหรับการปิดโพซิชันเมื่อถึง TP/SL จะถูกจัดการโดย Exchange (เนื่องจากตั้ง Market TP/SL)
+                # บอทจะรู้ว่าโพซิชันปิดไปแล้วในรอบถัดไปเมื่อ get_current_position() คืนค่า None
                 pass
             else:
                 # ไม่มีโพซิชันเปิดอยู่
@@ -623,12 +637,12 @@ async def main():
                     if order_success and entry_price:
                         # ถ้าเปิดออเดอร์สำเร็จ ให้ตั้ง TP/SL ทันที
                         current_pos_after_open = get_current_position() # ดึงโพซิชันอีกครั้งเพื่อความชัวร์
-                        if current_pos_after_open and current_pos_after_open['side'] == signal:
+                        if current_pos_after_open and current_pos_after_open['side'] == signal and current_pos_after_open['size'] > 0:
                             logger.info(f"✅ ออเดอร์ {signal.upper()} เปิดสำเร็จ. กำลังตั้ง TP/SL.")
                             set_tpsl_for_position(signal, entry_price, current_pos_after_open['size'])
                         else:
-                            logger.error("❌ เกิดข้อผิดพลาด: ออเดอร์เปิดแล้ว แต่ไม่สามารถยืนยันโพซิชันเพื่อตั้ง TP/SL ได้.")
-                            await send_telegram("⛔️ Error: ออเดอร์เปิดแล้ว แต่ไม่สามารถยืนยันโพซิชันเพื่อตั้ง TP/SL ได้.")
+                            logger.error("❌ เกิดข้อผิดพลาด: ออเดอร์เปิดแล้ว แต่ไม่สามารถยืนยันโพซิชันเพื่อตั้ง TP/SL ได้ (อาจปิดไปแล้ว หรือขนาดเป็น 0).")
+                            send_telegram("⛔️ Error: ออเดอร์เปิดแล้ว แต่ไม่สามารถยืนยันโพซิชันเพื่อตั้ง TP/SL ได้ (อาจปิดไปแล้ว หรือขนาดเป็น 0).")
                     else:
                         logger.warning(f"⚠️ ไม่สามารถเปิด Market Order {signal.upper()} ได้.")
             
@@ -641,7 +655,7 @@ async def main():
 
         except Exception as e:
             logger.error(f"❌ Unexpected error in main loop: {type(e).__name__}: {e}")
-            await send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดใน Main Loop\nรายละเอียด: {type(e).__name__}: {e}")
+            send_telegram(f"⛔️ Unexpected Error: เกิดข้อผิดพลาดใน Main Loop\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(60) # รอ 1 นาที ก่อนวนลูปใหม่ (เพื่อไม่ให้ Loop รันถี่เกินไปหากมี Error ซ้ำๆ)
 
 if __name__ == '__main__':
