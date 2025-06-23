@@ -447,6 +447,8 @@ def set_tpsl_for_position(direction: str, entry_price: float, position_size: flo
             'posSide': 'long' if direction == 'long' else 'short',
             'tpTriggerPx': str(tp_price),
             'tpOrdPx': '-1', # Market TP (ส่ง -1 เพื่อเป็น Market Order เมื่อ Trigger)
+            'tpTriggerPx': str(tp_price), #
+            'tpOrdPx': '-1', #
             'slTriggerPx': str(sl_price),
             'slOrdPx': '-1' # Market SL (ส่ง -1 เพื่อเป็น Market Order เมื่อ Trigger)
         }
