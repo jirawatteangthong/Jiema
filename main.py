@@ -4,7 +4,7 @@ import time
 import datetime
 import json
 import logging
-import pytz
+import pytz 
 import asyncio
 from telegram import Bot
 from telegram.error import TelegramError
@@ -26,7 +26,8 @@ try:
 
 except ValueError as e:
     logger.error(f"❌ Configuration Error: {e}. Please set all necessary environment variables.")
-    exit(1) # Exit if essential environment variables are not set
+    # ไม่ต้องส่ง Telegram เพราะอาจจะยังไม่มี config ที่จะส่งได้
+    exit(1) 
 
 # --- ตั้งค่า Bot ---
 exchange = ccxt.okx({
@@ -36,7 +37,7 @@ exchange = ccxt.okx({
     'options': {
         'defaultType': 'swap', # สำหรับ Perpetual Futures
     },
-    'enableRateLimit': True,
+    'enableRateLimit': True, # เปิดใช้งาน Rate Limit ของ CCXT
 })
 
 # ตั้งค่า Telegram Bot
@@ -69,11 +70,11 @@ def send_telegram(message: str):
         logger.error(f"❌ Failed to send Telegram message due to event loop issue: {type(e).__name__}: {e}")
 
 
-# ตรวจสอบการเชื่อมต่อ OKX
+# ตรวจสอบการเชื่อมต่อ OKX (ทำตอนเริ่มต้นเพื่อให้แน่ใจว่า API Key ใช้งานได้)
 try:
     account_info = exchange.fetch_balance()
     logger.info("✅ เชื่อมต่อกับ OKX Exchange สำเร็จ")
-    time.sleep(1) # เพิ่มหน่วงเวลา
+    time.sleep(1) # เพิ่มหน่วงเวลาเพื่อเคารพ rate limit
 except ccxt.NetworkError as e:
     logger.error(f"❌ Network Error connecting to OKX: {type(e).__name__}: {e}")
     send_telegram(f"⛔️ บอทหยุดทำงาน: Network Error ในการเชื่อมต่อ OKX\nรายละเอียด: {type(e).__name__}: {e}")
@@ -96,8 +97,8 @@ EMA_LONG_PERIOD = 200
 LEVERAGE = 35 # ตั้งค่า Leverage
 PORTFOLIO_PERCENT_TRADE = 0.80 # 80% ของเงินที่จะใช้ในการเทรด (เป็น Margin)
 
-# ⚠️ ปรับ TP/SL เป็นจุด
-TP_POINTS = 500 # Take Profit +500 จุดจากราคาเข้า
+# ⚠️ ปรับ TP/SL เป็นจุดตามที่ร้องขอ
+TP_POINTS = 500  # Take Profit +500 จุดจากราคาเข้า
 SL_POINTS = 1000 # Stop Loss -1000 จุดจากราคาเข้า
 
 DAILY_REPORT_TIME = datetime.time(0, 5) # เวลาส่งรายงานประจำวัน (00:05 AM)
@@ -155,7 +156,7 @@ def get_portfolio_balance() -> float:
     for i in range(retries):
         try:
             balance = exchange.fetch_balance({'accountType': 'cross'}) # ดึง balance ของ Cross account
-            time.sleep(2) # เพิ่มหน่วงเวลา
+            time.sleep(exchange.rateLimit / 1000) # ใช้ rateLimit ของ exchange เพื่อหน่วงเวลา
             usdt_balance = balance['USDT']['free'] if 'USDT' in balance and 'free' in balance['USDT'] else 0.0
             logger.info(f"💰 ยอดคงเหลือ USDT: {usdt_balance:.2f}")
             return usdt_balance
@@ -183,21 +184,24 @@ def get_current_position() -> dict | None:
     for i in range(retries):
         try:
             positions = exchange.fetch_positions([SYMBOL])
-            time.sleep(2) # เพิ่มหน่วงเวลา
+            time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
             for position in positions:
                 # OKX returns posAmt as a string, convert to float
-                if position['symbol'] == SYMBOL and float(position['info']['posAmt']) != 0: 
-                    entry_price = float(position['info']['avgPx'])
-                    pos_side = 'long' if float(position['info']['posAmt']) > 0 else 'short'
-                    pos_size = float(position['info']['posAmt']) # ขนาดในหน่วย BTC (contract size)
-                    
-                    logger.info(f"📊 ตรวจพบโพซิชันปัจจุบัน: {pos_side.upper()} Size: {pos_size:.6f} BTC, Entry: {entry_price:.2f}")
-                    return {
-                        'symbol': SYMBOL,
-                        'side': pos_side,
-                        'entry_price': entry_price,
-                        'size': pos_size
-                    }
+                # แก้ไข: ตรวจสอบว่า 'info' และ 'posAmt' มีอยู่ก่อนเข้าถึง
+                if position['symbol'] == SYMBOL and 'info' in position and 'posAmt' in position['info']:
+                    pos_amount = float(position['info']['posAmt'])
+                    if pos_amount != 0: 
+                        entry_price = float(position['info']['avgPx'])
+                        pos_side = 'long' if pos_amount > 0 else 'short'
+                        pos_size = pos_amount # ขนาดในหน่วย BTC (contract size)
+                        
+                        logger.info(f"📊 ตรวจพบโพซิชันปัจจุบัน: {pos_side.upper()} Size: {pos_size:.6f} BTC, Entry: {entry_price:.2f}")
+                        return {
+                            'symbol': SYMBOL,
+                            'side': pos_side,
+                            'entry_price': entry_price,
+                            'size': pos_size
+                        }
             logger.info("🚫 ไม่พบโพซิชัน BTC/USDT.")
             return None # ไม่พบโพซิชันที่เปิดอยู่
         except ccxt.NetworkError as e:
@@ -208,6 +212,10 @@ def get_current_position() -> dict | None:
             logger.warning(f"⚠️ Exchange Error fetching positions (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
             send_telegram(f"⛔️ API Error: ไม่สามารถดึงโพซิชันได้ (Attempt {i+1}/{retries})\nรายละเอียด: {type(e).__name__}: {e}")
             time.sleep(15)
+        except KeyError as e:
+            logger.error(f"❌ KeyError in get_current_position: {e}. Raw position info: {position.get('info', 'Not Found')}")
+            send_telegram(f"⛔️ Data Error: คีย์ข้อมูลโพซิชันไม่ถูกต้อง\nรายละเอียด: {e}")
+            return None # ถ้าคีย์หายไป ให้ถือว่าไม่พบโพซิชัน
         except Exception as e:
             logger.error(f"❌ Unexpected error in get_current_position: {type(e).__name__}: {e}")
             send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงโพซิชันได้\nรายละเอียด: {type(e).__name__}: {e}")
@@ -224,7 +232,7 @@ def fetch_ohlcv(symbol, timeframe, limit=200):
     for i in range(retries):
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-            time.sleep(2) # เพิ่มหน่วงเวลา
+            time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
             return ohlcv
         except ccxt.NetworkError as e:
             logger.warning(f"⚠️ Network Error fetching OHLCV (Attempt {i+1}/{retries}): {type(e).__name__}: {e}. Retrying in 15 seconds...")
@@ -323,7 +331,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         
         # ตั้งค่า Leverage (แม้จะตั้งตอนเริ่มต้นแล้ว แต่ก็ใส่ซ้ำได้เพื่อความชัวร์)
         exchange.set_leverage(LEVERAGE, SYMBOL) 
-        time.sleep(2) 
+        time.sleep(exchange.rateLimit / 1000) 
         logger.info(f"📈 ตั้งค่า Leverage เป็น {LEVERAGE}x สำหรับ {SYMBOL}.")
 
         market = exchange.market(SYMBOL)
@@ -340,10 +348,8 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         order_amount_btc = float(exchange.amount_to_precision(SYMBOL, order_amount_btc))
 
         # ตรวจสอบขั้นต่ำ/สูงสุดของปริมาณ
-        # OKX limits could be in contract base currency (BTC) or quote currency (USDT value)
-        # Assuming 'amount' limits are in base currency (BTC) for Perpetual Swaps
-        min_amount = market['limits']['amount']['min'] if market['limits']['amount'] and market['limits']['amount']['min'] else 0.00001 # Default min amount
-        max_amount = market['limits']['amount']['max'] if market['limits']['amount'] and market['limits']['amount']['max'] else 1000.0 # Default max amount
+        min_amount = market['limits']['amount']['min'] if 'amount' in market['limits'] and 'min' in market['limits']['amount'] and market['limits']['amount']['min'] else 0.00001 # Default min amount
+        max_amount = market['limits']['amount']['max'] if 'amount' in market['limits'] and 'max' in market['limits']['amount'] and market['limits']['amount']['max'] else 1000.0 # Default max amount
 
         if order_amount_btc < min_amount:
             logger.warning(f"⚠️ ขนาดออเดอร์ที่คำนวณได้ ({order_amount_btc:.6f} BTC) ต่ำกว่าขั้นต่ำ ({min_amount:.6f} BTC). ปรับขนาดเป็นขั้นต่ำ.")
@@ -370,7 +376,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             try:
                 logger.info(f"⚡️ กำลังเปิด Market Order ({direction.upper()}, Size: {order_amount_btc:.6f} BTC)... (Attempt {i+1}/3)")
                 order = exchange.create_order(SYMBOL, 'market', side, order_amount_btc, None, params)
-                time.sleep(2) # หน่วงเวลาหลังส่งคำสั่ง
+                time.sleep(exchange.rateLimit / 1000) # หน่วงเวลาหลังส่งคำสั่ง
                 logger.info(f"✅ Market Order ส่งสำเร็จ: {order['id']}")
                 break
             except ccxt.NetworkError as e:
@@ -433,18 +439,20 @@ def set_tpsl_for_position(direction: str, entry_price: float, position_size: flo
         sl_price = float(exchange.price_to_precision(SYMBOL, sl_price))
 
         # ส่งคำสั่ง TP/SL ผ่าน privatePostSet_tpsl_order (OKX specific)
+        # instId สำหรับ OKX API ต้องเป็นรูปแบบ 'BTC-USDT-SWAP'
+        okx_inst_id = SYMBOL.replace('/', '-').replace(':USDT', '-USDT-SWAP')
         params = {
-            'instId': SYMBOL.replace('/', '-').replace(':USDT', '-USDT-SWAP'), # 'BTC-USDT-SWAP'
+            'instId': okx_inst_id, 
             'tdMode': 'cross',
             'posSide': 'long' if direction == 'long' else 'short',
             'tpTriggerPx': str(tp_price),
-            'tpOrdPx': '-1', # Market TP
+            'tpOrdPx': '-1', # Market TP (ส่ง -1 เพื่อเป็น Market Order เมื่อ Trigger)
             'slTriggerPx': str(sl_price),
-            'slOrdPx': '-1' # Market SL
+            'slOrdPx': '-1' # Market SL (ส่ง -1 เพื่อเป็น Market Order เมื่อ Trigger)
         }
 
         response = exchange.privatePostSet_tpsl_order(params)
-        time.sleep(2) # เพิ่มหน่วงเวลา
+        time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
         
         if response and response['code'] == '0':
             logger.info(f"✅ ตั้งค่า TP: {tp_price:.2f} และ SL: {sl_price:.2f} สำเร็จ.")
@@ -498,8 +506,9 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
         tp_to_set = float(exchange.price_to_precision(SYMBOL, tp_to_set))
 
         # ส่งคำสั่ง TP/SL ผ่าน privatePostSet_tpsl_order (OKX specific)
+        okx_inst_id = SYMBOL.replace('/', '-').replace(':USDT', '-USDT-SWAP')
         params = {
-            'instId': SYMBOL.replace('/', '-').replace(':USDT', '-USDT-SWAP'),
+            'instId': okx_inst_id,
             'tdMode': 'cross',
             'posSide': 'long' if direction == 'long' else 'short',
             'tpTriggerPx': str(tp_to_set),
@@ -509,7 +518,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float, current_price: floa
         }
 
         response = exchange.privatePostSet_tpsl_order(params)
-        time.sleep(2) # เพิ่มหน่วงเวลา
+        time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
         
         if response and response['code'] == '0':
             logger.info(f"✅ เลื่อน Stop Loss ไปที่ Break-even: {sl_to_set:.2f} สำเร็จ.")
@@ -584,6 +593,9 @@ async def main():
     
     # โหลดสถิติเมื่อเริ่มต้น
     load_daily_stats()
+    # เนื่องจาก check_and_send_daily_report() ใช้ `send_telegram` ซึ่งใช้ asyncio.run()
+    # จึงต้องเรียกจาก asyncio.run(main()) เท่านั้น และไม่ควรมี await นอก async func
+    # แต่ตอนนี้ send_telegram() ถูกแก้ให้จัดการ asyncio.run() เองแล้ว
     check_and_send_daily_report() # ตรวจสอบและส่งรายงานเมื่อเริ่มทำงาน (ถ้าถึงเวลา)
 
     # ส่งข้อความแจ้งเตือนเมื่อเริ่มทำงาน
@@ -594,7 +606,7 @@ async def main():
     # ตั้งค่า leverage แค่ครั้งเดียวตอนเริ่มต้น
     try:
         exchange.set_leverage(LEVERAGE, SYMBOL)
-        time.sleep(2)
+        time.sleep(exchange.rateLimit / 1000) # ใช้ rateLimit ของ exchange
         logger.info(f"📈 ตั้งค่า Leverage เป็น {LEVERAGE}x สำหรับ {SYMBOL} ในช่วงเริ่มต้น.")
     except Exception as e:
         logger.error(f"❌ Error setting initial leverage: {type(e).__name__}: {e}")
@@ -606,7 +618,7 @@ async def main():
             
             # ดึงราคาปัจจุบัน
             ticker = exchange.fetch_ticker(SYMBOL)
-            time.sleep(2) # เพิ่มหน่วงเวลา
+            time.sleep(exchange.rateLimit / 1000) # เพิ่มหน่วงเวลา
             current_price = ticker['last']
             logger.info(f"Current Price: {current_price:.2f}")
 
