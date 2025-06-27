@@ -27,7 +27,7 @@ TP_VALUE_POINTS = 501     # ระยะ TP (Take Profit) เป็นจุด 
 SL_VALUE_POINTS = 999     # ระยะ SL (Stop Loss) เป็นจุด
 BE_PROFIT_TRIGGER_POINTS = 350   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
 BE_SL_BUFFER_POINTS = 100        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
-PORTFOLIO_PERCENT_TRADE = 0.8 # เปอร์เซ็นต์ของพอร์ตที่ใช้ในการเปิดออเดอร์ (0.8 = 80%)
+PORTFOLIO_PERCENT_TRADE = 80 # เปอร์เซ็นต์ของพอร์ตที่ใช้ในการเปิดออเดอร์ (0.8 = 80%)
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
