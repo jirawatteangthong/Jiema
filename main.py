@@ -28,6 +28,7 @@ SL_VALUE_POINTS = 999     # ระยะ SL (Stop Loss) เป็นจุด
 BE_PROFIT_TRIGGER_POINTS = 350   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
 BE_SL_BUFFER_POINTS = 100        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
 PORTFOLIO_PERCENT_TRADE = 0.8 # เปอร์เซ็นต์ของพอร์ตที่ใช้ในการเปิดออเดอร์ (0.8 = 80%)
+CROSS_THRESHOLD_POINTS = 100  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -325,14 +326,13 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
     return ema
 
 def check_ema_cross() -> str | None:
-    """ตรวจสอบการตัดกันของ EMA50 และ EMA200 โดยรอให้แท่งเทียนปิดก่อน."""
+    """ตรวจสอบการตัดกันของ EMA50 และ EMA200 โดยใช้ Threshold เพื่อยืนยัน."""
     try:
         retries = 3
         ohlcv = None
         for i in range(retries):
             try:
-                # เราดึงข้อมูลมา 251 แท่ง เพื่อให้แน่ใจว่าเมื่อตัดแท่งล่าสุดออกไปแล้ว ยังมีข้อมูลพอ
-                ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=251)
+                ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=250)
                 time.sleep(2)
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
@@ -350,25 +350,16 @@ def check_ema_cross() -> str | None:
             send_telegram(f"⛔️ API Error: ล้มเหลวในการดึง OHLCV หลังจาก {retries} ครั้ง.")
             return None
 
-        # =================================================================
-        # === จุดสำคัญของการแก้ไขคือตรงนี้ ===
-        # เราจะตัดแท่งเทียนล่าสุด (ที่ยังไม่ปิด) ทิ้งไป ใช้เฉพาะแท่งที่ปิดแล้ว
-        closed_ohlcv = ohlcv[:-1]
-        logger.debug(f"Using {len(closed_ohlcv)} closed candles for EMA calculation.")
-        # =================================================================
-
-        if len(closed_ohlcv) < 202:
-            logger.warning(f"ข้อมูล OHLCV ที่ปิดแล้วไม่เพียงพอ. ต้องการอย่างน้อย 202 แท่ง ได้ {len(closed_ohlcv)}")
+        if len(ohlcv) < 202:
+            logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย 202 แท่ง ได้ {len(ohlcv)}")
             return None
 
-        # ใช้ราคาปิดของแท่งที่ปิดแล้วเท่านั้นในการคำนวณ
-        closes = [candle[4] for candle in closed_ohlcv]
+        closes = [candle[4] for candle in ohlcv]
 
-        # EMA ของ "แท่งล่าสุดที่เพิ่งปิดไป"
         ema50_current = calculate_ema(closes, 50)
         ema200_current = calculate_ema(closes, 200)
 
-        # EMA ของ "แท่งก่อนหน้าแท่งล่าสุด"
+        # ยังคงใช้ข้อมูลจากแท่งก่อนหน้าเพื่อดูว่าการ "ตัด" ได้เกิดขึ้นแล้ว
         ema50_prev = calculate_ema(closes[:-1], 50)
         ema200_prev = calculate_ema(closes[:-1], 200)
 
@@ -378,14 +369,17 @@ def check_ema_cross() -> str | None:
 
         cross_signal = None
 
-        # เงื่อนไขการตัดกันจะเหมือนเดิม แต่ข้อมูลที่ใช้คำนวณจะมาจากแท่งที่ปิดแล้วเท่านั้น
-        if ema50_prev <= ema200_prev and ema50_current > ema200_current:
+        # === เงื่อนไขใหม่ที่ฉลาดขึ้น ===
+        # 1. เช็คว่า "เคยตัดกันมาแล้ว" (ema50_prev <= ema200_prev)
+        # 2. เช็คว่า "ปัจจุบันเส้นอยู่เหนือกัน และต้องห่างเกิน Threshold ที่ตั้งไว้"
+        if ema50_prev <= ema200_prev and ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
-            logger.info(f"🚀 Confirmed Golden Cross: EMA50({ema50_current:.2f}) > EMA200({ema200_current:.2f}) on closed candle.")
+            logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
-        elif ema50_prev >= ema200_prev and ema50_current < ema200_current:
+        # เงื่อนไขฝั่ง Short
+        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
-            logger.info(f"🔻 Confirmed Death Cross: EMA50({ema50_current:.2f}) < EMA200({ema200_current:.2f}) on closed candle.")
+            logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
         return cross_signal
 
