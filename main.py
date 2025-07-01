@@ -6,6 +6,7 @@ import logging
 import threading
 import json
 import os
+import calendar # เพิ่ม import calendar เพื่อช่วยในการจัดการวันที่ในเดือน
 
 # ==============================================================================
 # 1. ตั้งค่าพื้นฐาน (CONFIGURATION)
@@ -380,7 +381,7 @@ def check_ema_cross() -> str | None:
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
         # เงื่อนไขฝั่ง Short
-        elif ema50_prev >= ema200_prev and ema200_current > (ema50_current + CROSS_THRESHOLD_POINTS): # แก้ไขตรรกะให้ถูกต้อง
+        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS): # แก้ไขตรรกะให้ถูกต้อง
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
@@ -732,16 +733,23 @@ def monthly_report():
 
 def monthly_report_scheduler():
     """ตั้งเวลาสำหรับส่งรายงานประจำเดือน."""
+    global last_monthly_report_date # เพิ่มบรรทัดนี้
+    # ไม่ต้องประกาศ global MONTHLY_REPORT_DAY เพราะเราจะไม่แก้ไขค่าตั้งต้น
+    # แต่จะใช้ค่าจาก global config โดยตรง
+    
     logger.info("⏰ เริ่ม Monthly Report Scheduler.")
     while True:
         now = datetime.now()
+        
         # กำหนดเวลาที่ต้องการส่งรายงาน (เช่น วันที่ 1 ของทุกเดือน เวลา 00:05)
-        next_report_time = now.replace(day=MONTHLY_REPORT_DAY, hour=MONTHLY_REPORT_HOUR, minute=MONTHLY_REPORT_MINUTE, second=0, microsecond=0)
+        # ตรวจสอบว่าวันที่ที่กำหนดใน MONTHLY_REPORT_DAY ไม่เกินจำนวนวันในเดือนปัจจุบัน
+        report_day = min(MONTHLY_REPORT_DAY, calendar.monthrange(now.year, now.month)[1])
+        
+        next_report_time = now.replace(day=report_day, hour=MONTHLY_REPORT_HOUR, minute=MONTHLY_REPORT_MINUTE, second=0, microsecond=0)
 
         # ถ้าเวลาปัจจุบันเลยเวลาส่งของเดือนนี้ไปแล้ว ให้คำนวณสำหรับเดือนถัดไป
         if now >= next_report_time:
             # ตรวจสอบว่าได้ส่งรายงานสำหรับเดือนปัจจุบันไปแล้วหรือยัง
-            # last_monthly_report_date อาจเป็น None หรือเป็นวันที่ในเดือนที่แล้ว
             if last_monthly_report_date is None or \
                last_monthly_report_date.year != now.year or \
                last_monthly_report_date.month != now.month:
@@ -750,25 +758,16 @@ def monthly_report_scheduler():
             
             # คำนวณเวลาสำหรับเดือนถัดไป
             if next_report_time.month == 12: # ถ้าเป็นเดือนธันวาคม ให้ข้ามไปปีหน้า
-                next_report_time = next_report_time.replace(year=next_report_time.year + 1, month=1, day=MONTHLY_REPORT_DAY)
+                next_report_time = next_report_time.replace(year=next_report_time.year + 1, month=1)
             else:
-                next_report_time = next_report_time.replace(month=next_report_time.month + 1, day=MONTHLY_REPORT_DAY)
+                next_report_time = next_report_time.replace(month=next_report_time.month + 1)
             
-            # ตรวจสอบอีกครั้งเผื่อกรณีที่วันที่จะส่งรายงาน (MONTHLY_REPORT_DAY) เกินจำนวนวันในเดือนถัดไป
-            # (เช่น ต้องการส่งวันที่ 31 แต่เดือนหน้ามีแค่ 30 วัน)
-            while next_report_time.month != (now.month % 12) + 1 and next_report_time.day != MONTHLY_REPORT_DAY: # ตรวจสอบ month เพื่อให้แน่ใจว่าไม่ได้ข้ามเดือนโดยไม่ตั้งใจ
-                try:
-                    next_report_time = next_report_time.replace(day=MONTHLY_REPORT_DAY)
-                    break
-                except ValueError:
-                    # ถ้าเกิด ValueError แสดงว่าวันที่ MONTHLY_REPORT_DAY ไม่มีในเดือนนั้น (เช่น 31 ก.พ.)
-                    # ให้ลดวันลงมาจนกว่าจะถูกต้อง (เช่น 28 ก.พ.)
-                    MONTHLY_REPORT_DAY -= 1 # ลดวันลงมา 1 วัน
-                    next_report_time = next_report_time.replace(day=MONTHLY_REPORT_DAY)
-                    # อาจจะไม่ได้ใช้ในบริบทนี้ เพราะ next_report_time ถูกกำหนดใหม่ไปแล้ว
-                    # แต่ถ้าต้องการให้มีความยืดหยุ่นมากขึ้นในกรณีที่ตั้งค่า MONTHLY_REPORT_DAY เกินจำนวนวัน
-                    # ควรจัดการให้ next_report_time เป็นวันที่สุดท้ายของเดือนนั้นแทน
-                    # ตัวอย่างเช่น next_report_time = next_report_time.replace(day=calendar.monthrange(next_report_time.year, next_report_time.month)[1])
+            # ปรับวันที่ในเดือนถัดไปให้ถูกต้อง กรณีที่เดือนหน้ามีวันน้อยกว่า MONTHLY_REPORT_DAY
+            # เช่น ถ้า MONTHLY_REPORT_DAY คือ 31 แต่เดือนถัดไปคือ ก.พ. (28/29 วัน)
+            max_day_in_next_month = calendar.monthrange(next_report_time.year, next_report_time.month)[1]
+            report_day_for_next_month = min(MONTHLY_REPORT_DAY, max_day_in_next_month)
+            next_report_time = next_report_time.replace(day=report_day_for_next_month)
+
 
         time_to_wait = (next_report_time - datetime.now()).total_seconds()
         if time_to_wait > 0:
