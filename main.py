@@ -40,8 +40,9 @@ STATS_FILE = 'trading_stats.json' # ไฟล์สำหรับบันท�
 # --- Bot Timing ---
 MAIN_LOOP_SLEEP_SECONDS = 360 # 🚀 เวลาหน่วงระหว่างรอบการทำงานหลัก (6 นาที)
 ERROR_RETRY_SLEEP_SECONDS = 60 # หน่วงเวลานานขึ้นเมื่อเกิดข้อผิดพลาดร้ายแรง/API Error
-DAILY_REPORT_HOUR = 0        # ชั่วโมงที่ต้องการส่งรายงานประจำวัน (0-23)
-DAILY_REPORT_MINUTE = 5      # นาทีที่ต้องการส่งรายงานประจำวัน (0-59)
+MONTHLY_REPORT_DAY = 1       # วันที่ของเดือนที่ต้องการส่งรายงานประจำเดือน (1-28)
+MONTHLY_REPORT_HOUR = 0      # ชั่วโมงที่ต้องการส่งรายงานประจำเดือน (0-23)
+MONTHLY_REPORT_MINUTE = 5    # นาทีที่ต้องการส่งรายงานประจำเดือน (0-59)
 
 # --- Tolerance สำหรับการระบุสาเหตุการปิดออเดอร์ ---
 # หากราคาปิดอยู่ภายในช่วง +/- X% ของราคา TP/SL/BE ก็จะถือว่าเป็นสาเหตุนั้นๆ
@@ -67,22 +68,22 @@ logger = logging.getLogger(__name__)
 current_position = None  # สถานะของโพซิชันปัจจุบัน: None, 'long', 'short'
 entry_price = None       # ราคาเข้าของโพซิชันปัจจุบัน
 sl_moved = False         # True หากมีการเลื่อน SL ไปแล้ว
-# last_ema_cross_signal จะถูกเก็บใน daily_stats เพื่อการ Persistence
+# last_ema_cross_signal จะถูกเก็บใน monthly_stats เพื่อการ Persistence
 portfolio_balance = 0.0    # ยอดคงเหลือในพอร์ตปัจจุบัน
-last_daily_report_date = None # วันที่ของรายงานประจำวันล่าสุดที่ส่งไป (เป็น datetime.date object)
+last_monthly_report_date = None # วันที่ของรายงานประจำเดือนล่าสุดที่ส่งไป (เป็น datetime.date object)
 initial_balance = 0.0      # ยอดเงินเริ่มต้นเมื่อบอทเริ่มทำงาน
 current_position_size = 0.0 # ขนาดของโพซิชันปัจจุบันที่เปิดอยู่ (สำหรับคำนวณ PnL เมื่อปิด)
 
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
 # ==============================================================================
-daily_stats = {
-    'date': None,       # วันที่ของสถิติ (YYYY-MM-DD) ที่กำลังรวบรวม
+monthly_stats = {
+    'month_year': None, # เดือนและปีของสถิติ (YYYY-MM) ที่กำลังรวบรวม
     'tp_count': 0,      # จำนวนครั้งที่ปิดด้วย TP
     'sl_count': 0,      # จำนวนครั้งที่ปิดด้วย SL
-    'total_pnl': 0.0,   ### <<< แก้ไข: เปลี่ยนจาก 0 เป็น 0.0
+    'total_pnl': 0.0,
     'trades': [],       # รายละเอียดการเทรดแต่ละครั้ง
-    'last_report_date': None, # วันที่ (YYYY-MM-DD) ที่ส่งรายงานประจำวันล่าสุดไปแล้ว
+    'last_report_month_year': None, # เดือนและปี (YYYY-MM) ที่ส่งรายงานประจำเดือนล่าสุดไปแล้ว
     'last_ema_cross_signal': None # เก็บสัญญาณ EMA cross ล่าสุดที่ใช้เปิดออเดอร์ เพื่อป้องกันเปิดซ้ำ
 }
 
@@ -117,98 +118,100 @@ except Exception as e:
 # 6. ฟังก์ชันจัดการสถิติ (STATISTICS MANAGEMENT FUNCTIONS)
 # ==============================================================================
 
-def save_daily_stats():
-    """บันทึกสถิติการเทรดประจำวันลงในไฟล์ JSON."""
+def save_monthly_stats():
+    """บันทึกสถิติการเทรดประจำเดือนลงในไฟล์ JSON."""
     try:
         with open(STATS_FILE, 'w') as f:
-            json.dump(daily_stats, f, indent=4)
+            json.dump(monthly_stats, f, indent=4)
         logger.debug(f"💾 บันทึกสถิติการเทรดลงไฟล์ {STATS_FILE} สำเร็จ")
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการบันทึกสถิติ: {e}")
 
-def load_daily_stats():
-    """โหลดสถิติการเทรดประจำวันจากไฟล์ JSON."""
-    global daily_stats, last_daily_report_date
+def load_monthly_stats():
+    """โหลดสถิติการเทรดประจำเดือนจากไฟล์ JSON."""
+    global monthly_stats, last_monthly_report_date
     try:
         if os.path.exists(STATS_FILE):
             with open(STATS_FILE, 'r') as f:
                 loaded_stats = json.load(f)
 
                 # ตรวจสอบและอัปเดตโครงสร้างหากมีการเปลี่ยนแปลงในอนาคต
-                daily_stats['date'] = loaded_stats.get('date', None)
-                daily_stats['tp_count'] = loaded_stats.get('tp_count', 0)
-                daily_stats['sl_count'] = loaded_stats.get('sl_count', 0)
-                daily_stats['total_pnl'] = loaded_stats.get('total_pnl', 0.0) ### <<< แก้ไข
-                daily_stats['trades'] = loaded_stats.get('trades', [])
-                daily_stats['last_report_date'] = loaded_stats.get('last_report_date', None)
-                daily_stats['last_ema_cross_signal'] = loaded_stats.get('last_ema_cross_signal', None)
+                monthly_stats['month_year'] = loaded_stats.get('month_year', None)
+                monthly_stats['tp_count'] = loaded_stats.get('tp_count', 0)
+                monthly_stats['sl_count'] = loaded_stats.get('sl_count', 0)
+                monthly_stats['total_pnl'] = loaded_stats.get('total_pnl', 0.0)
+                monthly_stats['trades'] = loaded_stats.get('trades', [])
+                monthly_stats['last_report_month_year'] = loaded_stats.get('last_report_month_year', None)
+                monthly_stats['last_ema_cross_signal'] = loaded_stats.get('last_ema_cross_signal', None)
 
             logger.info(f"💾 โหลดสถิติการเทรดจากไฟล์ {STATS_FILE} สำเร็จ")
 
-            # อัปเดต global variable last_daily_report_date
-            if daily_stats['last_report_date']:
+            # อัปเดต global variable last_monthly_report_date
+            if monthly_stats['last_report_month_year']:
                 try:
-                    last_daily_report_date = datetime.strptime(daily_stats['last_report_date'], '%Y-%m-%d').date()
+                    # แปลง YYYY-MM เป็น datetime.date object โดยใช้วันที่ 1 ของเดือนนั้น
+                    year, month = map(int, monthly_stats['last_report_month_year'].split('-'))
+                    last_monthly_report_date = datetime(year, month, 1).date()
                 except ValueError:
-                    logger.warning("⚠️ รูปแบบวันที่ last_report_date ในไฟล์ไม่ถูกต้อง. จะถือว่ายังไม่มีการส่งรายงาน.")
-                    last_daily_report_date = None
+                    logger.warning("⚠️ รูปแบบเดือน/ปี last_report_month_year ในไฟล์ไม่ถูกต้อง. จะถือว่ายังไม่มีการส่งรายงาน.")
+                    last_monthly_report_date = None
             else:
-                last_daily_report_date = None
+                last_monthly_report_date = None
 
-            # ตรวจสอบว่าสถิติที่โหลดมาเป็นของวันปัจจุบันหรือไม่
-            current_date_str = datetime.now().strftime('%Y-%m-%d')
-            if daily_stats['date'] != current_date_str:
-                logger.info(f"ℹ️ สถิติที่โหลดมาเป็นของวันที่ {daily_stats['date']} ไม่ตรงกับวันนี้ {current_date_str}. จะรีเซ็ตสถิติสำหรับวันใหม่.")
-                reset_daily_stats() # รีเซ็ตหากเป็นวันใหม่
+            # ตรวจสอบว่าสถิติที่โหลดมาเป็นของเดือนปัจจุบันหรือไม่
+            current_month_year_str = datetime.now().strftime('%Y-%m')
+            if monthly_stats['month_year'] != current_month_year_str:
+                logger.info(f"ℹ️ สถิติที่โหลดมาเป็นของเดือน {monthly_stats['month_year']} ไม่ตรงกับเดือนนี้ {current_month_year_str}. จะรีเซ็ตสถิติสำหรับเดือนใหม่.")
+                reset_monthly_stats() # รีเซ็ตหากเป็นเดือนใหม่
 
         else:
             logger.info(f"🆕 ไม่พบไฟล์สถิติ {STATS_FILE} สร้างไฟล์ใหม่")
-            reset_daily_stats() # สร้างไฟล์ใหม่พร้อมรีเซ็ตสถิติสำหรับวันนี้
+            reset_monthly_stats() # สร้างไฟล์ใหม่พร้อมรีเซ็ตสถิติสำหรับเดือนนี้
 
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการโหลดสถิติ: {e}")
         # หากโหลดไม่ได้ ให้เริ่มต้นด้วยค่าว่างและรีเซ็ต
-        daily_stats = {
-            'date': None, 'tp_count': 0, 'sl_count': 0, 'total_pnl': 0.0, 'trades': [], ### <<< แก้ไข
-            'last_report_date': None, 'last_ema_cross_signal': None
+        monthly_stats = {
+            'month_year': None, 'tp_count': 0, 'sl_count': 0, 'total_pnl': 0.0, 'trades': [],
+            'last_report_month_year': None, 'last_ema_cross_signal': None
         }
-        last_daily_report_date = None
-        reset_daily_stats() # รีเซ็ตเพื่อให้แน่ใจว่าเริ่มต้นใหม่
+        last_monthly_report_date = None
+        reset_monthly_stats() # รีเซ็ตเพื่อให้แน่ใจว่าเริ่มต้นใหม่
 
-def reset_daily_stats():
-    """รีเซ็ตสถิติประจำวันสำหรับวันใหม่."""
-    global daily_stats
-    daily_stats['date'] = datetime.now().strftime('%Y-%m-%d')
-    daily_stats['tp_count'] = 0
-    daily_stats['sl_count'] = 0
-    daily_stats['total_pnl'] = 0.0 ### <<< แก้ไข: เปลี่ยนจาก 0 เป็น 0.0
-    daily_stats['trades'] = []
-    # 'last_report_date' และ 'last_ema_cross_signal' ไม่ควรรีเซ็ตที่นี่
-    save_daily_stats()
-    logger.info(f"🔄 รีเซ็ตสถิติประจำวันสำหรับวันที่ {daily_stats['date']}")
+def reset_monthly_stats():
+    """รีเซ็ตสถิติประจำเดือนสำหรับเดือนใหม่."""
+    global monthly_stats
+    monthly_stats['month_year'] = datetime.now().strftime('%Y-%m')
+    monthly_stats['tp_count'] = 0
+    monthly_stats['sl_count'] = 0
+    monthly_stats['total_pnl'] = 0.0
+    monthly_stats['trades'] = []
+    # 'last_report_month_year' และ 'last_ema_cross_signal' ไม่ควรรีเซ็ตที่นี่
+    save_monthly_stats()
+    logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
 def add_trade_result(reason: str, pnl: float):
-    """เพิ่มผลการเทรดลงในสถิติประจำวัน."""
-    global daily_stats
-    current_date_str = datetime.now().strftime('%Y-%m-%d')
+    """เพิ่มผลการเทรดลงในสถิติประจำเดือน."""
+    global monthly_stats
+    current_month_year_str = datetime.now().strftime('%Y-%m')
 
-    if daily_stats['date'] != current_date_str:
-        logger.info(f"🆕 วันที่เปลี่ยนใน add_trade_result: {daily_stats['date']} -> {current_date_str}. กำลังรีเซ็ตสถิติประจำวัน.")
-        reset_daily_stats()
+    if monthly_stats['month_year'] != current_month_year_str:
+        logger.info(f"🆕 เดือนเปลี่ยนใน add_trade_result: {monthly_stats['month_year']} -> {current_month_year_str}. กำลังรีเซ็ตสถิติประจำเดือน.")
+        reset_monthly_stats()
 
     if reason.upper() == 'TP':
-        daily_stats['tp_count'] += 1
+        monthly_stats['tp_count'] += 1
     elif reason.upper() == 'SL' or reason.upper() == 'SL (กันทุน)':
-        daily_stats['sl_count'] += 1
+        monthly_stats['sl_count'] += 1
 
-    daily_stats['total_pnl'] += pnl
+    monthly_stats['total_pnl'] += pnl
 
-    daily_stats['trades'].append({
-        'time': datetime.now().strftime('%H:%M:%S'),
+    monthly_stats['trades'].append({
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # เพิ่มวันที่เข้าไปด้วย
         'reason': reason,
         'pnl': pnl
     })
-    save_daily_stats()
+    save_monthly_stats()
 
 # ==============================================================================
 # 7. ฟังก์ชันแจ้งเตือน Telegram (TELEGRAM NOTIFICATION FUNCTIONS)
@@ -377,9 +380,10 @@ def check_ema_cross() -> str | None:
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
         # เงื่อนไขฝั่ง Short
-        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
+        elif ema50_prev >= ema200_prev and ema200_current > (ema50_current + CROSS_THRESHOLD_POINTS): # แก้ไขตรรกะให้ถูกต้อง
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
+
 
         return cross_signal
 
@@ -511,7 +515,7 @@ def set_tpsl_for_position(pos_direction: str, entry_price_val: float) -> bool:
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
                 logger.warning(f"⚠️ Error setting TP/SL (Attempt {i+1}/3): {e}. Retrying in 15 seconds...")
                 if i == 2:
-                    send_telegram(f"⛔️ API Error: ไม่สามารถตั้งค่า TP/SL ได้ (Attempt {i+1}/3)\nรายละเอียด: {e}")
+                    send_telegram(f"⛔️ API Error: ไม่สามารถตั้งค่า TP/SL ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
                 time.sleep(15)
             except Exception as e:
                 logger.error(f"❌ Unexpected error setting TP/SL: {e}", exc_info=True)
@@ -606,7 +610,7 @@ def move_sl_to_breakeven(pos_direction: str, entry_price_val: float):
 def monitor_position(pos_info: dict | None, current_price: float):
     """ตรวจสอบสถานะโพซิชันปัจจุบันและจัดการ Stop Loss."""
     global current_position, sl_moved, entry_price, current_position_size
-    global daily_stats
+    global monthly_stats
 
     if not pos_info:
         if current_position:
@@ -655,8 +659,8 @@ def monitor_position(pos_info: dict | None, current_price: float):
             entry_price = None
             current_position_size = 0.0
             sl_moved = False
-            daily_stats['last_ema_cross_signal'] = None
-            save_daily_stats()
+            monthly_stats['last_ema_cross_signal'] = None
+            save_monthly_stats()
 
         return
 
@@ -678,34 +682,36 @@ def monitor_position(pos_info: dict | None, current_price: float):
         move_sl_to_breakeven(current_position, entry_price)
 
 # ==============================================================================
-# 12. ฟังก์ชันรายงานประจำวัน (DAILY REPORT FUNCTIONS)
+# 12. ฟังก์ชันรายงานประจำเดือน (MONTHLY REPORT FUNCTIONS)
 # ==============================================================================
-def daily_report():
-    """ส่งรายงานสถิติการเทรดประจำวันไปยัง Telegram."""
-    global last_daily_report_date, daily_stats
+def monthly_report():
+    """ส่งรายงานสถิติการเทรดประจำเดือนไปยัง Telegram."""
+    global last_monthly_report_date, monthly_stats
 
     now = datetime.now()
-    today_date = now.date()
+    current_month_year = now.strftime('%Y-%m') # เก็บเฉพาะ เดือน-ปี
 
-    if last_daily_report_date == today_date:
-        logger.debug(f"ℹ️ รายงานประจำวันสำหรับ {today_date} ถูกส่งไปแล้ว.")
+    # ตรวจสอบว่าได้ส่งรายงานสำหรับเดือนนี้ไปแล้วหรือยัง
+    if last_monthly_report_date and \
+       last_monthly_report_date.year == now.year and \
+       last_monthly_report_date.month == now.month:
+        logger.debug(f"ℹ️ รายงานประจำเดือนสำหรับ {current_month_year} ถูกส่งไปแล้ว.")
         return
 
     try:
         balance = get_portfolio_balance()
 
-        if daily_stats['date'] != today_date.strftime('%Y-%m-%d'):
-            logger.info(f"🆕 สถิติประจำวันที่ใช้ไม่ตรงกับวันนี้ ({daily_stats['date']} vs {today_date.strftime('%Y-%m-%d')}). กำลังรีเซ็ตสถิติเพื่อรายงานวันนี้.")
-            reset_daily_stats()
+        if monthly_stats['month_year'] != current_month_year:
+            logger.info(f"🆕 สถิติประจำเดือนที่ใช้ไม่ตรงกับเดือนนี้ ({monthly_stats['month_year']} vs {current_month_year}). กำลังรีเซ็ตสถิติเพื่อรายงานเดือนนี้.")
+            reset_monthly_stats()
 
-        tp_count = daily_stats['tp_count']
-        sl_count = daily_stats['sl_count']
-        total_pnl = daily_stats['total_pnl']
+        tp_count = monthly_stats['tp_count']
+        sl_count = monthly_stats['sl_count']
+        total_pnl = monthly_stats['total_pnl']
         pnl_from_start = balance - initial_balance if initial_balance > 0 else 0.0
 
-        ### <<< แก้ไข: ปรับปรุง format string ให้ถูกต้อง
-        message = f"""📊 <b>รายงานประจำวัน - {now.strftime('%d/%m/%Y')}</b>
-<b>🔹 กำไรสุทธิวันนี้:</b> <code>{total_pnl:+,.2f} USDT</code>
+        message = f"""📊 <b>รายงานสรุปผลประจำเดือน - {now.strftime('%B %Y')}</b>
+<b>🔹 กำไรสุทธิเดือนนี้:</b> <code>{total_pnl:+,.2f} USDT</code>
 <b>🔹 SL:</b> <code>{sl_count} ครั้ง</code>
 <b>🔹 TP:</b> <code>{tp_count} ครั้ง</code>
 <b>🔹 คงเหลือปัจจุบัน:</b> <code>{balance:,.2f} USDT</code>
@@ -714,31 +720,59 @@ def daily_report():
 <b>เวลา:</b> <code>{now.strftime('%H:%M')}</code>"""
 
         send_telegram(message)
-        last_daily_report_date = today_date
-        daily_stats['last_report_date'] = today_date.strftime('%Y-%m-%d')
-        save_daily_stats()
-        logger.info("✅ ส่งรายงานประจำวันแล้ว.")
+        # อัปเดต last_monthly_report_date เป็นวันที่ปัจจุบันที่ส่งรายงาน
+        last_monthly_report_date = now.date()
+        monthly_stats['last_report_month_year'] = current_month_year
+        save_monthly_stats()
+        logger.info("✅ ส่งรายงานประจำเดือนแล้ว.")
 
     except Exception as e:
-        logger.error(f"❌ เกิดข้อผิดพลาดในการส่งรายงานประจำวัน: {e}", exc_info=True)
-        send_telegram(f"⛔️ Error: ไม่สามารถส่งรายงานประจำวันได้\nรายละเอียด: {e}")
+        logger.error(f"❌ เกิดข้อผิดพลาดในการส่งรายงานประจำเดือน: {e}", exc_info=True)
+        send_telegram(f"⛔️ Error: ไม่สามารถส่งรายงานประจำเดือนได้\nรายละเอียด: {e}")
 
-def daily_report_scheduler():
-    """ตั้งเวลาสำหรับส่งรายงานประจำวัน."""
-    logger.info("⏰ เริ่ม Daily Report Scheduler.")
+def monthly_report_scheduler():
+    """ตั้งเวลาสำหรับส่งรายงานประจำเดือน."""
+    logger.info("⏰ เริ่ม Monthly Report Scheduler.")
     while True:
         now = datetime.now()
-        next_report_time = now.replace(hour=DAILY_REPORT_HOUR, minute=DAILY_REPORT_MINUTE, second=0, microsecond=0)
+        # กำหนดเวลาที่ต้องการส่งรายงาน (เช่น วันที่ 1 ของทุกเดือน เวลา 00:05)
+        next_report_time = now.replace(day=MONTHLY_REPORT_DAY, hour=MONTHLY_REPORT_HOUR, minute=MONTHLY_REPORT_MINUTE, second=0, microsecond=0)
 
+        # ถ้าเวลาปัจจุบันเลยเวลาส่งของเดือนนี้ไปแล้ว ให้คำนวณสำหรับเดือนถัดไป
         if now >= next_report_time:
-            if last_daily_report_date is None or last_daily_report_date < now.date():
-                 logger.info(f"⏰ ตรวจพบว่าถึงเวลาส่งรายงานประจำวัน ({now.strftime('%H:%M')}) และยังไม่ได้ส่งสำหรับวันนี้. กำลังส่ง...")
-                 daily_report()
-            next_report_time += timedelta(days=1)
+            # ตรวจสอบว่าได้ส่งรายงานสำหรับเดือนปัจจุบันไปแล้วหรือยัง
+            # last_monthly_report_date อาจเป็น None หรือเป็นวันที่ในเดือนที่แล้ว
+            if last_monthly_report_date is None or \
+               last_monthly_report_date.year != now.year or \
+               last_monthly_report_date.month != now.month:
+                 logger.info(f"⏰ ตรวจพบว่าถึงเวลาส่งรายงานประจำเดือน ({now.strftime('%H:%M')}) และยังไม่ได้ส่งสำหรับเดือนนี้. กำลังส่ง...")
+                 monthly_report()
+            
+            # คำนวณเวลาสำหรับเดือนถัดไป
+            if next_report_time.month == 12: # ถ้าเป็นเดือนธันวาคม ให้ข้ามไปปีหน้า
+                next_report_time = next_report_time.replace(year=next_report_time.year + 1, month=1, day=MONTHLY_REPORT_DAY)
+            else:
+                next_report_time = next_report_time.replace(month=next_report_time.month + 1, day=MONTHLY_REPORT_DAY)
+            
+            # ตรวจสอบอีกครั้งเผื่อกรณีที่วันที่จะส่งรายงาน (MONTHLY_REPORT_DAY) เกินจำนวนวันในเดือนถัดไป
+            # (เช่น ต้องการส่งวันที่ 31 แต่เดือนหน้ามีแค่ 30 วัน)
+            while next_report_time.month != (now.month % 12) + 1 and next_report_time.day != MONTHLY_REPORT_DAY: # ตรวจสอบ month เพื่อให้แน่ใจว่าไม่ได้ข้ามเดือนโดยไม่ตั้งใจ
+                try:
+                    next_report_time = next_report_time.replace(day=MONTHLY_REPORT_DAY)
+                    break
+                except ValueError:
+                    # ถ้าเกิด ValueError แสดงว่าวันที่ MONTHLY_REPORT_DAY ไม่มีในเดือนนั้น (เช่น 31 ก.พ.)
+                    # ให้ลดวันลงมาจนกว่าจะถูกต้อง (เช่น 28 ก.พ.)
+                    MONTHLY_REPORT_DAY -= 1 # ลดวันลงมา 1 วัน
+                    next_report_time = next_report_time.replace(day=MONTHLY_REPORT_DAY)
+                    # อาจจะไม่ได้ใช้ในบริบทนี้ เพราะ next_report_time ถูกกำหนดใหม่ไปแล้ว
+                    # แต่ถ้าต้องการให้มีความยืดหยุ่นมากขึ้นในกรณีที่ตั้งค่า MONTHLY_REPORT_DAY เกินจำนวนวัน
+                    # ควรจัดการให้ next_report_time เป็นวันที่สุดท้ายของเดือนนั้นแทน
+                    # ตัวอย่างเช่น next_report_time = next_report_time.replace(day=calendar.monthrange(next_report_time.year, next_report_time.month)[1])
 
         time_to_wait = (next_report_time - datetime.now()).total_seconds()
         if time_to_wait > 0:
-            logger.info(f"⏰ กำหนดส่งรายงานประจำวันถัดไปในอีก {int(time_to_wait / 3600)} ชั่วโมง {int((time_to_wait % 3600) / 60)} นาที.")
+            logger.info(f"⏰ กำหนดส่งรายงานประจำเดือนถัดไปในอีก {int(time_to_wait / 86400)} วัน {int((time_to_wait % 86400) / 3600)} ชั่วโมง {int((time_to_wait % 3600) / 60)} นาที.")
             time.sleep(max(time_to_wait, 60))
         else:
             # กรณีที่คำนวณแล้วเวลาติดลบ (ไม่ควรเกิด แต่นี่เป็น safety net)
@@ -775,14 +809,14 @@ def send_startup_message():
 # ==============================================================================
 def main():
     """ฟังก์ชันหลักที่รัน Bot."""
-    global daily_stats
+    global monthly_stats
 
     try:
-        load_daily_stats()
+        load_monthly_stats()
         send_startup_message()
 
-        daily_thread = threading.Thread(target=daily_report_scheduler, daemon=True)
-        daily_thread.start()
+        monthly_thread = threading.Thread(target=monthly_report_scheduler, daemon=True)
+        monthly_thread.start()
 
     except Exception as e:
         error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | บอทจะลองเริ่มต้นใหม่ใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
@@ -820,7 +854,7 @@ def main():
                 if signal:
                     logger.info(f"🌟 ตรวจพบสัญญาณ EMA Cross: {signal.upper()}")
 
-                    if signal != daily_stats.get('last_ema_cross_signal'):
+                    if signal != monthly_stats.get('last_ema_cross_signal'):
                         logger.info(f"✨ สัญญาณ {signal.upper()} ใหม่ที่ถูกต้อง. กำลังพยายามเปิดออเดอร์.")
 
                         market_order_success, confirmed_entry_price = open_market_order(signal, current_price)
@@ -829,8 +863,8 @@ def main():
                             set_tpsl_success = set_tpsl_for_position(signal, confirmed_entry_price)
 
                             if set_tpsl_success:
-                                daily_stats['last_ema_cross_signal'] = signal
-                                save_daily_stats()
+                                monthly_stats['last_ema_cross_signal'] = signal
+                                save_monthly_stats()
                                 logger.info(f"✅ เปิดออเดอร์ {signal.upper()} และตั้ง TP/SL สำเร็จ.")
                             else:
                                 logger.error(f"❌ เปิดออเดอร์ {signal.upper()} ได้ แต่ตั้ง TP/SL ไม่สำเร็จ. กรุณาตรวจสอบและปิดออเดอร์ด้วยตนเอง!")
@@ -866,4 +900,3 @@ def main():
 # ==============================================================================
 if __name__ == '__main__':
     main()
-
