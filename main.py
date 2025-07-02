@@ -21,29 +21,29 @@ SECRET = os.getenv('RAILWAY_SECRET', 'YOUR_SECRET_HERE_FOR_LOCAL_TESTING')
 PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
-SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '15m'
-LEVERAGE = 30
-TP_VALUE_POINTS = 501
-SL_VALUE_POINTS = 999
-BE_PROFIT_TRIGGER_POINTS = 350
-BE_SL_BUFFER_POINTS = 100
-PORTFOLIO_PERCENT_TRADE = 0.9 # ใช้ 100% ของพอร์ต ("All in")
-CROSS_THRESHOLD_POINTS = 20
+SYMBOL = 'BTC/USDT:USDT'  # คู่เทรดที่ต้องการ (เช่น BTC/USDT:USDT สำหรับ Perpetual Swap)
+TIMEFRAME = '15m'         # Timeframe ของแท่งเทียน (เช่น '1m', '5m', '15m', '1h')
+LEVERAGE = 30             # <<-- ตั้ง Leverage เป็น 30
+TP_VALUE_POINTS = 501     # ระยะ TP (Take Profit) เป็นจุด (เช่น 500 จุดสำหรับ BTC)
+SL_VALUE_POINTS = 999     # ระยะ SL (Stop Loss) เป็นจุด
+BE_PROFIT_TRIGGER_POINTS = 350   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
+BE_SL_BUFFER_POINTS = 100        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
+PORTFOLIO_PERCENT_TRADE = 0.9 # <<-- ตั้งค่าเป็น 1.0 เพื่อใช้เงินเกือบทั้งหมด ("All in")
+CROSS_THRESHOLD_POINTS = 20  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TESTING')
 
 # --- Files & Paths ---
-STATS_FILE = 'trading_stats.json'
+STATS_FILE = 'trading_stats.json' # ไฟล์สำหรับบันทึกสถิติการเทรด
 
 # --- Bot Timing ---
-MAIN_LOOP_SLEEP_SECONDS = 360 # 6 นาที
-ERROR_RETRY_SLEEP_SECONDS = 60
-MONTHLY_REPORT_DAY = 20
-MONTHLY_REPORT_HOUR = 0
-MONTHLY_REPORT_MINUTE = 5
+MAIN_LOOP_SLEEP_SECONDS = 360 # 🚀 เวลาหน่วงระหว่างรอบการทำงานหลัก (6 นาที)
+ERROR_RETRY_SLEEP_SECONDS = 60 # หน่วงเวลานานขึ้นเมื่อเกิดข้อผิดพลาดร้ายแรง/API Error
+MONTHLY_REPORT_DAY = 20       # วันที่ของเดือนที่ต้องการส่งรายงานประจำเดือน (1-28)
+MONTHLY_REPORT_HOUR = 0      # ชั่วโมงที่ต้องการส่งรายงานประจำเดือน (0-23)
+MONTHLY_REPORT_MINUTE = 5    # นาทีที่ต้องการส่งรายงานประจำเดือน (0-59)
 
 # --- Tolerance สำหรับการระบุสาเหตุการปิดออเดอร์ ---
 TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005
@@ -60,8 +60,9 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+# <<-- สำคัญมาก: บังคับให้ Log ถูกเขียนลงทันที (ลดโอกาสที่ Log จะหายไปเมื่อบอท Crash)
 for handler in logging.root.handlers:
-    if hasattr(handler, 'flush'):
+    if hasattr(handler, 'flush'): # ตรวจสอบว่า handler มี method 'flush' หรือไม่
         handler.flush = lambda: sys.stdout.flush() if isinstance(handler, logging.StreamHandler) else handler.stream.flush()
 
 logger = logging.getLogger(__name__)
@@ -106,15 +107,26 @@ try:
         'password': PASSWORD,
         'enableRateLimit': True,
         'rateLimit': 1000,
-        'options': {'defaultType': 'swap'}
+        'options': {
+            'defaultType': 'swap', # ใช้ 'swap' เหมือนเดิม
+            'warnOnFetchOHLCVLimitArgument': False, 
+            'adjustForTimeDifference': True, 
+            # <<-- สำคัญ: ปิดการโหลดข้อมูลจำนวนมากตอนเริ่มต้น เพื่อลด RAM
+            'loadMarkets': False, 
+            'loadInstruments': False,
+            'loadCurrencies': False,
+        },
+        'verbose': True, # <<-- ตั้งเป็น True เพื่อให้ CCXT แสดง Log ภายในของมันทั้งหมด
+        'timeout': 30000, # เพิ่ม Timeout เป็น 30 วินาที สำหรับ API Calls
     })
     exchange.set_sandbox_mode(False) # ⚠️ ตั้งค่าให้เป็น False สำหรับบัญชีจริง
     logger.info("✅ เชื่อมต่อกับ OKX Exchange สำเร็จ")
+
 except ValueError as ve:
-    logger.critical(f"❌ Configuration Error: {ve}")
+    logger.critical(f"❌ Configuration Error: {ve}", exc_info=True)
     exit()
 except Exception as e:
-    logger.critical(f"❌ ไม่สามารถเชื่อมต่อกับ OKX Exchange ได้: {e}")
+    logger.critical(f"❌ ไม่สามารถเชื่อมต่อหรือโหลดข้อมูล Exchange เบื้องต้นได้: {e}", exc_info=True)
     exit()
 
 # ==============================================================================
@@ -153,7 +165,7 @@ def load_monthly_stats():
                     year, month = map(int, monthly_stats['last_report_month_year'].split('-'))
                     last_monthly_report_date = datetime(year, month, 1).date()
                 except ValueError:
-                    logger.warning("⚠️ รูปแบบวันที่ last_report_month_year ในไฟล์ไม่ถูกต้อง. จะถือว่ายังไม่มีการส่งรายงาน.")
+                    logger.warning("⚠️ รูปแบบวันที่ last_report_report_month_year ในไฟล์ไม่ถูกต้อง. จะถือว่ายังไม่มีการส่งรายงาน.")
                     last_monthly_report_date = None
             else:
                 last_monthly_report_date = None
@@ -246,8 +258,9 @@ def get_portfolio_balance() -> float:
     retries = 3
     for i in range(retries):
         try:
-            params = {'type': 'trading'}
-            balance_data = exchange.fetch_balance(params)
+            logger.debug(f"🔍 กำลังดึงยอดคงเหลือ (Attempt {i+1}/{retries})...")
+            # CCXT จะโหลด markets, instruments, currencies ที่จำเป็นเองเมื่อถูกเรียกใช้ครั้งแรก (เพราะ loadMarkets=False)
+            balance_data = exchange.fetch_balance(params={'type': 'trading'})
             time.sleep(2)
 
             usdt_balance = float(balance_data.get('USDT', {}).get('free', 0.0))
@@ -268,7 +281,7 @@ def get_portfolio_balance() -> float:
                 send_telegram(f"⛔️ API Error: ไม่สามารถดึงยอดคงเหลือได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
             time.sleep(15)
         except Exception as e:
-            logger.error(f"❌ Unexpected error in get_portfolio_balance: {e}")
+            logger.error(f"❌ Unexpected error in get_portfolio_balance: {e}", exc_info=True)
             send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงยอดคงเหลือได้\nรายละเอียด: {e}")
             return 0.0
     logger.error(f"❌ Failed to fetch balance after {retries} attempts.")
@@ -280,6 +293,7 @@ def get_current_position() -> dict | None:
     retries = 3
     for i in range(retries):
         try:
+            logger.debug(f"🔍 กำลังดึงโพซิชันปัจจุบัน (Attempt {i+1}/{retries})...")
             positions = exchange.fetch_positions([SYMBOL])
             time.sleep(2)
             for pos in positions:
@@ -299,7 +313,7 @@ def get_current_position() -> dict | None:
                 send_telegram(f"⛔️ API Error: ไม่สามารถดึงโพซิชันได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
             time.sleep(15)
         except Exception as e:
-            logger.error(f"❌ Unexpected error in get_current_position: {e}")
+            logger.error(f"❌ Unexpected error in get_current_position: {e}", exc_info=True)
             send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงโพซิชันได้\nรายละเอียด: {e}")
             return None
     logger.error(f"❌ Failed to fetch positions after {retries} attempts.")
@@ -330,7 +344,7 @@ def check_ema_cross() -> str | None:
         retries = 3
         ohlcv = None
         for i in range(retries):
-            logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...") # Log เพิ่มเติม
+            logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...")
             try:
                 ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=250)
                 time.sleep(2)
@@ -341,7 +355,7 @@ def check_ema_cross() -> str | None:
                     send_telegram(f"⛔️ API Error: ไม่สามารถดึง OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
                 time.sleep(15)
             except Exception as e:
-                logger.error(f"❌ Unexpected error fetching OHLCV: {e}")
+                logger.error(f"❌ Unexpected error fetching OHLCV: {e}", exc_info=True)
                 send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึง OHLCV ได้\nรายละเอียด: {e}")
                 return None
 
@@ -352,7 +366,7 @@ def check_ema_cross() -> str | None:
 
         if len(ohlcv) < 202:
             logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย 202 แท่ง ได้ {len(ohlcv)}")
-            send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง).") # แจ้งเตือน
+            send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง).")
             return None
 
         closes = [candle[4] for candle in ohlcv]
@@ -363,7 +377,7 @@ def check_ema_cross() -> str | None:
         ema50_prev = calculate_ema(closes[:-1], 50)
         ema200_prev = calculate_ema(closes[:-1], 200)
 
-        logger.debug(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f} | Previous EMA50={ema50_prev:.2f}, EMA200={ema200_prev:.2f}") # Log ค่า EMA
+        logger.debug(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f} | Previous EMA50={ema50_prev:.2f}, EMA200={ema200_prev:.2f}")
         
         if None in [ema50_prev, ema200_prev, ema50_current, ema200_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
@@ -389,7 +403,7 @@ def check_ema_cross() -> str | None:
         return cross_signal
 
     except Exception as e:
-        logger.error(f"❌ เกิดข้อผิดพลาดในการคำนวณ EMA: {e}", exc_info=True) # แสดง Traceback
+        logger.error(f"❌ เกิดข้อผิดพลาดในการคำนวณ EMA: {e}", exc_info=True)
         send_telegram(f"⛔️ Error: ไม่สามารถคำนวณ EMA ได้\nรายละเอียด: {e}")
         return None
 
@@ -465,7 +479,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
         order = None
         for i in range(3):
-            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3)...") # Log ก่อนส่งคำสั่ง
+            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3)...")
             try:
                 order = exchange.create_order(SYMBOL, 'market', side, order_size_in_btc, params=params)
                 time.sleep(2)
@@ -477,7 +491,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                     send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {e}")
                 time.sleep(15)
             except Exception as e:
-                logger.error(f"❌ Unexpected error creating market order: {e}", exc_info=True) # แสดง Traceback
+                logger.error(f"❌ Unexpected error creating market order: {e}", exc_info=True)
                 send_telegram(f"⛔️ Unexpected Error: ไม่สามารถสร้างออเดอร์ตลาดได้\nรายละเอียด: {e}")
                 return False, None
 
@@ -508,7 +522,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         return False, None
 
     except Exception as e:
-        logger.error(f"❌ Error ใน open_market_order (General Error): {e}", exc_info=True) # แสดง Traceback
+        logger.error(f"❌ Error ใน open_market_order (General Error): {e}", exc_info=True)
         send_telegram(f"⛔️ Error: ไม่สามารถเปิดออเดอร์ตลาดได้ (General Error)\nรายละเอียด: {e}")
         return False, None
 
@@ -521,7 +535,7 @@ def monitor_position(pos_info: dict | None, current_price: float):
     global current_position, sl_moved, entry_price, current_position_size
     global monthly_stats
 
-    logger.debug(f"🔄 กำลังตรวจสอบสถานะโพซิชัน: Pos_Info={pos_info}, Current_Price={current_price}") # Log เพิ่มเติม
+    logger.debug(f"🔄 กำลังตรวจสอบสถานะโพซิชัน: Pos_Info={pos_info}, Current_Price={current_price}")
     if not pos_info:
         if current_position:
             logger.info(f"ℹ️ โพซิชัน {current_position.upper()} ถูกปิดแล้ว.")
@@ -727,7 +741,6 @@ def main():
         try:
             logger.info(f"🔄 เริ่มรอบ Main Loop ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) - กำลังดึงข้อมูลและตรวจสอบ.")
             
-            # --- ดึงข้อมูลสถานะโพซิชันปัจจุบัน ---
             current_pos_info = None
             try:
                 logger.info("🔎 กำลังดึงสถานะโพซิชันปัจจุบัน...")
@@ -739,7 +752,6 @@ def main():
                 time.sleep(ERROR_RETRY_SLEEP_SECONDS)
                 continue
 
-            # --- ดึงข้อมูลราคาล่าสุด ---
             ticker = None
             try:
                 logger.info("📊 กำลังดึงราคาล่าสุด (Ticker)...")
@@ -759,10 +771,8 @@ def main():
             current_price = float(ticker['last'])
             logger.info(f"💲 ราคาปัจจุบันของ {SYMBOL}: {current_price:,.1f}")
 
-            # --- ตรวจสอบและจัดการโพซิชันปัจจุบัน ---
             monitor_position(current_pos_info, current_price)
 
-            # --- ตรวจสอบสัญญาณและเปิดออเดอร์ (ถ้าไม่มีโพซิชัน) ---
             if not current_pos_info:
                 logger.info("🔍 ไม่มีโพซิชันเปิดอยู่. กำลังตรวจสอบสัญญาณ EMA Cross...")
                 signal = check_ema_cross()
@@ -790,9 +800,9 @@ def main():
                     else:
                         logger.info(f"ℹ️ สัญญาณ {signal.upper()} ซ้ำซ้อนกับสัญญาณล่าสุด. ข้ามการเปิดออเดอร์.")
                 else:
-                    logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.") # เปลี่ยนเป็น INFO เพื่อให้เห็นเสมอ
+                    logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.")
             else:
-                logger.info(f"Current Position: {current_pos_info['side'].upper()}. รอการปิดหรือเลื่อน SL.") # เปลี่ยนเป็น INFO
+                logger.info(f"Current Position: {current_pos_info['side'].upper()}. รอการปิดหรือเลื่อน SL.")
 
             logger.info(f"😴 จบรอบ Main Loop. รอ {MAIN_LOOP_SLEEP_SECONDS} วินาทีสำหรับรอบถัดไป.")
             time.sleep(MAIN_LOOP_SLEEP_SECONDS)
