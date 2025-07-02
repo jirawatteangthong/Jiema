@@ -7,6 +7,7 @@ import threading
 import json
 import os
 import calendar
+import sys # <<-- เพิ่มบรรทัดนี้: ต้อง import sys เพื่อใช้ sys.stdout
 
 # ==============================================================================
 # 1. ตั้งค่าพื้นฐาน (CONFIGURATION)
@@ -22,13 +23,13 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'  # คู่เทรดที่ต้องการ (เช่น BTC/USDT:USDT สำหรับ Perpetual Swap)
 TIMEFRAME = '15m'         # Timeframe ของแท่งเทียน (เช่น '1m', '5m', '15m', '1h')
-LEVERAGE = 30             # <<-- ตั้ง Leverage เป็น 30 ตามที่คุณต้องการ
+LEVERAGE = 30             # <<-- ตั้ง Leverage เป็น 30
 TP_VALUE_POINTS = 501     # ระยะ TP (Take Profit) เป็นจุด (เช่น 500 จุดสำหรับ BTC)
 SL_VALUE_POINTS = 999     # ระยะ SL (Stop Loss) เป็นจุด
 BE_PROFIT_TRIGGER_POINTS = 350   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
-BE_SL_BUFFER_POINTS = 110        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
+BE_SL_BUFFER_POINTS = 100        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
 PORTFOLIO_PERCENT_TRADE = 0.9 # <<-- ตั้งค่าเป็น 1.0 เพื่อใช้เงินเกือบทั้งหมด ("All in")
-CROSS_THRESHOLD_POINTS = 15  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
+CROSS_THRESHOLD_POINTS = 20  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -54,11 +55,17 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
+        logging.FileHandler('bot.log', encoding='utf-8'), # เพิ่ม encoding
+        logging.StreamHandler(sys.stdout) # ระบุ sys.stdout ชัดเจน
     ]
 )
+# <<-- เพิ่มบรรทัดนี้: บังคับให้ Log ถูกเขียนลงทันที (สำคัญสำหรับการ Debug ปัญหา Crash)
+for handler in logging.root.handlers:
+    if hasattr(handler, 'flush'):
+        handler.flush = lambda: sys.stdout.flush() if isinstance(handler, logging.StreamHandler) else handler.stream.flush()
+
 logger = logging.getLogger(__name__)
+
 
 # ==============================================================================
 # 3. ตัวแปรสถานะการเทรด (GLOBAL TRADE STATE VARIABLES)
@@ -386,7 +393,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
     try:
         balance = get_portfolio_balance()
-        if balance <= 1: # เพิ่ม threshold เพื่อป้องกันการเปิดออเดอร์ด้วยเงินที่น้อยเกินไป
+        if balance <= 1:
             send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอสำหรับเปิดออเดอร์ ({balance:.2f} USDT).")
             logger.error(f"❌ Balance ({balance:.2f} USDT) is too low to open an order.")
             return False, None
@@ -415,14 +422,11 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             order_size_in_btc = min_amount_btc_from_exchange
 
         # ตรวจสอบ Min Notional (มูลค่าเป็น USDT)
-        # นี่เป็นส่วนสำคัญที่อาจทำให้ต้องเพิ่มขนาดหากมูลค่าไม่ถึงขั้นต่ำ
         current_notional_value = order_size_in_btc * current_price
         if min_notional_usdt_from_exchange and current_notional_value < min_notional_usdt_from_exchange:
             logger.warning(f"⚠️ มูลค่า Notional ที่คำนวณได้ (สำหรับ {order_size_in_btc:.6f} BTC คือ {current_notional_value:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำ ({min_notional_usdt_from_exchange:.2f} USDT).")
-            # คำนวณขนาด BTC ที่จำเป็นเพื่อให้ถึงมูลค่า Notional ขั้นต่ำ
             required_btc_for_min_notional = min_notional_usdt_from_exchange / current_price
             
-            # ปรับขนาดออเดอร์เฉพาะเมื่อขนาดที่ต้องการสำหรับ Notional ขั้นต่ำ สูงกว่าขนาดปัจจุบัน
             if required_btc_for_min_notional > order_size_in_btc:
                 logger.warning(f"ℹ️ ปรับขนาด BTC จาก {order_size_in_btc:.6f} เป็น {required_btc_for_min_notional:.6f} BTC เพื่อให้ถึงมูลค่า Notional ขั้นต่ำ.")
                 order_size_in_btc = required_btc_for_min_notional
@@ -435,12 +439,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
         # ตรวจสอบ Margin ที่ต้องการเทียบกับเงินคงเหลือ
         required_notional_for_final_size = order_size_in_btc * current_price
-        # สำหรับ Cross Margin อาจมีปัจจัยอื่นๆ เช่น Maintenance Margin, Isolated Margin ที่ต้องพิจารณา
-        # แต่โดยทั่วไป Initial Margin คำนวณจาก Notional / Leverage
         required_margin_for_final_size = required_notional_for_final_size / LEVERAGE
-        
-        # เพิ่ม buffer เล็กน้อยสำหรับค่าธรรมเนียมหรือ Slippage (ประมาณ 0.1% ของ Notional Value สำหรับ Taker fee)
-        # แต่เพื่อความง่าย เราจะเปรียบเทียบโดยตรงก่อน
         
         if balance < required_margin_for_final_size:
              error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขนาด {order_size_in_btc:.6f} BTC. ต้องการ Margin {required_margin_for_final_size:,.2f} USDT."
@@ -459,7 +458,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
-            # 'px': str(current_price) # สำหรับ Market order ไม่จำเป็นต้องระบุราคา
         }
 
         order = None
@@ -493,8 +491,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/{confirmation_retries})...")
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
-            # ตรวจสอบทิศทางและขนาดโพซิชันที่ยืนยันได้ เทียบกับขนาดที่พยายามเปิด
-            # ใช้ค่าความคลาดเคลื่อน 0.5% ของขนาดออเดอร์
             size_tolerance = order_size_in_btc * 0.005
             if confirmed_pos_info and \
                confirmed_pos_info['side'] == direction and \
@@ -503,24 +499,8 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 current_position_size = confirmed_pos_info['size']
                 return True, confirmed_pos_info['entry_price']
             
-            # ถ้ายังไม่เจอ หรือเจอแต่ไม่ตรง อาจจะลอง fetch_orders เพื่อดูว่าคำสั่งถูกปฏิเสธ/ยกเลิกหรือไม่
-            # แต่เพื่อไม่ให้โค้ดยุ่งยากเกินไป เราจะเน้นที่การรอคอนเฟิร์มโพซิชัน
-            
         logger.error(f"❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order (หลังจากพยายาม {confirmation_retries} ครั้ง).")
         send_telegram("⛔️ Error: ไม่สามารถยืนยันโพซิชันหลังเปิดออเดอร์ได้. กรุณาตรวจสอบสถานะใน Exchange โดยด่วน!")
-        
-        # ⚠️ สำคัญ: ถ้ามาถึงจุดนี้ โพซิชันอาจจะเปิดไม่สมบูรณ์ หรือถูกปฏิเสธ/ยกเลิกไปแล้ว
-        # ถ้าคุณต้องการให้บอท "พยายามปิดออเดอร์" ที่อาจจะค้างอยู่ทันที (เพื่อป้องกัน SL/TP ไม่ทำงาน)
-        # คุณสามารถเพิ่มโค้ดที่นี่ได้ เช่น:
-        # try:
-        #     # พยายามยกเลิกคำสั่ง TP/SL ที่อาจจะค้างอยู่
-        #     exchange.cancel_all_orders(SYMBOL)
-        #     # อาจจะลองปิดโพซิชันที่เหลืออยู่ (ถ้ามี)
-        #     # exchange.create_market_sell_order(SYMBOL, current_position_size) # หรือ buy ถ้าเป็น short
-        #     logger.warning("Attempted to clean up potentially stranded orders/positions.")
-        #     send_telegram("⚠️ Warning: พยายามเคลียร์ออเดอร์/โพซิชันที่อาจค้างอยู่หลังเปิดไม่ได้. ตรวจสอบ Exchange ด่วน!")
-        # except Exception as cleanup_e:
-        #     logger.error(f"Error during cleanup: {cleanup_e}")
 
         return False, None
 
@@ -529,133 +509,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         send_telegram(error_msg)
         logger.error(f"❌ Market order failed: {e}", exc_info=True)
         return False, None
-
-def set_tpsl_for_position(pos_direction: str, entry_price_val: float) -> bool:
-    """ตั้งค่า Take Profit และ Stop Loss สำหรับโพซิชันที่เปิดอยู่."""
-    try:
-        if pos_direction == 'long':
-            tp_price = entry_price_val + TP_VALUE_POINTS
-            sl_price = entry_price_val - SL_VALUE_POINTS
-        else: # short
-            tp_price = entry_price_val - TP_VALUE_POINTS
-            sl_price = entry_price_val + SL_VALUE_POINTS
-
-        tp_price = float(exchange.price_to_precision(SYMBOL, tp_price))
-        sl_price = float(exchange.price_to_precision(SYMBOL, sl_price))
-
-        params = {
-            'instId': exchange.market(SYMBOL)['id'],
-            'posSide': 'net',
-            'mgnMode': 'cross',
-            'tpTriggerPx': str(tp_price),
-            'tpOrdPx': '-1',
-            'slTriggerPx': str(sl_price),
-            'slOrdPx': '-1',
-        }
-
-        set_tpsl_success = False
-        for i in range(3):
-            try:
-                logger.info(f"⚙️ กำลังตั้งค่า TP/SL ({pos_direction.upper()}) SL:{sl_price:,.1f} TP:{tp_price:,.1f}... (Attempt {i+1}/3)")
-                response = exchange.private_post_trade_order_tpsl(params)
-                time.sleep(2)
-                if response and response.get('code') == '0':
-                    set_tpsl_success = True
-                    logger.info("✅ ตั้งค่า TP/SL สำเร็จ.")
-                    break
-                else:
-                    error_detail = response.get('msg', 'No message')
-                    logger.warning(f"⚠️ OKX response for set_tpsl_order was not successful: {error_detail}. Retrying...")
-            except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-                logger.warning(f"⚠️ Error setting TP/SL (Attempt {i+1}/3): {e}. Retrying in 15 seconds...")
-                if i == 2:
-                    send_telegram(f"⛔️ API Error: ไม่สามารถตั้งค่า TP/SL ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
-                time.sleep(15)
-            except Exception as e:
-                logger.error(f"❌ Unexpected error setting TP/SL: {e}", exc_info=True)
-                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถตั้งค่า TP/SL ได้\nรายละเอียด: {e}")
-                return False
-
-        if not set_tpsl_success:
-            logger.error("❌ Failed to set TP/SL after 3 attempts.")
-            send_telegram("⛔️ API Error: ล้มเหลวในการตั้งค่า TP/SL หลังจาก 3 ครั้ง.")
-            return False
-
-        message = f"""{('📈' if pos_direction == 'long' else '📉')} ✅ <b>เปิด {pos_direction.upper()} & ตั้ง TP/SL</b>
-<b>Entry:</b> <code>{entry_price_val:,.1f}</code>
-<b>TP:</b> <code>{tp_price:,.1f}</code>
-<b>SL:</b> <code>{sl_price:,.1f}</code>
-"""
-        send_telegram(message)
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Error in set_tpsl_for_position: {e}", exc_info=True)
-        send_telegram(f"⛔️ Error: เกิดข้อผิดพลาดในการตั้ง TP/SL\nรายละเอียด: {e}")
-        return False
-
-def move_sl_to_breakeven(pos_direction: str, entry_price_val: float):
-    """เลื่อน Stop Loss ของโพซิชันที่เปิดอยู่ไปที่ราคาเข้า (Break-even)."""
-    global sl_moved
-
-    if sl_moved:
-        return
-
-    try:
-        if pos_direction == 'long':
-            new_sl_price = entry_price_val + BE_SL_BUFFER_POINTS
-        else: # short
-            new_sl_price = entry_price_val - BE_SL_BUFFER_POINTS
-
-        new_sl_price = float(exchange.price_to_precision(SYMBOL, new_sl_price))
-
-        params = {
-            'instId': exchange.market(SYMBOL)['id'],
-            'posSide': 'net',
-            'mgnMode': 'cross',
-            'slTriggerPx': str(new_sl_price),
-            'slOrdPx': '-1',
-        }
-
-        set_sl_success = False
-        for i in range(3):
-            try:
-                logger.info(f"⚙️ กำลังเลื่อน SL ({pos_direction.upper()}) ไปที่กันทุน: {new_sl_price:,.1f}... (Attempt {i+1}/3)")
-                response = exchange.private_post_trade_order_tpsl(params)
-                time.sleep(2)
-                if response and response.get('code') == '0':
-                    set_sl_success = True
-                    logger.info("✅ เลื่อน SL ไปที่กันทุนสำเร็จ.")
-                    break
-                else:
-                    error_detail = response.get('msg', 'No message')
-                    logger.warning(f"⚠️ OKX response for move_sl_to_breakeven was not successful: {error_detail}. Retrying...")
-            except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-                logger.warning(f"⚠️ Error moving SL (Attempt {i+1}/3): {e}. Retrying in 15 seconds...")
-                if i == 2:
-                    send_telegram(f"⛔️ API Error: ไม่สามารถเลื่อน SL ได้ (Attempt {i+1}/3)\nรายละเอียด: {e}")
-                time.sleep(15)
-            except Exception as e:
-                logger.error(f"❌ Unexpected error moving SL: {e}", exc_info=True)
-                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถเลื่อน SL ได้\nรายละเอียด: {e}")
-                return
-
-        if not set_sl_success:
-            logger.error("❌ Failed to move SL after 3 attempts.")
-            send_telegram("⛔️ API Error: ล้มเหลวในการเลื่อน SL หลังจาก 3 ครั้ง.")
-            return
-
-        sl_moved = True
-        message = f"""🔄 <b>ราคาวิ่ง +{BE_PROFIT_TRIGGER_POINTS} จุดแล้ว → เลื่อน SL ไปที่ราคาเข้า (Break-even)</b>
-<b>📍 Entry:</b> <code>{entry_price_val:,.1f}</code>
-<b>🛡️ SL ใหม่:</b> <code>{new_sl_price:,.1f}</code>"""
-
-        send_telegram(message)
-        logger.info(f"✅ SL เลื่อนไปที่กันทุน: {new_sl_price:.2f}")
-
-    except Exception as e:
-        logger.error(f"❌ เกิดข้อผิดพลาดในการเลื่อน SL: {e}", exc_info=True)
-        send_telegram(f"⛔️ Error: ไม่สามารถเลื่อน SL ได้\nรายละเอียด: {e}")
 
 # ==============================================================================
 # 11. ฟังก์ชันตรวจสอบสถานะ (MONITORING FUNCTIONS)
@@ -868,26 +721,37 @@ def main():
     logger.info("🚀 บอทเข้าสู่ Main Loop แล้ว...")
     while True:
         try:
+            # <<-- เพิ่มบรรทัดนี้: Log ที่จุดเริ่มต้นของแต่ละรอบ Main Loop เพื่อยืนยันว่าบอททำงานอยู่
+            logger.info(f"🔄 เริ่มรอบ Main Loop ({datetime.now().strftime('%H:%M:%S')})")
+            
+            # --- ดึงข้อมูลสถานะและราคาปัจจุบัน ---
             current_pos_info = get_current_position()
 
             ticker = None
             try:
                 ticker = exchange.fetch_ticker(SYMBOL)
-                time.sleep(2)
+                # ลดเวลา sleep ตรงนี้ลงเล็กน้อย เพื่อให้รอบการทำงานของบอทเร็วขึ้น (แต่ยังคงอยู่ในขีดจำกัด rate limit)
+                # หรืออาจจะไม่ต้อง sleep เลยก็ได้ ถ้ามั่นใจว่า fetch_ticker ไม่เกิน rate limit
+                # time.sleep(1) 
             except Exception as e:
-                logger.warning(f"⚠️ Error fetching ticker: {e}. Retrying...")
-                time.sleep(15)
+                logger.warning(f"⚠️ Error fetching ticker: {e}. Retrying in {ERROR_RETRY_SLEEP_SECONDS} seconds...")
+                send_telegram(f"⛔️ API Error: ไม่สามารถดึงราคาล่าสุดได้. รายละเอียด: {e.args[0] if e.args else str(e)}")
+                time.sleep(ERROR_RETRY_SLEEP_SECONDS) # ใช้เวลาหน่วงสำหรับ Error
                 continue
 
             if not ticker or 'last' not in ticker:
-                logger.error("❌ Failed to fetch valid ticker. Skipping loop.")
-                time.sleep(MAIN_LOOP_SLEEP_SECONDS)
+                logger.error("❌ Failed to fetch valid ticker. Skipping loop and retrying.")
+                send_telegram("⛔️ Error: ไม่สามารถดึงราคาล่าสุดได้ถูกต้อง. Skipping.")
+                time.sleep(ERROR_RETRY_SLEEP_SECONDS) # ใช้เวลาหน่วงสำหรับ Error
                 continue
 
             current_price = float(ticker['last'])
+            logger.info(f"💲 ราคาปัจจุบันของ {SYMBOL}: {current_price:,.1f}")
 
+            # --- ตรวจสอบและจัดการโพซิชันปัจจุบัน ---
             monitor_position(current_pos_info, current_price)
 
+            # --- ตรวจสอบสัญญาณและเปิดออเดอร์ (ถ้าไม่มีโพซิชัน) ---
             if not current_pos_info:
                 signal = check_ema_cross()
 
@@ -930,8 +794,9 @@ def main():
             send_telegram(error_msg)
             time.sleep(ERROR_RETRY_SLEEP_SECONDS)
         except Exception as e:
-            error_msg = f"⛔️ Error: เกิดข้อผิดพลาดใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
-            logger.error(error_msg, exc_info=True)
+            # <<-- บล็อกนี้จะจับ Error อื่นๆ ที่ไม่ได้เกี่ยวกับ Network/Exchange
+            error_msg = f"⛔️ Error: เกิดข้อผิดพลาดที่ไม่คาดคิดใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+            logger.error(error_msg, exc_info=True) # exc_info=True จะแสดง Traceback เต็มๆ
             send_telegram(error_msg)
             time.sleep(ERROR_RETRY_SLEEP_SECONDS)
 
