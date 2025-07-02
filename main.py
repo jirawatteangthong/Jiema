@@ -6,7 +6,7 @@ import logging
 import threading
 import json
 import os
-import calendar # <<-- ตรวจสอบให้แน่ใจว่ามีบรรทัดนี้อยู่
+import calendar
 
 # ==============================================================================
 # 1. ตั้งค่าพื้นฐาน (CONFIGURATION)
@@ -15,21 +15,20 @@ import calendar # <<-- ตรวจสอบให้แน่ใจว่าม
 # ==============================================================================
 
 # --- API Keys & Credentials (ดึงจาก Environment Variables เพื่อความปลอดภัย) ---
-# ตั้งค่าค่าเริ่มต้นเป็น None หรือสตริงว่าง เพื่อให้บอทไม่รันหากไม่ได้ตั้งค่า ENV
 API_KEY = os.getenv('RAILWAY_API_KEY', 'YOUR_API_KEY_HERE_FOR_LOCAL_TESTING')
 SECRET = os.getenv('RAILWAY_SECRET', 'YOUR_SECRET_HERE_FOR_LOCAL_TESTING')
 PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'  # คู่เทรดที่ต้องการ (เช่น BTC/USDT:USDT สำหรับ Perpetual Swap)
-TIMEFRAME = '5m'         # Timeframe ของแท่งเทียน (เช่น '1m', '5m', '15m', '1h')
-LEVERAGE = 10             # อัตราทด (Leverage) ที่ต้องการใช้
-TP_VALUE_POINTS = 180     # ระยะ TP (Take Profit) เป็นจุด (เช่น 500 จุดสำหรับ BTC)
+TIMEFRAME = '15m'         # Timeframe ของแท่งเทียน (เช่น '1m', '5m', '15m', '1h')
+LEVERAGE = 30             # <<-- ตั้ง Leverage เป็น 30 ตามที่คุณต้องการ
+TP_VALUE_POINTS = 501     # ระยะ TP (Take Profit) เป็นจุด (เช่น 500 จุดสำหรับ BTC)
 SL_VALUE_POINTS = 999     # ระยะ SL (Stop Loss) เป็นจุด
-BE_PROFIT_TRIGGER_POINTS = 120   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
-BE_SL_BUFFER_POINTS = 20        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
-PORTFOLIO_PERCENT_TRADE = 0.7 # เปอร์เซ็นต์ของพอร์ตที่ใช้ในการเปิดออเดอร์ (0.8 = 80%)
-CROSS_THRESHOLD_POINTS = 2  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
+BE_PROFIT_TRIGGER_POINTS = 350   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
+BE_SL_BUFFER_POINTS = 100        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
+PORTFOLIO_PERCENT_TRADE = 0.9 # <<-- ตั้งค่าเป็น 1.0 เพื่อใช้เงินเกือบทั้งหมด ("All in")
+CROSS_THRESHOLD_POINTS = 15  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -41,13 +40,12 @@ STATS_FILE = 'trading_stats.json' # ไฟล์สำหรับบันท�
 # --- Bot Timing ---
 MAIN_LOOP_SLEEP_SECONDS = 360 # 🚀 เวลาหน่วงระหว่างรอบการทำงานหลัก (6 นาที)
 ERROR_RETRY_SLEEP_SECONDS = 60 # หน่วงเวลานานขึ้นเมื่อเกิดข้อผิดพลาดร้ายแรง/API Error
-MONTHLY_REPORT_DAY = 20       # <<-- เปลี่ยนเป็น 20
+MONTHLY_REPORT_DAY = 20       # วันที่ของเดือนที่ต้องการส่งรายงานประจำเดือน (1-28)
 MONTHLY_REPORT_HOUR = 0      # ชั่วโมงที่ต้องการส่งรายงานประจำเดือน (0-23)
 MONTHLY_REPORT_MINUTE = 5    # นาทีที่ต้องการส่งรายงานประจำเดือน (0-59)
 
 # --- Tolerance สำหรับการระบุสาเหตุการปิดออเดอร์ ---
-# หากราคาปิดอยู่ภายในช่วง +/- X% ของราคา TP/SL/BE ก็จะถือว่าเป็นสาเหตุนั้นๆ
-TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005 # 0.5% (เช่น 100 จุดของราคา 20,000 คือ 0.5%)
+TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005 # 0.5%
 
 # ==============================================================================
 # 2. การตั้งค่า Logging
@@ -56,36 +54,34 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'), # บันทึก Log ลงไฟล์
-        logging.StreamHandler()       # แสดง Log บน Console ด้วย
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # 3. ตัวแปรสถานะการเทรด (GLOBAL TRADE STATE VARIABLES)
-#    (ไม่ควรเปลี่ยนค่าโดยตรง ยกเว้นผ่านฟังก์ชันที่กำหนด)
 # ==============================================================================
-current_position = None  # สถานะของโพซิชันปัจจุบัน: None, 'long', 'short'
-entry_price = None       # ราคาเข้าของโพซิชันปัจจุบัน
-sl_moved = False         # True หากมีการเลื่อน SL ไปแล้ว
-# last_ema_cross_signal จะถูกเก็บใน monthly_stats เพื่อการ Persistence
-portfolio_balance = 0.0    # ยอดคงเหลือในพอร์ตปัจจุบัน
-last_monthly_report_date = None # วันที่ของรายงานประจำเดือนล่าสุดที่ส่งไป (เป็น datetime.date object)
-initial_balance = 0.0      # ยอดเงินเริ่มต้นเมื่อบอทเริ่มทำงาน
-current_position_size = 0.0 # ขนาดของโพซิชันปัจจุบันที่เปิดอยู่ (สำหรับคำนวณ PnL เมื่อปิด)
+current_position = None
+entry_price = None
+sl_moved = False
+portfolio_balance = 0.0
+last_monthly_report_date = None
+initial_balance = 0.0
+current_position_size = 0.0 # ขนาดของโพซิชันปัจจุบันที่เปิดอยู่
 
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
 # ==============================================================================
 monthly_stats = {
-    'month_year': None, # เดือนและปีของสถิติ (YYYY-MM) ที่กำลังรวบรวม
-    'tp_count': 0,      # จำนวนครั้งที่ปิดด้วย TP
-    'sl_count': 0,      # จำนวนครั้งที่ปิดด้วย SL
+    'month_year': None,
+    'tp_count': 0,
+    'sl_count': 0,
     'total_pnl': 0.0,
-    'trades': [],       # รายละเอียดการเทรดแต่ละครั้ง
-    'last_report_month_year': None, # เดือนและปี (YYYY-MM) ที่ส่งรายงานประจำเดือนล่าสุดไปแล้ว
-    'last_ema_cross_signal': None # เก็บสัญญาณ EMA cross ล่าสุดที่ใช้เปิดออเดอร์ เพื่อป้องกันเปิดซ้ำ
+    'trades': [],
+    'last_report_month_year': None,
+    'last_ema_cross_signal': None
 }
 
 # ==============================================================================
@@ -101,11 +97,10 @@ try:
         'apiKey': API_KEY,
         'secret': SECRET,
         'password': PASSWORD,
-        'enableRateLimit': True, # เปิดใช้งาน Rate Limit Protection
-        'rateLimit': 1000,       # 🛡️ ตั้งค่าให้หน่วงอย่างน้อย 1 วินาทีต่อ Request (1000ms)
-        'options': {'defaultType': 'swap'} # ตั้งค่าประเภทตลาดเริ่มต้นเป็น Swap (Futures)
+        'enableRateLimit': True,
+        'rateLimit': 1000,
+        'options': {'defaultType': 'swap'}
     })
-    # ตั้งค่าโหมด Sandbox (True สำหรับ Testnet, False สำหรับ Real)
     exchange.set_sandbox_mode(False) # ⚠️ ตั้งค่าให้เป็น False สำหรับบัญชีจริง
     logger.info("✅ เชื่อมต่อกับ OKX Exchange สำเร็จ")
 except ValueError as ve:
@@ -136,7 +131,6 @@ def load_monthly_stats():
             with open(STATS_FILE, 'r') as f:
                 loaded_stats = json.load(f)
 
-                # ตรวจสอบและอัปเดตโครงสร้างหากมีการเปลี่ยนแปลงในอนาคต
                 monthly_stats['month_year'] = loaded_stats.get('month_year', None)
                 monthly_stats['tp_count'] = loaded_stats.get('tp_count', 0)
                 monthly_stats['sl_count'] = loaded_stats.get('sl_count', 0)
@@ -147,37 +141,33 @@ def load_monthly_stats():
 
             logger.info(f"💾 โหลดสถิติการเทรดจากไฟล์ {STATS_FILE} สำเร็จ")
 
-            # อัปเดต global variable last_monthly_report_date
             if monthly_stats['last_report_month_year']:
                 try:
-                    # แปลง YYYY-MM เป็น datetime.date object โดยใช้วันที่ 1 ของเดือนนั้น
                     year, month = map(int, monthly_stats['last_report_month_year'].split('-'))
                     last_monthly_report_date = datetime(year, month, 1).date()
                 except ValueError:
-                    logger.warning("⚠️ รูปแบบเดือน/ปี last_report_month_year ในไฟล์ไม่ถูกต้อง. จะถือว่ายังไม่มีการส่งรายงาน.")
+                    logger.warning("⚠️ รูปแบบวันที่ last_report_month_year ในไฟล์ไม่ถูกต้อง. จะถือว่ายังไม่มีการส่งรายงาน.")
                     last_monthly_report_date = None
             else:
                 last_monthly_report_date = None
 
-            # ตรวจสอบว่าสถิติที่โหลดมาเป็นของเดือนปัจจุบันหรือไม่
             current_month_year_str = datetime.now().strftime('%Y-%m')
             if monthly_stats['month_year'] != current_month_year_str:
                 logger.info(f"ℹ️ สถิติที่โหลดมาเป็นของเดือน {monthly_stats['month_year']} ไม่ตรงกับเดือนนี้ {current_month_year_str}. จะรีเซ็ตสถิติสำหรับเดือนใหม่.")
-                reset_monthly_stats() # รีเซ็ตหากเป็นเดือนใหม่
+                reset_monthly_stats()
 
         else:
             logger.info(f"🆕 ไม่พบไฟล์สถิติ {STATS_FILE} สร้างไฟล์ใหม่")
-            reset_monthly_stats() # สร้างไฟล์ใหม่พร้อมรีเซ็ตสถิติสำหรับเดือนนี้
+            reset_monthly_stats()
 
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการโหลดสถิติ: {e}")
-        # หากโหลดไม่ได้ ให้เริ่มต้นด้วยค่าว่างและรีเซ็ต
         monthly_stats = {
             'month_year': None, 'tp_count': 0, 'sl_count': 0, 'total_pnl': 0.0, 'trades': [],
             'last_report_month_year': None, 'last_ema_cross_signal': None
         }
         last_monthly_report_date = None
-        reset_monthly_stats() # รีเซ็ตเพื่อให้แน่ใจว่าเริ่มต้นใหม่
+        reset_monthly_stats()
 
 def reset_monthly_stats():
     """รีเซ็ตสถิติประจำเดือนสำหรับเดือนใหม่."""
@@ -186,8 +176,6 @@ def reset_monthly_stats():
     monthly_stats['tp_count'] = 0
     monthly_stats['sl_count'] = 0
     monthly_stats['total_pnl'] = 0.0
-    monthly_stats['trades'] = []
-    # 'last_report_month_year' และ 'last_ema_cross_signal' ไม่ควรรีเซ็ตที่นี่
     save_monthly_stats()
     logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
@@ -208,7 +196,7 @@ def add_trade_result(reason: str, pnl: float):
     monthly_stats['total_pnl'] += pnl
 
     monthly_stats['trades'].append({
-        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # เพิ่มวันที่เข้าไปด้วย
+        'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'reason': reason,
         'pnl': pnl
     })
@@ -373,18 +361,13 @@ def check_ema_cross() -> str | None:
 
         cross_signal = None
 
-        # === เงื่อนไขใหม่ที่ฉลาดขึ้น ===
-        # 1. เช็คว่า "เคยตัดกันมาแล้ว" (ema50_prev <= ema200_prev)
-        # 2. เช็คว่า "ปัจจุบันเส้นอยู่เหนือกัน และต้องห่างเกิน Threshold ที่ตั้งไว้"
         if ema50_prev <= ema200_prev and ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
-        # เงื่อนไขฝั่ง Short
-        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS): # แก้ไขตรรกะให้ถูกต้อง
+        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
-
 
         return cross_signal
 
@@ -403,32 +386,80 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
     try:
         balance = get_portfolio_balance()
-        if balance <= 1:
+        if balance <= 1: # เพิ่ม threshold เพื่อป้องกันการเปิดออเดอร์ด้วยเงินที่น้อยเกินไป
             send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอสำหรับเปิดออเดอร์ ({balance:.2f} USDT).")
+            logger.error(f"❌ Balance ({balance:.2f} USDT) is too low to open an order.")
             return False, None
 
-        use_balance = balance * PORTFOLIO_PERCENT_TRADE
+        use_balance_for_trade = balance * PORTFOLIO_PERCENT_TRADE
 
         market = exchange.market(SYMBOL)
+        
+        # Log market limits for debugging
+        min_amount_btc_from_exchange = market.get('limits', {}).get('amount', {}).get('min', 0)
+        min_notional_usdt_from_exchange = market.get('limits', {}).get('cost', {}).get('min', 0)
+        
+        logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_from_exchange:.6f}, Min_Notional_USDT={min_notional_usdt_from_exchange:.2f}")
 
-        order_size_in_btc = (use_balance * LEVERAGE) / current_price
 
-        min_amount = market.get('limits', {}).get('amount', {}).get('min', 0)
-        if min_amount and order_size_in_btc < min_amount:
-            logger.warning(f"⚠️ ขนาดออเดอร์ที่คำนวณได้ ({order_size_in_btc:.6f} BTC) ต่ำกว่าขั้นต่ำ ({min_amount:.6f} BTC). ปรับขนาดเป็นขั้นต่ำ.")
-            order_size_in_btc = min_amount
+        # คำนวณขนาดออเดอร์ตามเงินทุนและ Leverage (ใช้ PORTFOLIO_PERCENT_TRADE ที่ 1.0)
+        order_size_in_btc_calculated = (use_balance_for_trade * LEVERAGE) / current_price
+        logger.info(f"ℹ️ Calculated Order Size (raw): {order_size_in_btc_calculated:.6f} BTC (จาก {use_balance_for_trade:,.2f} USDT * {LEVERAGE}x)")
 
+        order_size_in_btc = order_size_in_btc_calculated
+
+        # ตรวจสอบและปรับขนาดออเดอร์ให้ถึงขั้นต่ำของ Exchange (หากจำเป็น)
+        # ตรวจสอบ Min Amount (เป็น BTC)
+        if min_amount_btc_from_exchange and order_size_in_btc < min_amount_btc_from_exchange:
+            logger.warning(f"⚠️ ขนาด BTC ที่คำนวณได้ ({order_size_in_btc:.6f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange:.6f} BTC). จะใช้ขนาดขั้นต่ำแทน.")
+            order_size_in_btc = min_amount_btc_from_exchange
+
+        # ตรวจสอบ Min Notional (มูลค่าเป็น USDT)
+        # นี่เป็นส่วนสำคัญที่อาจทำให้ต้องเพิ่มขนาดหากมูลค่าไม่ถึงขั้นต่ำ
+        current_notional_value = order_size_in_btc * current_price
+        if min_notional_usdt_from_exchange and current_notional_value < min_notional_usdt_from_exchange:
+            logger.warning(f"⚠️ มูลค่า Notional ที่คำนวณได้ (สำหรับ {order_size_in_btc:.6f} BTC คือ {current_notional_value:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำ ({min_notional_usdt_from_exchange:.2f} USDT).")
+            # คำนวณขนาด BTC ที่จำเป็นเพื่อให้ถึงมูลค่า Notional ขั้นต่ำ
+            required_btc_for_min_notional = min_notional_usdt_from_exchange / current_price
+            
+            # ปรับขนาดออเดอร์เฉพาะเมื่อขนาดที่ต้องการสำหรับ Notional ขั้นต่ำ สูงกว่าขนาดปัจจุบัน
+            if required_btc_for_min_notional > order_size_in_btc:
+                logger.warning(f"ℹ️ ปรับขนาด BTC จาก {order_size_in_btc:.6f} เป็น {required_btc_for_min_notional:.6f} BTC เพื่อให้ถึงมูลค่า Notional ขั้นต่ำ.")
+                order_size_in_btc = required_btc_for_min_notional
+            else:
+                 logger.info(f"ℹ️ มูลค่า Notional ขั้นต่ำถูกพบหรือเกินแล้ว. ไม่มีการปรับเพิ่มขนาดสำหรับ Notional.")
+
+        # ปรับขนาดสุดท้ายให้ตรงตาม Precision ของ Exchange
         order_size_in_btc = float(exchange.amount_to_precision(SYMBOL, order_size_in_btc))
+        logger.info(f"ℹ️ ขนาดออเดอร์สุดท้ายหลังจากปรับขั้นต่ำและ Precision: {order_size_in_btc:.6f} BTC")
 
+        # ตรวจสอบ Margin ที่ต้องการเทียบกับเงินคงเหลือ
+        required_notional_for_final_size = order_size_in_btc * current_price
+        # สำหรับ Cross Margin อาจมีปัจจัยอื่นๆ เช่น Maintenance Margin, Isolated Margin ที่ต้องพิจารณา
+        # แต่โดยทั่วไป Initial Margin คำนวณจาก Notional / Leverage
+        required_margin_for_final_size = required_notional_for_final_size / LEVERAGE
+        
+        # เพิ่ม buffer เล็กน้อยสำหรับค่าธรรมเนียมหรือ Slippage (ประมาณ 0.1% ของ Notional Value สำหรับ Taker fee)
+        # แต่เพื่อความง่าย เราจะเปรียบเทียบโดยตรงก่อน
+        
+        if balance < required_margin_for_final_size:
+             error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขนาด {order_size_in_btc:.6f} BTC. ต้องการ Margin {required_margin_for_final_size:,.2f} USDT."
+             send_telegram(error_msg)
+             logger.error(error_msg)
+             return False, None
+        
         if order_size_in_btc <= 0:
-            send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ precision.")
+            send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ precision/ขั้นต่ำ.")
+            logger.error("❌ Final order size is zero or negative after adjustments.")
             return False, None
+
 
         side = 'buy' if direction == 'long' else 'sell'
 
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
+            # 'px': str(current_price) # สำหรับ Market order ไม่จำเป็นต้องระบุราคา
         }
 
         order = None
@@ -455,20 +486,42 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             return False, None
 
         confirmed_pos_info = None
-        confirmation_retries = 10
-        confirmation_sleep = 3
+        confirmation_retries = 15 # เพิ่มจำนวน retry ให้มากขึ้น
+        confirmation_sleep = 2    # ลดเวลา sleep เล็กน้อย
 
         for i in range(confirmation_retries):
             logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/{confirmation_retries})...")
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
-            if confirmed_pos_info and confirmed_pos_info['side'] == direction:
-                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}")
+            # ตรวจสอบทิศทางและขนาดโพซิชันที่ยืนยันได้ เทียบกับขนาดที่พยายามเปิด
+            # ใช้ค่าความคลาดเคลื่อน 0.5% ของขนาดออเดอร์
+            size_tolerance = order_size_in_btc * 0.005
+            if confirmed_pos_info and \
+               confirmed_pos_info['side'] == direction and \
+               abs(confirmed_pos_info['size'] - order_size_in_btc) <= size_tolerance:
+                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f}")
                 current_position_size = confirmed_pos_info['size']
                 return True, confirmed_pos_info['entry_price']
-
+            
+            # ถ้ายังไม่เจอ หรือเจอแต่ไม่ตรง อาจจะลอง fetch_orders เพื่อดูว่าคำสั่งถูกปฏิเสธ/ยกเลิกหรือไม่
+            # แต่เพื่อไม่ให้โค้ดยุ่งยากเกินไป เราจะเน้นที่การรอคอนเฟิร์มโพซิชัน
+            
         logger.error(f"❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order (หลังจากพยายาม {confirmation_retries} ครั้ง).")
         send_telegram("⛔️ Error: ไม่สามารถยืนยันโพซิชันหลังเปิดออเดอร์ได้. กรุณาตรวจสอบสถานะใน Exchange โดยด่วน!")
+        
+        # ⚠️ สำคัญ: ถ้ามาถึงจุดนี้ โพซิชันอาจจะเปิดไม่สมบูรณ์ หรือถูกปฏิเสธ/ยกเลิกไปแล้ว
+        # ถ้าคุณต้องการให้บอท "พยายามปิดออเดอร์" ที่อาจจะค้างอยู่ทันที (เพื่อป้องกัน SL/TP ไม่ทำงาน)
+        # คุณสามารถเพิ่มโค้ดที่นี่ได้ เช่น:
+        # try:
+        #     # พยายามยกเลิกคำสั่ง TP/SL ที่อาจจะค้างอยู่
+        #     exchange.cancel_all_orders(SYMBOL)
+        #     # อาจจะลองปิดโพซิชันที่เหลืออยู่ (ถ้ามี)
+        #     # exchange.create_market_sell_order(SYMBOL, current_position_size) # หรือ buy ถ้าเป็น short
+        #     logger.warning("Attempted to clean up potentially stranded orders/positions.")
+        #     send_telegram("⚠️ Warning: พยายามเคลียร์ออเดอร์/โพซิชันที่อาจค้างอยู่หลังเปิดไม่ได้. ตรวจสอบ Exchange ด่วน!")
+        # except Exception as cleanup_e:
+        #     logger.error(f"Error during cleanup: {cleanup_e}")
+
         return False, None
 
     except Exception as e:
@@ -690,9 +743,8 @@ def monthly_report():
     global last_monthly_report_date, monthly_stats
 
     now = datetime.now()
-    current_month_year = now.strftime('%Y-%m') # เก็บเฉพาะ เดือน-ปี
+    current_month_year = now.strftime('%Y-%m')
 
-    # ตรวจสอบว่าได้ส่งรายงานสำหรับเดือนนี้ไปแล้วหรือยัง
     if last_monthly_report_date and \
        last_monthly_report_date.year == now.year and \
        last_monthly_report_date.month == now.month:
@@ -721,7 +773,6 @@ def monthly_report():
 <b>เวลา:</b> <code>{now.strftime('%H:%M')}</code>"""
 
         send_telegram(message)
-        # อัปเดต last_monthly_report_date เป็นวันที่ปัจจุบันที่ส่งรายงาน
         last_monthly_report_date = now.date()
         monthly_stats['last_report_month_year'] = current_month_year
         save_monthly_stats()
@@ -739,29 +790,22 @@ def monthly_report_scheduler():
     while True:
         now = datetime.now()
         
-        # กำหนดเวลาที่ต้องการส่งรายงาน (เช่น วันที่ 20 ของทุกเดือน เวลา 00:05)
-        # ตรวจสอบว่าวันที่ที่กำหนดใน MONTHLY_REPORT_DAY ไม่เกินจำนวนวันในเดือนปัจจุบัน
         report_day = min(MONTHLY_REPORT_DAY, calendar.monthrange(now.year, now.month)[1])
         
         next_report_time = now.replace(day=report_day, hour=MONTHLY_REPORT_HOUR, minute=MONTHLY_REPORT_MINUTE, second=0, microsecond=0)
 
-        # ถ้าเวลาปัจจุบันเลยเวลาส่งของเดือนนี้ไปแล้ว ให้คำนวณสำหรับเดือนถัดไป
         if now >= next_report_time:
-            # ตรวจสอบว่าได้ส่งรายงานสำหรับเดือนปัจจุบันไปแล้วหรือยัง
             if last_monthly_report_date is None or \
                last_monthly_report_date.year != now.year or \
                last_monthly_report_date.month != now.month:
                  logger.info(f"⏰ ตรวจพบว่าถึงเวลาส่งรายงานประจำเดือน ({now.strftime('%H:%M')}) และยังไม่ได้ส่งสำหรับเดือนนี้. กำลังส่ง...")
                  monthly_report()
             
-            # คำนวณเวลาสำหรับเดือนถัดไป
-            if next_report_time.month == 12: # ถ้าเป็นเดือนธันวาคม ให้ข้ามไปปีหน้า
+            if next_report_time.month == 12:
                 next_report_time = next_report_time.replace(year=next_report_time.year + 1, month=1)
             else:
                 next_report_time = next_report_time.replace(month=next_report_time.month + 1)
             
-            # ปรับวันที่ในเดือนถัดไปให้ถูกต้อง กรณีที่เดือนหน้ามีวันน้อยกว่า MONTHLY_REPORT_DAY
-            # เช่น ถ้า MONTHLY_REPORT_DAY คือ 31 แต่เดือนถัดไปคือ ก.พ. (28/29 วัน)
             max_day_in_next_month = calendar.monthrange(next_report_time.year, next_report_time.month)[1]
             report_day_for_next_month = min(MONTHLY_REPORT_DAY, max_day_in_next_month)
             next_report_time = next_report_time.replace(day=report_day_for_next_month)
@@ -772,7 +816,6 @@ def monthly_report_scheduler():
             logger.info(f"⏰ กำหนดส่งรายงานประจำเดือนถัดไปในอีก {int(time_to_wait / 86400)} วัน {int((time_to_wait % 86400) / 3600)} ชั่วโมง {int((time_to_wait % 3600) / 60)} นาที.")
             time.sleep(max(time_to_wait, 60))
         else:
-            # กรณีที่คำนวณแล้วเวลาติดลบ (ไม่ควรเกิด แต่นี่เป็น safety net)
             time.sleep(60)
 
 # ==============================================================================
