@@ -11,8 +11,6 @@ import sys
 
 # ==============================================================================
 # 1. ตั้งค่าพื้นฐาน (CONFIGURATION)
-#    ⚠️ สำคัญมาก: โปรดตั้งค่า Environment Variables เหล่านี้บน GitHub/Railway
-#    เช่น RAILWAY_API_KEY, RAILWAY_SECRET, RAILWAY_PASSWORD, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 # ==============================================================================
 
 # --- API Keys & Credentials (ดึงจาก Environment Variables เพื่อความปลอดภัย) ---
@@ -21,29 +19,29 @@ SECRET = os.getenv('RAILWAY_SECRET', 'YOUR_SECRET_HERE_FOR_LOCAL_TESTING')
 PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
-SYMBOL = 'BTC/USDT:USDT'  # คู่เทรดที่ต้องการ (เช่น BTC/USDT:USDT สำหรับ Perpetual Swap)
-TIMEFRAME = '15m'         # Timeframe ของแท่งเทียน (เช่น '1m', '5m', '15m', '1h')
-LEVERAGE = 30             # <<-- ตั้ง Leverage เป็น 30
-TP_VALUE_POINTS = 501     # ระยะ TP (Take Profit) เป็นจุด (เช่น 500 จุดสำหรับ BTC)
-SL_VALUE_POINTS = 999     # ระยะ SL (Stop Loss) เป็นจุด
-BE_PROFIT_TRIGGER_POINTS = 350   # กำไรที่ต้องถึงก่อนเลื่อน SL เป็นกันทุน (เป็นจุด)
-BE_SL_BUFFER_POINTS = 100        # Buffer สำหรับ SL กันทุน (เป็นจุด) เช่น เลื่อน SL ไปที่ Entry + 100 จุด
-PORTFOLIO_PERCENT_TRADE = 0.9 # <<-- ตั้งค่าเป็น 1.0 เพื่อใช้เงินเกือบทั้งหมด ("All in")
-CROSS_THRESHOLD_POINTS = 20  # ระยะห่างขั้นต่ำที่ EMA50 ต้องทำได้เหนือ/ใต้ EMA200 ก่อนจะถือว่าเป็นสัญญาณจริง (หน่วยเป็นจุดราคา)
+SYMBOL = 'BTC/USDT:USDT'
+TIMEFRAME = '15m'
+LEVERAGE = 30
+TP_VALUE_POINTS = 501
+SL_VALUE_POINTS = 999
+BE_PROFIT_TRIGGER_POINTS = 350
+BE_SL_BUFFER_POINTS = 100
+PORTFOLIO_PERCENT_TRADE = 0.9 # ใช้ 100% ของพอร์ต ("All in")
+CROSS_THRESHOLD_POINTS = 20
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TESTING')
 
 # --- Files & Paths ---
-STATS_FILE = 'trading_stats.json' # ไฟล์สำหรับบันทึกสถิติการเทรด
+STATS_FILE = 'trading_stats.json' # ตรวจสอบให้แน่ใจว่าได้เปลี่ยนเป็น /data/trading_stats.json หากใช้ Railway Volume
 
 # --- Bot Timing ---
-MAIN_LOOP_SLEEP_SECONDS = 360 # 🚀 เวลาหน่วงระหว่างรอบการทำงานหลัก (6 นาที)
-ERROR_RETRY_SLEEP_SECONDS = 60 # หน่วงเวลานานขึ้นเมื่อเกิดข้อผิดพลาดร้ายแรง/API Error
-MONTHLY_REPORT_DAY = 20       # วันที่ของเดือนที่ต้องการส่งรายงานประจำเดือน (1-28)
-MONTHLY_REPORT_HOUR = 0      # ชั่วโมงที่ต้องการส่งรายงานประจำเดือน (0-23)
-MONTHLY_REPORT_MINUTE = 5    # นาทีที่ต้องการส่งรายงานประจำเดือน (0-59)
+MAIN_LOOP_SLEEP_SECONDS = 360 # 6 นาที
+ERROR_RETRY_SLEEP_SECONDS = 60
+MONTHLY_REPORT_DAY = 20
+MONTHLY_REPORT_HOUR = 0
+MONTHLY_REPORT_MINUTE = 5
 
 # --- Tolerance สำหรับการระบุสาเหตุการปิดออเดอร์ ---
 TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005
@@ -52,17 +50,16 @@ TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005
 # 2. การตั้งค่า Logging
 # ==============================================================================
 logging.basicConfig(
-    # <<-- สำคัญ: เปลี่ยนระดับ Log เป็น DEBUG ชั่วคราว เพื่อให้เห็น Log ละเอียดขึ้นมาก
-    level=logging.DEBUG, 
+    # <<-- ปรับระดับ Log เป็น INFO เพื่อให้ดูง่ายขึ้น
+    level=logging.INFO, 
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
-# <<-- สำคัญมาก: บังคับให้ Log ถูกเขียนลงทันที (ลดโอกาสที่ Log จะหายไปเมื่อบอท Crash)
 for handler in logging.root.handlers:
-    if hasattr(handler, 'flush'): # ตรวจสอบว่า handler มี method 'flush' หรือไม่
+    if hasattr(handler, 'flush'):
         handler.flush = lambda: sys.stdout.flush() if isinstance(handler, logging.StreamHandler) else handler.stream.flush()
 
 logger = logging.getLogger(__name__)
@@ -108,16 +105,17 @@ try:
         'enableRateLimit': True,
         'rateLimit': 1000,
         'options': {
-            'defaultType': 'swap', # ใช้ 'swap' เหมือนเดิม
-            'warnOnFetchOHLCVLimitArgument': False, 
-            'adjustForTimeDifference': True, 
-            # <<-- สำคัญ: ปิดการโหลดข้อมูลจำนวนมากตอนเริ่มต้น เพื่อลด RAM
+            'defaultType': 'swap',
+            'warnOnFetchOHLCVLimitArgument': False,
+            'adjustForTimeDifference': True,
             'loadMarkets': False, 
             'loadInstruments': False,
             'loadCurrencies': False,
         },
-        'verbose': True, # <<-- ตั้งเป็น True เพื่อให้ CCXT แสดง Log ภายในของมันทั้งหมด
-        'timeout': 30000, # เพิ่ม Timeout เป็น 30 วินาที สำหรับ API Calls
+        # <<-- คุณอาจจะต้องการเปลี่ยน 'verbose': True เป็น 'verbose': False เพื่อลด Log ของ CCXT เอง
+        # แต่ถ้าคุณยังอยากเห็น Log การสื่อสาร API ของ CCXT ก็ตั้งเป็น True ไว้
+        'verbose': False, # <<-- ปรับตรงนี้เพื่อลด Log ยิบย่อยของ CCXT
+        'timeout': 30000,
     })
     exchange.set_sandbox_mode(False) # ⚠️ ตั้งค่าให้เป็น False สำหรับบัญชีจริง
     logger.info("✅ เชื่อมต่อกับ OKX Exchange สำเร็จ")
@@ -259,7 +257,6 @@ def get_portfolio_balance() -> float:
     for i in range(retries):
         try:
             logger.debug(f"🔍 กำลังดึงยอดคงเหลือ (Attempt {i+1}/{retries})...")
-            # CCXT จะโหลด markets, instruments, currencies ที่จำเป็นเองเมื่อถูกเรียกใช้ครั้งแรก (เพราะ loadMarkets=False)
             balance_data = exchange.fetch_balance(params={'type': 'trading'})
             time.sleep(2)
 
@@ -377,7 +374,8 @@ def check_ema_cross() -> str | None:
         ema50_prev = calculate_ema(closes[:-1], 50)
         ema200_prev = calculate_ema(closes[:-1], 200)
 
-        logger.debug(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f} | Previous EMA50={ema50_prev:.2f}, EMA200={ema200_prev:.2f}")
+        # <<-- แสดงค่า EMA ในระดับ INFO เพื่อให้ดูง่าย
+        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f} | Previous EMA50={ema50_prev:.2f}, EMA200={ema200_prev:.2f}") 
         
         if None in [ema50_prev, ema200_prev, ema50_current, ema200_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
@@ -396,9 +394,10 @@ def check_ema_cross() -> str | None:
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
         if cross_signal:
-            logger.debug(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
+            logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
         else:
-            logger.debug("❌ ไม่พบสัญญาณ EMA Cross ตามเงื่อนไข.")
+            # <<-- แสดง Log นี้ในระดับ INFO เพื่อให้เห็นเสมอว่าไม่เจอสัญญาณ
+            logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.") 
 
         return cross_signal
 
