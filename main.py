@@ -20,7 +20,7 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '3m'
+TIMEFRAME = '5m'
 LEVERAGE = 30
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
@@ -336,7 +336,11 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
     return ema
 
 def check_ema_cross() -> str | None:
-    """ตรวจสอบการตัดกันของ EMA50 และ EMA200 โดยใช้ Threshold เพื่อยืนยัน."""
+    """
+    ตรวจสอบการตัดกันของ EMA50 และ EMA200 โดยใช้ Threshold เพื่อยืนยัน.
+    **ปรับแก้: จะเปิดออเดอร์ทันทีเมื่อ Current EMA50 ห่างจาก Current EMA200 เกิน Threshold
+    โดยไม่ต้องรอ "การตัดกัน" ครั้งใหม่
+    """
     try:
         retries = 3
         ohlcv = None
@@ -371,34 +375,34 @@ def check_ema_cross() -> str | None:
         ema50_current = calculate_ema(closes, 50)
         ema200_current = calculate_ema(closes, 200)
 
-        ema50_prev = calculate_ema(closes[:-1], 50)
-        ema200_prev = calculate_ema(closes[:-1], 200)
+        # 💡 ไม่จำเป็นต้องใช้ EMA Previous ใน Logic การตัดสินใจเปิดออเดอร์แล้ว
+        # ema50_prev = calculate_ema(closes[:-1], 50)
+        # ema200_prev = calculate_ema(closes[:-1], 200)
 
-        # <<-- แสดงค่า EMA ในระดับ INFO เพื่อให้ดูง่าย
-        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f} | Previous EMA50={ema50_prev:.2f}, EMA200={ema200_prev:.2f}") 
-        
-        if None in [ema50_prev, ema200_prev, ema50_current, ema200_current]:
+        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f}") 
+        # <<-- ลบ Previous EMA ออกจาก Log เพื่อความชัดเจน
+
+        if None in [ema50_current, ema200_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
             return None
 
         cross_signal = None
 
-        # Golden Cross (Long)
-        if ema50_prev <= ema200_prev and ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
+        # Golden Cross (Long) - EMA50 อยู่เหนือ EMA200 และห่างกันเกิน Threshold
+        if ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
-        # Death Cross (Short)
-        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
+        # Death Cross (Short) - EMA50 อยู่ใต้ EMA200 และห่างกันเกิน Threshold
+        elif ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
         if cross_signal:
             logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
         else:
-            # <<-- แสดง Log นี้ในระดับ INFO เพื่อให้เห็นเสมอว่าไม่เจอสัญญาณ
-            logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.") 
-
+            logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจนตามเงื่อนไขปัจจุบัน.") # ปรับข้อความ Log
+            
         return cross_signal
 
     except Exception as e:
