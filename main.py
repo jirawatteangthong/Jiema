@@ -338,8 +338,8 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
 def check_ema_cross() -> str | None:
     """
     ตรวจสอบการตัดกันของ EMA50 และ EMA200 โดยใช้ Threshold เพื่อยืนยัน.
-    **ปรับแก้: จะเปิดออเดอร์ทันทีเมื่อ Current EMA50 ห่างจาก Current EMA200 เกิน Threshold
-    โดยไม่ต้องรอ "การตัดกัน" ครั้งใหม่
+    บอทจะเปิดออเดอร์เมื่อมีการ "ตัดกัน" เกิดขึ้นระหว่างแท่งเทียนก่อนหน้าและปัจจุบัน
+    และเมื่อตัดกันแล้ว ค่า EMA ทั้งคู่ต้องห่างกันเกิน Threshold
     """
     try:
         retries = 3
@@ -347,8 +347,9 @@ def check_ema_cross() -> str | None:
         for i in range(retries):
             logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...")
             try:
+                # ccxt.fetch_ohlcv อาจใช้เวลาประมาณ 1-2 วินาที
                 ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=250)
-                time.sleep(2)
+                time.sleep(2) # เพิ่ม delay เพื่อลดโอกาสโดน Rate Limit ถี่เกินไป
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
                 logger.warning(f"⚠️ Error fetching OHLCV (Attempt {i+1}/{retries}): {e}. Retrying in 15 seconds...")
@@ -365,6 +366,8 @@ def check_ema_cross() -> str | None:
             send_telegram(f"⛔️ API Error: ล้มเหลวในการดึง OHLCV หลังจาก {retries} ครั้ง.")
             return None
 
+        # ต้องการข้อมูลอย่างน้อย 200 แท่งสำหรับ EMA200 + 1 แท่งสำหรับ Previous + 1 แท่งสำหรับ Current
+        # ดังนั้น limit=250 เพียงพอแล้ว (แต่ต้องมีอย่างน้อย 202 แท่งจริงๆ)
         if len(ohlcv) < 202:
             logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย 202 แท่ง ได้ {len(ohlcv)}")
             send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง).")
@@ -372,36 +375,38 @@ def check_ema_cross() -> str | None:
 
         closes = [candle[4] for candle in ohlcv]
 
+        # คำนวณ EMA สำหรับแท่งเทียนปัจจุบัน
         ema50_current = calculate_ema(closes, 50)
         ema200_current = calculate_ema(closes, 200)
 
-        # 💡 ไม่จำเป็นต้องใช้ EMA Previous ใน Logic การตัดสินใจเปิดออเดอร์แล้ว
-        # ema50_prev = calculate_ema(closes[:-1], 50)
-        # ema200_prev = calculate_ema(closes[:-1], 200)
+        # คำนวณ EMA สำหรับแท่งเทียนก่อนหน้า (ใช้ข้อมูลปิดถึงแท่งก่อนสุดท้าย)
+        ema50_prev = calculate_ema(closes[:-1], 50)
+        ema200_prev = calculate_ema(closes[:-1], 200)
 
-        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f}") 
-        # <<-- ลบ Previous EMA ออกจาก Log เพื่อความชัดเจน
-
-        if None in [ema50_current, ema200_current]:
+        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f} | Previous EMA50={ema50_prev:.2f}, EMA200={ema200_prev:.2f}") 
+        
+        if None in [ema50_prev, ema200_prev, ema50_current, ema200_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
             return None
 
         cross_signal = None
 
-        # Golden Cross (Long) - EMA50 อยู่เหนือ EMA200 และห่างกันเกิน Threshold
-        if ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
+        # Golden Cross (Long)
+        # EMA50 เคยอยู่ต่ำกว่า EMA200 และตอนนี้ EMA50 ตัดขึ้นเหนือ EMA200 พร้อมระยะห่างเกิน Threshold
+        if ema50_prev <= ema200_prev and ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
-        # Death Cross (Short) - EMA50 อยู่ใต้ EMA200 และห่างกันเกิน Threshold
-        elif ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
+        # Death Cross (Short)
+        # EMA50 เคยอยู่สูงกว่า EMA200 และตอนนี้ EMA50 ตัดลงใต้ EMA200 พร้อมระยะห่างเกิน Threshold
+        elif ema50_prev >= ema200_prev and ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
         if cross_signal:
             logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
         else:
-            logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจนตามเงื่อนไขปัจจุบัน.") # ปรับข้อความ Log
+            logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.") # ข้อความเดิม
             
         return cross_signal
 
@@ -413,7 +418,6 @@ def check_ema_cross() -> str | None:
 # ==============================================================================
 # 10. ฟังก์ชันจัดการคำสั่งซื้อขาย (ORDER MANAGEMENT FUNCTIONS)
 # ==============================================================================
-
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float | None]:
     """เปิดออเดอร์ Market และคืนราคา Entry Price."""
     global current_position_size
@@ -429,10 +433,16 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
         market = exchange.market(SYMBOL)
         
-        min_amount_btc_from_exchange = market.get('limits', {}).get('amount', {}).get('min', 0)
-        min_notional_usdt_from_exchange = market.get('limits', {}).get('cost', {}).get('min', 0)
+        # ดึงค่า min amount และ min notional, และจัดการกรณีที่อาจเป็น None
+        # ใช้ .get() เพื่อป้องกัน KeyError และใช้ None แทนค่าเริ่มต้นเพื่อแยกแยะระหว่าง 0 กับ ไม่มีค่า
+        min_amount_btc_from_exchange = market.get('limits', {}).get('amount', {}).get('min')
+        min_notional_usdt_from_exchange = market.get('limits', {}).get('cost', {}).get('min')
         
-        logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_from_exchange:.6f}, Min_Notional_USDT={min_notional_usdt_from_exchange:.2f}")
+        # เตรียมตัวแปรสำหรับแสดงผลใน Log ให้ปลอดภัยจาก None
+        min_amount_btc_display = min_amount_btc_from_exchange if min_amount_btc_from_exchange is not None else 0.0
+        min_notional_usdt_display = min_notional_usdt_from_exchange if min_notional_usdt_from_exchange is not None else 0.0
+
+        logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_display:.6f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
 
 
         order_size_in_btc_calculated = (use_balance_for_trade * LEVERAGE) / current_price
@@ -440,12 +450,14 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
         order_size_in_btc = order_size_in_btc_calculated
 
-        if min_amount_btc_from_exchange and order_size_in_btc < min_amount_btc_from_exchange:
+        # ในส่วนการคำนวณ ให้ใช้ค่าจริงที่ดึงมา (min_amount_btc_from_exchange, min_notional_usdt_from_exchange)
+        # แต่ต้องมั่นใจว่าใช้เปรียบเทียบกับ 0 หรือแปลงเป็น 0 หากเป็น None ก่อนใช้คำนวณ
+        if (min_amount_btc_from_exchange is not None) and order_size_in_btc < min_amount_btc_from_exchange:
             logger.warning(f"⚠️ ขนาด BTC ที่คำนวณได้ ({order_size_in_btc:.6f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange:.6f} BTC). จะใช้ขนาดขั้นต่ำแทน.")
             order_size_in_btc = min_amount_btc_from_exchange
 
         current_notional_value = order_size_in_btc * current_price
-        if min_notional_usdt_from_exchange and current_notional_value < min_notional_usdt_from_exchange:
+        if (min_notional_usdt_from_exchange is not None) and current_notional_value < min_notional_usdt_from_exchange:
             logger.warning(f"⚠️ มูลค่า Notional ที่คำนวณได้ (สำหรับ {order_size_in_btc:.6f} BTC คือ {current_notional_value:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำ ({min_notional_usdt_from_exchange:.2f} USDT).")
             required_btc_for_min_notional = min_notional_usdt_from_exchange / current_price
             
