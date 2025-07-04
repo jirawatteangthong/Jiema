@@ -20,13 +20,13 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '1m'
+TIMEFRAME = '15m'
 LEVERAGE = 30
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
-PORTFOLIO_PERCENT_TRADE = 0.8 # ใช้ 100% ของพอร์ต ("All in")
+PORTFOLIO_PERCENT_TRADE = 0.9 # ใช้ 90% ของพอร์ต ("All in") เผื่อค่าธรรมเนียม
 CROSS_THRESHOLD_POINTS = 20 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 
 # --- Telegram Notification Settings ---
@@ -37,7 +37,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json' # ตรวจสอบให้แน่ใจว่าได้เปลี่ยนเป็น /data/trading_stats.json หากใช้ Railway Volume
 
 # --- Bot Timing ---
-MAIN_LOOP_SLEEP_SECONDS = 360 # 6 นาที
+MAIN_LOOP_SLEEP_SECONDS = 300 
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
@@ -198,8 +198,8 @@ def reset_monthly_stats():
     monthly_stats['sl_count'] = 0
     monthly_stats['total_pnl'] = 0.0
     monthly_stats['trades'] = []
-    # monthly_stats['last_ema_cross_signal'] = None # อาจจะเก็บไว้เพื่อป้องกันการเปิดซ้ำซ้อน
-    last_ema_position_status = None # รีเซ็ตสถานะ EMA เมื่อเริ่มเดือนใหม่
+    # monthly_stats['last_ema_cross_signal'] = None # (Keep this commented or removed if you always want to open on a new cross)
+    last_ema_position_status = None # รีเซ็ตสถานะ EMA เมื่อเริ่มเดือนใหม่ หรือเมื่อคุณต้องการให้เริ่มต้นใหม่
     save_monthly_stats()
     logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
@@ -345,7 +345,8 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
 def check_ema_cross() -> str | None:
     """
     ตรวจสอบการตัดกันของ EMA50 และ EMA200 โดยใช้ Threshold เพื่อยืนยัน.
-    จะเปิดออเดอร์เมื่อ EMA50 "เปลี่ยนสถานะ" จากเหนือ/ใต้ เป็นใต้/เหนือ และห่างเกิน Threshold
+    จะเปิดออเดอร์เมื่อ EMA50 "เปลี่ยนสถานะ" จากเหนือ/ใต้ เป็นใต้/เหนือ และห่างเกิน Threshold.
+    ถ้าบอทเพิ่งเริ่มรัน (last_ema_position_status เป็น None) จะบันทึกสถานะปัจจุบันไว้ก่อน ไม่ส่งสัญญาณ.
     """
     global last_ema_position_status 
     
@@ -394,27 +395,34 @@ def check_ema_cross() -> str | None:
             current_ema_position = 'above'
         elif ema50_current < ema200_current:
             current_ema_position = 'below'
+        
+        # ถ้ายังไม่เคยบันทึกสถานะ EMA เลย (บอทเพิ่งเริ่มรัน)
+        if last_ema_position_status is None:
+            if current_ema_position:
+                last_ema_position_status = current_ema_position
+                save_monthly_stats() # บันทึกสถานะเริ่มต้น
+                logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
+            return None # ไม่ส่งสัญญาณเพื่อเปิดออเดอร์ในรอบแรก
 
         cross_signal = None
 
-        # Golden Cross (Long)
-        # ถ้า EMA50 เคยอยู่ข้างล่าง และตอนนี้อยู่ข้างบน และห่างเกิน Threshold
+        # Golden Cross (Long) - EMA50 เปลี่ยนจากอยู่ล่าง เป็นอยู่บน และห่างเกิน Threshold
         if last_ema_position_status == 'below' and current_ema_position == 'above' and \
            ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
-        # Death Cross (Short)
-        # ถ้า EMA50 เคยอยู่ข้างบน และตอนนี้อยู่ข้างล่าง และห่างเกิน Threshold
+        # Death Cross (Short) - EMA50 เปลี่ยนจากอยู่บน เป็นอยู่ล่าง และห่างเกิน Threshold
         elif last_ema_position_status == 'above' and current_ema_position == 'below' and \
              ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
         # อัปเดตสถานะ EMA ล่าสุดเสมอ (ไม่ว่าจะมีสัญญาณหรือไม่)
-        if current_ema_position: 
+        # ยกเว้นเมื่อมีสัญญาณที่จะถูกส่งออกไป (เพราะหลังเปิดออเดอร์ เราจะรีเซ็ต last_ema_position_status เป็น None ใน main loop)
+        if current_ema_position and cross_signal is None: # ถ้าไม่มีสัญญาณครอส ให้บันทึกสถานะปัจจุบัน
             last_ema_position_status = current_ema_position
-            save_monthly_stats() # บันทึกสถานะ EMA ทันที
+            save_monthly_stats() 
 
         if cross_signal:
             logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
@@ -658,23 +666,18 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
         
         # Fetch only 'conditional' (algo) orders which include TP/SL on OKX
         # Docs: https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-algo-order-list
-        # CCXT 'fetch_open_orders' params: 'ordType': 'conditional' or 'algo'
-        # OKX specific: 'ordType': 'conditional', 'algoId' (if tracking), 'state': 'live'
         open_algo_orders = exchange.fetch_open_orders(SYMBOL, params={'ordType': 'conditional'})
         
         sl_order_ids_to_cancel = []
         for order in open_algo_orders:
-            # OKX 'algoOrderType' can be 'tp', 'sl', 'ts', 'conditional'
+            # OKX 'algoOrderType' can be 'sl', 'tp', 'ts', 'conditional'
             # We are looking for the previous stop loss order
-            if order.get('info', {}).get('algoOrdType') in ['sl', 'conditional'] and order.get('status') == 'open':
+            if order.get('info', {}).get('algoOrdType') == 'sl' and order.get('status') == 'live':
                 sl_order_ids_to_cancel.append(order['id'])
         
         if sl_order_ids_to_cancel:
             for sl_id in sl_order_ids_to_cancel:
                 try:
-                    # OKX specific cancel algo order: privatePostTradeCancelAlgoOrder
-                    # CCXT's cancel_order usually handles algo orders if it's the only one of that type,
-                    # but sometimes direct algo cancel is needed.
                     exchange.cancel_order(sl_id, SYMBOL) # OKX cancel_order can take algo order ID
                     logger.info(f"✅ ยกเลิก SL Order ID {sl_id} สำเร็จ.")
                 except Exception as cancel_e:
@@ -719,16 +722,17 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
 def monitor_position(pos_info: dict | None, current_price: float):
     """ตรวจสอบสถานะโพซิชันปัจจุบันและจัดการ Stop Loss."""
     global current_position, sl_moved, entry_price, current_position_size
-    global monthly_stats
+    global monthly_stats, last_ema_position_status
 
     logger.debug(f"🔄 กำลังตรวจสอบสถานะโพซิชัน: Pos_Info={pos_info}, Current_Price={current_price}")
     if not pos_info:
-        if current_position:
+        if current_position: # หากก่อนหน้านี้มีโพซิชัน แต่ตอนนี้ไม่มีแล้ว แสดงว่าถูกปิด
             logger.info(f"ℹ️ โพซิชัน {current_position.upper()} ถูกปิดแล้ว.")
 
             closed_price = current_price
             pnl_usdt_actual = 0.0
 
+            # พยายามคำนวณ PnL จากข้อมูล Entry Price ที่บันทึกไว้ในบอท
             if entry_price and current_position_size:
                 if current_position == 'long':
                     pnl_usdt_actual = (closed_price - entry_price) * current_position_size
@@ -738,10 +742,9 @@ def monitor_position(pos_info: dict | None, current_price: float):
             close_reason = "ปิดโดยไม่ทราบสาเหตุ"
             emoji = "❓"
 
-            tp_sl_be_tolerance_points = entry_price * TP_SL_BE_PRICE_TOLERANCE_PERCENT if entry_price else 0
-
             # การระบุสาเหตุการปิดออเดอร์จากราคา (ใช้ได้ดีเมื่อ TP/SL ถูกตั้งในบอท)
-            # ถ้า TP/SL ถูกตั้งใน Exchange แล้ว Exchange จะบอกเหตุผลเอง
+            # ถ้า TP/SL ถูกตั้งใน Exchange แล้ว Exchange อาจแจ้งเหตุผลใน Log ของตัวเอง
+            tp_sl_be_tolerance_points = entry_price * TP_SL_BE_PRICE_TOLERANCE_PERCENT if entry_price else 0
             if current_position == 'long' and entry_price:
                 if closed_price >= (entry_price + TP_VALUE_POINTS) - tp_sl_be_tolerance_points:
                     close_reason = "TP"
@@ -771,8 +774,8 @@ def monitor_position(pos_info: dict | None, current_price: float):
             entry_price = None
             current_position_size = 0.0
             sl_moved = False # <<-- สำคัญ: รีเซ็ตสถานะ SL
-            # monthly_stats['last_ema_cross_signal'] = None # (อันนี้ถ้าใช้)
-            save_monthly_stats()
+            last_ema_position_status = None # <<-- สำคัญ: รีเซ็ตสถานะ EMA เพื่อรอการครอสครั้งใหม่
+            save_monthly_stats() # บันทึกสถานะที่รีเซ็ตแล้ว
 
         return
 
@@ -969,7 +972,6 @@ def main():
 
                 if signal: # ถ้าพบสัญญาณ
                     logger.info(f"🌟 ตรวจพบสัญญาณ EMA Cross: {signal.upper()}")
-                    # ตอนนี้ Logic การ "สัญญาณใหม่" อยู่ใน check_ema_cross แล้ว
                     logger.info(f"✨ สัญญาณ {signal.upper()} ที่เข้าเงื่อนไข. กำลังพยายามเปิดออเดอร์.")
 
                     market_order_success, confirmed_entry_price = open_market_order(signal, current_price)
@@ -978,8 +980,9 @@ def main():
                         set_tpsl_success = set_tpsl_for_position(signal, confirmed_entry_price)
 
                         if set_tpsl_success:
-                            # monthly_stats['last_ema_cross_signal'] = signal # ไม่จำเป็นต้องบันทึกอีกต่อไปถ้าต้องการให้เปิดทุกครั้งที่ cross
-                            save_monthly_stats() # บันทึกสถานะ EMA ที่อัปเดตแล้วใน check_ema_cross
+                            # รีเซ็ตสถานะ EMA เพื่อรอสัญญาณใหม่หลังเปิดออเดอร์
+                            last_ema_position_status = None 
+                            save_monthly_stats() # บันทึกสถานะที่รีเซ็ตแล้ว
                             logger.info(f"✅ เปิดออเดอร์ {signal.upper()} และตั้ง TP/SL สำเร็จ.")
                         else:
                             logger.error(f"❌ เปิดออเดอร์ {signal.upper()} ได้ แต่ตั้ง TP/SL ไม่สำเร็จ. กรุณาตรวจสอบและปิดออเดอร์ด้วยตนเอง!")
