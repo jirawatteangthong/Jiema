@@ -20,7 +20,7 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '15m'
+TIMEFRAME = '30m'
 LEVERAGE = 30
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
@@ -37,7 +37,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json' # ตรวจสอบให้แน่ใจว่าได้เปลี่ยนเป็น /data/trading_stats.json หากใช้ Railway Volume
 
 # --- Bot Timing ---
-MAIN_LOOP_SLEEP_SECONDS = 300 
+MAIN_LOOP_SLEEP_SECONDS = 300 # 6 นาที
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
@@ -198,8 +198,7 @@ def reset_monthly_stats():
     monthly_stats['sl_count'] = 0
     monthly_stats['total_pnl'] = 0.0
     monthly_stats['trades'] = []
-    # monthly_stats['last_ema_cross_signal'] = None # (Keep this commented or removed if you always want to open on a new cross)
-    last_ema_position_status = None # รีเซ็ตสถานะ EMA เมื่อเริ่มเดือนใหม่ หรือเมื่อคุณต้องการให้เริ่มต้นใหม่
+    last_ema_position_status = None # รีเซ็ตสถานะ EMA เมื่อเริ่มเดือนใหม่
     save_monthly_stats()
     logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
@@ -299,6 +298,7 @@ def get_current_position() -> dict | None:
         try:
             logger.debug(f"🔍 กำลังดึงโพซิชันปัจจุบัน (Attempt {i+1}/{retries})...")
             positions = exchange.fetch_positions([SYMBOL])
+            logger.debug(f"DEBUG: Fetched positions raw: {positions}") # <--- เพิ่มบรรทัดนี้เพื่อ debug
             time.sleep(2)
             for pos in positions:
                 if float(pos.get('info', {}).get('posAmt', 0)) != 0:
@@ -308,7 +308,7 @@ def get_current_position() -> dict | None:
                         'size': abs(pos_amount),
                         'entry_price': float(pos['entryPrice']),
                         'unrealized_pnl': float(pos['unrealizedPnl']),
-                        'pos_id': pos['id']
+                        'pos_id': pos.get('id', 'N/A') # ใช้ .get() เพื่อความปลอดภัย
                     }
             return None
         except (ccxt.NetworkError, ccxt.ExchangeError) as e:
@@ -539,13 +539,16 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
         confirmed_pos_info = None
         confirmation_retries = 15
-        confirmation_sleep = 2
+        confirmation_sleep = 3 # <<-- ปรับเพิ่มเวลา sleep เพื่อช่วยการยืนยันโพซิชัน
 
         for i in range(confirmation_retries):
             logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/{confirmation_retries})...")
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
-            size_tolerance = order_size_in_btc * 0.005
+            # ตรวจสอบว่ายืนยันโพซิชันได้จริงหรือไม่
+            # ขนาดโพซิชันที่ยืนยันได้ควรจะใกล้เคียงกับขนาดที่ส่งคำสั่ง
+            # ใช้ tolerance เล็กน้อยเนื่องจากความคลาดเคลื่อนของ Exchange
+            size_tolerance = order_size_in_btc * 0.005 
             if confirmed_pos_info and \
                confirmed_pos_info['side'] == direction and \
                abs(confirmed_pos_info['size'] - order_size_in_btc) <= size_tolerance:
