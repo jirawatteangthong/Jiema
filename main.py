@@ -20,14 +20,14 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '1m'
+TIMEFRAME = '30m'
 LEVERAGE = 30
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
 PORTFOLIO_PERCENT_TRADE = 0.9 # ใช้ 90% ของพอร์ต ("All in") เผื่อค่าธรรมเนียม
-CROSS_THRESHOLD_POINTS = 20 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
+CROSS_THRESHOLD_POINTS = 5 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
