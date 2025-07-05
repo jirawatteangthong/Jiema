@@ -20,13 +20,13 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '1m'
+TIMEFRAME = '3m'
 LEVERAGE = 30
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
-PORTFOLIO_PERCENT_TRADE = 0.9 # ใช้ 90% ของพอร์ต ("All in") เผื่อค่าธรรมเนียม
+PORTFOLIO_PERCENT_TRADE = 1.0 # ใช้ 90% ของพอร์ต ("All in") เผื่อค่าธรรมเนียม
 CROSS_THRESHOLD_POINTS = 5 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 
 # --- Telegram Notification Settings ---
@@ -457,12 +457,12 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         
         # ดึงค่า min amount และ min notional, และจัดการกรณีที่อาจเป็น None
         # ใช้ .get() เพื่อป้องกัน KeyError และใช้ None แทนค่าเริ่มต้นเพื่อแยกแยะระหว่าง 0 กับ ไม่มีค่า
-        min_amount_btc_from_exchange = market.get('limits', {}).get('amount', {}).get('min')
-        min_notional_usdt_from_exchange = market.get('limits', {}).get('cost', {}).get('min')
+        min_amount_btc_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
+        min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
         
         # เตรียมตัวแปรสำหรับแสดงผลใน Log ให้ปลอดภัยจาก None
-        min_amount_btc_display = min_amount_btc_from_exchange if min_amount_btc_from_exchange is not None else 0.0
-        min_notional_usdt_display = min_notional_usdt_from_exchange if min_notional_usdt_from_exchange is not None else 0.0
+        min_amount_btc_display = min_amount_btc_from_exchange_val if min_amount_btc_from_exchange_val is not None else 0.0
+        min_notional_usdt_display = min_notional_usdt_from_exchange_val if min_notional_usdt_from_exchange_val is not None else 0.0
 
         logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_display:.6f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
 
@@ -470,25 +470,24 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         order_size_in_btc_calculated = (use_balance_for_trade * LEVERAGE) / current_price
         logger.info(f"ℹ️ Calculated Order Size (raw): {order_size_in_btc_calculated:.6f} BTC (จาก {use_balance_for_trade:,.2f} USDT * {LEVERAGE}x)")
 
-        order_size_in_btc = order_size_in_btc_calculated
+        order_size_in_btc = order_size_in_btc_calculated # เริ่มต้นด้วยขนาดที่คำนวณได้
 
-        # ในส่วนการคำนวณ ให้ใช้ค่าจริงที่ดึงมา (min_amount_btc_from_exchange, min_notional_usdt_from_exchange)
-        # แต่ต้องมั่นใจว่าใช้เปรียบเทียบกับ 0 หรือแปลงเป็น 0 หากเป็น None ก่อนใช้คำนวณ
-        if (min_amount_btc_from_exchange is not None) and order_size_in_btc < min_amount_btc_from_exchange:
-            logger.warning(f"⚠️ ขนาด BTC ที่คำนวณได้ ({order_size_in_btc:.6f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange:.6f} BTC). จะใช้ขนาดขั้นต่ำแทน.")
-            order_size_in_btc = min_amount_btc_from_exchange
+        # ตรวจสอบและบังคับใช้ขั้นต่ำของ Amount
+        if min_amount_btc_from_exchange_val is not None and min_amount_btc_from_exchange_val > 0:
+            # ถ้าขนาดที่คำนวณได้น้อยกว่าขั้นต่ำ ให้ใช้ขั้นต่ำ (หรือใช้ขนาดที่คำนวณได้ถ้ามันมากกว่า)
+            order_size_in_btc = max(order_size_in_btc, min_amount_btc_from_exchange_val)
+            logger.info(f"ℹ️ Adjusted for Min_Amount_BTC: Current order_size_in_btc={order_size_in_btc:.6f} (Min={min_amount_btc_from_exchange_val:.6f})")
 
+        # ตรวจสอบและบังคับใช้ขั้นต่ำของ Notional Value
         current_notional_value = order_size_in_btc * current_price
-        if (min_notional_usdt_from_exchange is not None) and current_notional_value < min_notional_usdt_from_exchange:
-            logger.warning(f"⚠️ มูลค่า Notional ที่คำนวณได้ (สำหรับ {order_size_in_btc:.6f} BTC คือ {current_notional_value:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำ ({min_notional_usdt_from_exchange:.2f} USDT).")
-            required_btc_for_min_notional = min_notional_usdt_from_exchange / current_price
-            
-            if required_btc_for_min_notional > order_size_in_btc:
-                logger.warning(f"ℹ️ ปรับขนาด BTC จาก {order_size_in_btc:.6f} เป็น {required_btc_for_min_notional:.6f} BTC เพื่อให้ถึงมูลค่า Notional ขั้นต่ำ.")
-                order_size_in_btc = required_btc_for_min_notional
-            else:
-                 logger.info(f"ℹ️ มูลค่า Notional ขั้นต่ำถูกพบหรือเกินแล้ว. ไม่มีการปรับเพิ่มขนาดสำหรับ Notional.")
-
+        if min_notional_usdt_from_exchange_val is not None and min_notional_usdt_from_exchange_val > 0:
+            if current_notional_value < min_notional_usdt_from_exchange_val:
+                required_btc_for_min_notional = min_notional_usdt_from_exchange_val / current_price
+                # ต้องมั่นใจว่าขนาดที่ปรับแล้วยังมากกว่าขั้นต่ำของ Amount ด้วย
+                order_size_in_btc = max(order_size_in_btc, required_btc_for_min_notional) 
+                logger.warning(f"⚠️ Adjusted for Min_Notional_USDT: Current order_size_in_btc={order_size_in_btc:.6f} (Min Notional={min_notional_usdt_from_exchange_val:.2f})")
+        
+        # บรรทัดนี้ต้องอยู่หลังการปรับขั้นต่ำทั้งหมด
         order_size_in_btc = float(exchange.amount_to_precision(SYMBOL, order_size_in_btc))
         logger.info(f"ℹ️ ขนาดออเดอร์สุดท้ายหลังจากปรับขั้นต่ำและ Precision: {order_size_in_btc:.6f} BTC")
 
