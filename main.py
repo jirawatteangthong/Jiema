@@ -20,14 +20,14 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '5m'
+TIMEFRAME = '30m'
 LEVERAGE = 30
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
-PORTFOLIO_PERCENT_TRADE = 1.0 # ใช้ 90% ของพอร์ต ("All in") เผื่อค่าธรรมเนียม
-CROSS_THRESHOLD_POINTS = 5 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
+CROSS_THRESHOLD_POINTS = 50 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
+FIXED_USDT_AMOUNT_PER_SLOT = 40.0 # <--- เพิ่มบรรทัดนี้: กำหนดจำนวน USDT ต่อ "หนึ่งไม้"
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -441,83 +441,78 @@ def check_ema_cross() -> str | None:
 # ==============================================================================
 
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float | None]:
-    """เปิดออเดอร์ Market และคืนราคา Entry Price."""
+    """เปิดออเดอร์ Market ด้วยจำนวน USDT ที่คำนวณจากจำนวนไม้ และคืนราคา Entry Price."""
     global current_position_size
 
     try:
         balance = get_portfolio_balance()
-        if balance <= 1:
-            send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอสำหรับเปิดออเดอร์ ({balance:.2f} USDT).")
-            logger.error(f"❌ Balance ({balance:.2f} USDT) is too low to open an order.")
-            return False, None
+        
+        # --- Logic ใหม่: คำนวณจำนวนไม้และมูลค่ารวม USDT ที่จะเทรด ---
+        num_of_slots = int(balance / FIXED_USDT_AMOUNT_PER_SLOT) # จำนวนไม้ที่เปิดได้ (ปัดลง)
 
-        use_balance_for_trade = balance * PORTFOLIO_PERCENT_TRADE
+        if num_of_slots <= 0:
+            send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT/ไม้).")
+            logger.error(f"❌ Balance ({balance:,.2f} USDT) is too low for even one slot of {FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT.")
+            return False, None
+        
+        # คำนวณมูลค่า USDT รวมที่จะเทรด
+        trade_amount_usdt = num_of_slots * FIXED_USDT_AMOUNT_PER_SLOT
+        
+        # คำนวณ Margin ที่ต้องใช้สำหรับมูลค่ารวม USDT นี้
+        required_margin = trade_amount_usdt / LEVERAGE 
+
+        if balance < required_margin:
+            # นี่ไม่ควรเกิดขึ้นถ้า num_of_slots > 0 และ balance >= FIXED_USDT_AMOUNT_PER_SLOT
+            # แต่ใส่ไว้เพื่อความปลอดภัย
+            error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) สำหรับ Margin {required_margin:,.2f} USDT ที่ต้องใช้กับออเดอร์ {trade_amount_usdt:,.2f} USDT."
+            send_telegram(error_msg)
+            logger.error(error_msg)
+            return False, None
 
         market = exchange.market(SYMBOL)
         
-        # ดึงค่า min amount และ min notional, และจัดการกรณีที่อาจเป็น None
-        # ใช้ .get() เพื่อป้องกัน KeyError และใช้ None แทนค่าเริ่มต้นเพื่อแยกแยะระหว่าง 0 กับ ไม่มีค่า
-        min_amount_btc_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
+        # --- ตรวจสอบขั้นต่ำของ Exchange (เผื่อว่า trade_amount_usdt ต่ำกว่าขั้นต่ำ Exchange) ---
         min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
-        
-        # เตรียมตัวแปรสำหรับแสดงผลใน Log ให้ปลอดภัยจาก None
+        min_amount_btc_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
+
+        # Log ข้อมูลขั้นต่ำของ Exchange
         min_amount_btc_display = min_amount_btc_from_exchange_val if min_amount_btc_from_exchange_val is not None else 0.0
         min_notional_usdt_display = min_notional_usdt_from_exchange_val if min_notional_usdt_from_exchange_val is not None else 0.0
-
         logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_display:.6f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
 
+        # ถ้ามูลค่าที่คำนวณได้ ต่ำกว่า Notional ขั้นต่ำของ Exchange ให้ใช้ Notional ขั้นต่ำของ Exchange แทน
+        if min_notional_usdt_from_exchange_val is not None and trade_amount_usdt < min_notional_usdt_from_exchange_val:
+            logger.warning(f"⚠️ มูลค่าที่คำนวณได้ ({trade_amount_usdt:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำของ Exchange ({min_notional_usdt_from_exchange_val:.2f} USDT). จะใช้มูลค่าขั้นต่ำของ Exchange แทน.")
+            trade_amount_usdt = min_notional_usdt_from_exchange_val # บังคับใช้ Notional ขั้นต่ำจาก Exchange
 
-        order_size_in_btc_calculated = (use_balance_for_trade * LEVERAGE) / current_price
-        logger.info(f"ℹ️ Calculated Order Size (raw): {order_size_in_btc_calculated:.6f} BTC (จาก {use_balance_for_trade:,.2f} USDT * {LEVERAGE}x)")
-
-        order_size_in_btc = order_size_in_btc_calculated # เริ่มต้นด้วยขนาดที่คำนวณได้
-
-        # ตรวจสอบและบังคับใช้ขั้นต่ำของ Amount
-        if min_amount_btc_from_exchange_val is not None and min_amount_btc_from_exchange_val > 0:
-            # ถ้าขนาดที่คำนวณได้น้อยกว่าขั้นต่ำ ให้ใช้ขั้นต่ำ (หรือใช้ขนาดที่คำนวณได้ถ้ามันมากกว่า)
-            order_size_in_btc = max(order_size_in_btc, min_amount_btc_from_exchange_val)
-            logger.info(f"ℹ️ Adjusted for Min_Amount_BTC: Current order_size_in_btc={order_size_in_btc:.6f} (Min={min_amount_btc_from_exchange_val:.6f})")
-
-        # ตรวจสอบและบังคับใช้ขั้นต่ำของ Notional Value
-        current_notional_value = order_size_in_btc * current_price
-        if min_notional_usdt_from_exchange_val is not None and min_notional_usdt_from_exchange_val > 0:
-            if current_notional_value < min_notional_usdt_from_exchange_val:
-                required_btc_for_min_notional = min_notional_usdt_from_exchange_val / current_price
-                # ต้องมั่นใจว่าขนาดที่ปรับแล้วยังมากกว่าขั้นต่ำของ Amount ด้วย
-                order_size_in_btc = max(order_size_in_btc, required_btc_for_min_notional) 
-                logger.warning(f"⚠️ Adjusted for Min_Notional_USDT: Current order_size_in_btc={order_size_in_btc:.6f} (Min Notional={min_notional_usdt_from_exchange_val:.2f})")
+        # สำหรับการคำนวณ 'amount' ที่จะใช้ใน create_order (ถ้า Exchange ไม่รองรับ quoteOrderQty)
+        # หรือเพื่อ Log ค่าประมาณการ
+        order_size_in_btc_estimated = trade_amount_usdt / current_price 
         
-        # บรรทัดนี้ต้องอยู่หลังการปรับขั้นต่ำทั้งหมด
-        order_size_in_btc = float(exchange.amount_to_precision(SYMBOL, order_size_in_btc))
-        logger.info(f"ℹ️ ขนาดออเดอร์สุดท้ายหลังจากปรับขั้นต่ำและ Precision: {order_size_in_btc:.6f} BTC")
+        # ตรวจสอบว่าขนาด BTC ที่ประมาณได้จาก USDT ที่กำหนด สูงกว่าขั้นต่ำของ BTC (min_amount) หรือไม่
+        if min_amount_btc_from_exchange_val is not None and order_size_in_btc_estimated < min_amount_btc_from_exchange_val:
+             logger.warning(f"⚠️ ขนาด BTC ที่ประมาณได้ ({order_size_in_btc_estimated:.6f}) จาก {trade_amount_usdt:.2f} USDT ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange_val:.6f} BTC). ออเดอร์อาจถูกปฏิเสธหรือปรับขนาด.")
+             # ในกรณีนี้, โดยปกติ Exchange จะปรับขนาดขึ้นไปเองให้ถึง min_amount_btc
+             # หรืออาจต้องคำนวณ trade_amount_usdt ใหม่เพื่อให้ BTC ถึง min_amount_btc
+             # เช่น: trade_amount_usdt = max(trade_amount_usdt, min_amount_btc_from_exchange_val * current_price)
+             # แต่สำหรับ OKX การใช้ quoteOrderQty มักจะทำงานร่วมกับ min_amount ได้ดี
 
-        required_notional_for_final_size = order_size_in_btc * current_price
-        required_margin_for_final_size = required_notional_for_final_size / LEVERAGE
-        
-        if balance < required_margin_for_final_size:
-             error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขนาด {order_size_in_btc:.6f} BTC. ต้องการ Margin {required_margin_for_final_size:,.2f} USDT."
-             send_telegram(error_msg)
-             logger.error(error_msg)
-             return False, None
-        
-        if order_size_in_btc <= 0:
-            send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ precision/ขั้นต่ำ.")
-            logger.error("❌ Final order size is zero or negative after adjustments.")
-            return False, None
-
+        logger.info(f"ℹ️ จะเปิดออเดอร์ด้วย Notional Value รวม: {trade_amount_usdt:,.2f} USDT ({num_of_slots} ไม้)")
 
         side = 'buy' if direction == 'long' else 'sell'
 
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
+            'quoteOrderQty': trade_amount_usdt, # <-- กำหนดจำนวน USDT ตรงนี้
         }
 
         order = None
         for i in range(3):
-            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3)...")
+            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {trade_amount_usdt:,.2f} USDT...")
             try:
-                order = exchange.create_order(SYMBOL, 'market', side, order_size_in_btc, params=params)
+                # ส่ง amount เป็น None เพราะใช้ quoteOrderQty แทน
+                order = exchange.create_order(SYMBOL, 'market', side, None, price=None, params=params)
                 time.sleep(2)
                 logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id', 'N/A')}")
                 break
@@ -536,23 +531,23 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             send_telegram("⛔️ API Error: ล้มเหลวในการสร้างออเดอร์ตลาดหลังจาก 3 ครั้ง.")
             return False, None
 
+        # --- ยืนยันโพซิชันหลังจากเปิดออเดอร์ (ยังคงสำคัญมาก) ---
         confirmed_pos_info = None
         confirmation_retries = 15
-        confirmation_sleep = 3 # <<-- ปรับเพิ่มเวลา sleep เพื่อช่วยการยืนยันโพซิชัน
+        confirmation_sleep = 3 
 
         for i in range(confirmation_retries):
             logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/{confirmation_retries})...")
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
-            # ตรวจสอบว่ายืนยันโพซิชันได้จริงหรือไม่
-            # ขนาดโพซิชันที่ยืนยันได้ควรจะใกล้เคียงกับขนาดที่ส่งคำสั่ง
-            # ใช้ tolerance เล็กน้อยเนื่องจากความคลาดเคลื่อนของ Exchange
-            size_tolerance = order_size_in_btc * 0.005 
-            if confirmed_pos_info and \
-               confirmed_pos_info['side'] == direction and \
-               abs(confirmed_pos_info['size'] - order_size_in_btc) <= size_tolerance:
-                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f}")
-                current_position_size = confirmed_pos_info['size']
+            
+            # เมื่อใช้ quoteOrderQty, 'amount' ที่ถูกกรอกจริง (in BTC) อาจไม่ตรงกับที่ประมาณไว้เป๊ะๆ
+            # ต้องตรวจสอบ 'confirmed_pos_info' ว่ามีโพซิชันที่เปิดอยู่จริงหรือไม่ และเป็นด้านที่ถูกต้อง
+            # ไม่สามารถใช้ abs(confirmed_pos_info['size'] - order_size_in_btc) <= size_tolerance ได้อีกต่อไป
+            # เพราะเราไม่รู้ order_size_in_btc ที่แน่นอนจนกว่าจะได้ confirmed_pos_info
+            if confirmed_pos_info and confirmed_pos_info['side'] == direction:
+                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f} BTC")
+                current_position_size = confirmed_pos_info['size'] # บันทึกขนาด BTC ที่ Exchange ยืนยัน
                 return True, confirmed_pos_info['entry_price']
             
         logger.error(f"❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order (หลังจากพยายาม {confirmation_retries} ครั้ง).")
