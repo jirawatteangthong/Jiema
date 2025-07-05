@@ -894,7 +894,7 @@ def send_startup_message():
 <b>⏰ เวลาเริ่ม:</b> <code>{startup_time}</code>
 <b>📊 เฟรม:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
 <b>🎯 TP:</b> <code>{TP_VALUE_POINTS}</code> | <b>SL:</b> <code>{SL_VALUE_POINTS}</code>
-<b>🔧 ใช้เงิน:</b> <code>{int(PORTFOLIO_PERCENT_TRADE * 100)}%</code> ของพอร์ตต่อออเดอร์
+<b>🔧 ขนาดไม้:</b> <code>{FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT</code> ต่อไม้
 <b>📈 รอสัญญาณ EMA Cross...</b>"""
 
         send_telegram(message)
