@@ -541,7 +541,6 @@ def confirm_position_entry(expected_direction: str, expected_contracts: int) -> 
 
     return False, None
 
-
 # ==============================================================================
 # 10. ฟังก์ชันจัดการคำสั่งซื้อขาย (ORDER MANAGEMENT FUNCTIONS)
 # ==============================================================================
@@ -607,7 +606,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
-            'posSide': 'long' if direction == 'long' else 'short',
+            # 'posSide': 'long' if direction == 'long' else 'short', # <-- คอมเมนต์บรรทัดนี้ออก
         }
         
         order = None
@@ -621,7 +620,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 
                 if order and order.get('id'):
                     logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id')}")
-                    time.sleep(2) # ให้ Exchange มีเวลาประมวลผล
+                    time.sleep(2)
                     break
                 else:
                     logger.warning(f"⚠️ Order response ไม่สมบูรณ์ (Attempt {attempt + 1}/3)")
@@ -655,6 +654,59 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         logger.error(f"❌ Critical Error in open_market_order: {e}", exc_info=True)
         send_telegram(f"⛔️ Critical Error: ไม่สามารถเปิดออเดอร์ได้\n{str(e)[:200]}...")
         return False, None
+
+def confirm_position_entry(expected_direction: str, expected_contracts: int) -> tuple[bool, float | None]:
+    """ยืนยันการเปิดโพซิชัน"""
+    global current_position_size
+
+    size_tolerance = max(1, expected_contracts * 0.005) # tolerance อย่างน้อย 1 contract
+
+    for attempt in range(CONFIRMATION_RETRIES):
+        logger.info(f"⏳ ยืนยันโพซิชัน ({attempt + 1}/{CONFIRMATION_RETRIES})...")
+        time.sleep(CONFIRMATION_SLEEP)
+        
+        try:
+            position_info = get_current_position()
+            
+            if position_info and position_info.get('side') == expected_direction:
+                actual_size = position_info.get('size', 0)
+                entry_price = position_info.get('entry_price')
+                
+                if abs(actual_size - expected_contracts) <= size_tolerance:
+                    logger.info(f"✅ ยืนยันโพซิชันสำเร็จ:")
+                    logger.info(f"   - Entry Price: {entry_price:.2f}")
+                    logger.info(f"   - Size: {actual_size:,.0f} Contracts")
+                    logger.info(f"   - Direction: {expected_direction.upper()}")
+                    
+                    current_position_size = actual_size
+                    
+                    # ส่งการแจ้งเตือน
+                    profit_loss = position_info.get('unrealizedPnl', 0)
+                    send_telegram(
+                        f"🎯 เปิดโพซิชัน {expected_direction.upper()} สำเร็จ\n"
+                        f"📊 ขนาด: {actual_size:,.0f} Contracts\n"
+                        f"💰 Entry: {entry_price:.2f}\n"
+                        f"📈 P&L: {profit_loss:,.2f} USDT"
+                    )
+                    
+                    return True, entry_price
+                else:
+                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.0f}, ได้: {actual_size:,.0f})")
+            else:
+                logger.warning(f"⚠️ ไม่พบโพซิชันที่ตรงกัน (คาดหวัง: {expected_direction})")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error ในการยืนยันโพซิชัน: {e}")
+
+    # ล้มเหลวในการยืนยัน
+    logger.error(f"❌ ไม่สามารถยืนยันโพซิชันได้หลังจาก {CONFIRMATION_RETRIES} ครั้ง")
+    send_telegram(
+        f"⛔️ Position Confirmation Failed\n"
+        f"🔍 กรุณาตรวจสอบโพซิชันใน Exchange ด่วน!\n"
+        f"📊 คาดหวัง: {expected_direction.upper()} {expected_contracts:,.0f} Contracts"
+    )
+
+    return False, None
 
 # ==============================================================================
 # 11. ฟังก์ชันตั้งค่า TP/SL/กันทุน (TP/SL/BREAKEVER FUNCTIONS)
