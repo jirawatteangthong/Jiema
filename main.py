@@ -22,16 +22,18 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 SYMBOL = 'BTC/USDT:USDT'
 TIMEFRAME = '1m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 390
+TP_VALUE_POINTS = 120
 SL_VALUE_POINTS = 999
-BE_PROFIT_TRIGGER_POINTS = 350
-BE_SL_BUFFER_POINTS = 100
+BE_PROFIT_TRIGGER_POINTS = 100
+BE_SL_BUFFER_POINTS = 10
 CONTRACTS_PER_SLOT = 40 # จำนวนสัญญาต่อ "หนึ่งไม้" (1 contract = 1 USD สำหรับ BTC/USDT-SWAP)
 CROSS_THRESHOLD_POINTS = 1 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
 MIN_BALANCE_SAFETY_MARGIN = 50  # ยอดคงเหลือขั้นต่ำที่ต้องเหลือไว้ (USDT)
 MAX_POSITION_SIZE_LIMIT = 1000  # จำกัดขนาดโพซิชันสูงสุด (contracts)
+
+# ค่าสำหรับยืนยันโพซิชันหลังเปิดออเดอร์ (ใช้ใน confirm_position_entry)
 CONFIRMATION_RETRIES = 15  # จำนวนครั้งที่ลองยืนยันโพซิชัน
 CONFIRMATION_SLEEP = 3  # วินาทีที่รอระหว่างการยืนยัน
 
@@ -156,7 +158,7 @@ def reset_monthly_stats():
     monthly_stats['total_pnl'] = 0.0
     monthly_stats['trades'] = []
     last_ema_position_status = None 
-    save_monthly_stats() # save_monthly_stats ต้องถูกประกาศก่อนหน้านี้
+    save_monthly_stats() 
     logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
 def load_monthly_stats():
@@ -191,21 +193,21 @@ def load_monthly_stats():
             current_month_year_str = datetime.now().strftime('%Y-%m')
             if monthly_stats['month_year'] != current_month_year_str:
                 logger.info(f"ℹ️ สถิติที่โหลดมาเป็นของเดือน {monthly_stats['month_year']} ไม่ตรงกับเดือนนี้ {current_month_year_str}. จะรีเซ็ตสถิติสำหรับเดือนใหม่.")
-                reset_monthly_stats() # เรียกใช้ได้แล้ว เพราะอยู่หลังการประกาศ
+                reset_monthly_stats()
 
         else:
             logger.info(f"🆕 ไม่พบไฟล์สถิติ {STATS_FILE} สร้างไฟล์ใหม่")
-            reset_monthly_stats() # เรียกใช้ได้แล้ว
+            reset_monthly_stats()
 
     except Exception as e:
-        logger.error(f"❌ เกิดข้อผิดพลาดในการโหลดสถิติ: {e}")
+        logger.error(f"❌ เกิดข้อผิดพลาดในการโหลดสถิติ: {e}", exc_info=True)
         monthly_stats = {
             'month_year': None, 'tp_count': 0, 'sl_count': 0, 'total_pnl': 0.0, 'trades': [],
             'last_report_month_year': None, 'last_ema_cross_signal': None, 'last_ema_position_status': None
         }
         last_monthly_report_date = None
         last_ema_position_status = None
-        reset_monthly_stats() # เรียกใช้ได้แล้ว
+        reset_monthly_stats()
 
 def add_trade_result(reason: str, pnl: float):
     """เพิ่มผลการเทรดลงในสถิติประจำเดือน."""
@@ -327,7 +329,7 @@ def get_current_position() -> dict | None:
             return 0.0
     logger.error(f"❌ Failed to fetch positions after {retries} attempts.")
     send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงโพซิชันหลังจาก {retries} ครั้ง.")
-    return None
+    return 0.0
 
 # ==============================================================================
 # 9. ฟังก์ชันคำนวณ Indicators (INDICATOR CALCULATION FUNCTIONS)
@@ -492,7 +494,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: int) -> 
     """ยืนยันการเปิดโพซิชัน"""
     global current_position_size
 
-    size_tolerance = max(1, expected_contracts * 0.005)
+    size_tolerance = max(1, expected_contracts * 0.005) 
 
     for attempt in range(CONFIRMATION_RETRIES):
         logger.info(f"⏳ ยืนยันโพซิชัน ({attempt + 1}/{CONFIRMATION_RETRIES})...")
@@ -540,6 +542,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: int) -> 
     )
 
     return False, None
+
 
 # ==============================================================================
 # 10. ฟังก์ชันจัดการคำสั่งซื้อขาย (ORDER MANAGEMENT FUNCTIONS)
@@ -606,7 +609,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
-            # 'posSide': 'long' if direction == 'long' else 'short', # <-- คอมเมนต์บรรทัดนี้ออก
+            # 'posSide': 'long' if direction == 'long' else 'short', # <-- คอมเมนต์บรรทัดนี้ออก (OKX Net Mode ไม่ต้องการ)
         }
         
         order = None
@@ -620,7 +623,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 
                 if order and order.get('id'):
                     logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id')}")
-                    time.sleep(2)
+                    time.sleep(2) # ให้ Exchange มีเวลาประมวลผล
                     break
                 else:
                     logger.warning(f"⚠️ Order response ไม่สมบูรณ์ (Attempt {attempt + 1}/3)")
@@ -654,59 +657,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         logger.error(f"❌ Critical Error in open_market_order: {e}", exc_info=True)
         send_telegram(f"⛔️ Critical Error: ไม่สามารถเปิดออเดอร์ได้\n{str(e)[:200]}...")
         return False, None
-
-def confirm_position_entry(expected_direction: str, expected_contracts: int) -> tuple[bool, float | None]:
-    """ยืนยันการเปิดโพซิชัน"""
-    global current_position_size
-
-    size_tolerance = max(1, expected_contracts * 0.005) # tolerance อย่างน้อย 1 contract
-
-    for attempt in range(CONFIRMATION_RETRIES):
-        logger.info(f"⏳ ยืนยันโพซิชัน ({attempt + 1}/{CONFIRMATION_RETRIES})...")
-        time.sleep(CONFIRMATION_SLEEP)
-        
-        try:
-            position_info = get_current_position()
-            
-            if position_info and position_info.get('side') == expected_direction:
-                actual_size = position_info.get('size', 0)
-                entry_price = position_info.get('entry_price')
-                
-                if abs(actual_size - expected_contracts) <= size_tolerance:
-                    logger.info(f"✅ ยืนยันโพซิชันสำเร็จ:")
-                    logger.info(f"   - Entry Price: {entry_price:.2f}")
-                    logger.info(f"   - Size: {actual_size:,.0f} Contracts")
-                    logger.info(f"   - Direction: {expected_direction.upper()}")
-                    
-                    current_position_size = actual_size
-                    
-                    # ส่งการแจ้งเตือน
-                    profit_loss = position_info.get('unrealizedPnl', 0)
-                    send_telegram(
-                        f"🎯 เปิดโพซิชัน {expected_direction.upper()} สำเร็จ\n"
-                        f"📊 ขนาด: {actual_size:,.0f} Contracts\n"
-                        f"💰 Entry: {entry_price:.2f}\n"
-                        f"📈 P&L: {profit_loss:,.2f} USDT"
-                    )
-                    
-                    return True, entry_price
-                else:
-                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.0f}, ได้: {actual_size:,.0f})")
-            else:
-                logger.warning(f"⚠️ ไม่พบโพซิชันที่ตรงกัน (คาดหวัง: {expected_direction})")
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Error ในการยืนยันโพซิชัน: {e}")
-
-    # ล้มเหลวในการยืนยัน
-    logger.error(f"❌ ไม่สามารถยืนยันโพซิชันได้หลังจาก {CONFIRMATION_RETRIES} ครั้ง")
-    send_telegram(
-        f"⛔️ Position Confirmation Failed\n"
-        f"🔍 กรุณาตรวจสอบโพซิชันใน Exchange ด่วน!\n"
-        f"📊 คาดหวัง: {expected_direction.upper()} {expected_contracts:,.0f} Contracts"
-    )
-
-    return False, None
 
 # ==============================================================================
 # 11. ฟังก์ชันตั้งค่า TP/SL/กันทุน (TP/SL/BREAKEVER FUNCTIONS)
@@ -748,7 +698,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
                 'triggerPrice': float(tp_price), 
                 'reduceOnly': True,
                 'tdMode': 'cross',
-                'posSide': 'long' if direction == 'long' else 'short',
+                # 'posSide': 'long' if direction == 'long' else 'short', # <-- คอมเมนต์บรรทัดนี้ออก
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Take Profit สำเร็จ: ID {tp_order.get('id', 'N/A')}, Trigger Price: {tp_price:.2f}")
@@ -764,7 +714,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
                 'triggerPrice': float(sl_price), 
                 'reduceOnly': True,
                 'tdMode': 'cross',
-                'posSide': 'long' if direction == 'long' else 'short',
+                # 'posSide': 'long' if direction == 'long' else 'short', # <-- คอมเมนต์บรรทัดนี้ออก
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Stop Loss สำเร็จ: ID {sl_order.get('id', 'N/A')}, Trigger Price: {sl_price:.2f}")
@@ -838,7 +788,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
                 'triggerPrice': float(breakeven_sl_price),
                 'reduceOnly': True,
                 'tdMode': 'cross',
-                'posSide': 'long' if direction == 'long' else 'short',
+                # 'posSide': 'long' if direction == 'long' else 'short', # <-- คอมเมนต์บรรทัดนี้ออก
             }
         )
         logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
@@ -906,7 +856,7 @@ def monitor_position(pos_info: dict | None, current_price: float):
 
             send_telegram(f"{emoji} <b>ปิดออเดอร์ด้วย {close_reason}</b>\n<b>PnL (ประมาณ):</b> <code>{pnl_usdt_actual:,.2f} USDT</code>")
             logger.info(f"✅ โพซิชันปิด: {close_reason}, PnL (ประมาณ): {pnl_usdt_actual:.2f}")
-            add_trade_result(close_reason, pnl_usdt_actual)
+            add_trade_result(reason, pnl_usdt_actual)
 
             current_position = None
             entry_price = None
@@ -1055,7 +1005,7 @@ def main():
         logger.info("✅ Monthly Report Scheduler Thread Started.")
 
     except Exception as e:
-        error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | บอทจะลองเริ่มต้นใหม่ใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+        error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
         send_telegram(error_msg)
         logger.critical(f"❌ Startup error: {e}", exc_info=True)
         time.sleep(ERROR_RETRY_SLEEP_SECONDS)
