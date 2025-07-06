@@ -147,6 +147,18 @@ def save_monthly_stats():
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการบันทิติสถิติ: {e}")
 
+def reset_monthly_stats():
+    """รีเซ็ตสถิติประจำเดือนสำหรับเดือนใหม่."""
+    global monthly_stats, last_ema_position_status
+    monthly_stats['month_year'] = datetime.now().strftime('%Y-%m')
+    monthly_stats['tp_count'] = 0
+    monthly_stats['sl_count'] = 0
+    monthly_stats['total_pnl'] = 0.0
+    monthly_stats['trades'] = []
+    last_ema_position_status = None 
+    save_monthly_stats() # save_monthly_stats ต้องถูกประกาศก่อนหน้านี้
+    logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
+
 def load_monthly_stats():
     """โหลดสถิติการเทรดประจำเดือนจากไฟล์ JSON."""
     global monthly_stats, last_monthly_report_date, last_ema_position_status
@@ -179,11 +191,11 @@ def load_monthly_stats():
             current_month_year_str = datetime.now().strftime('%Y-%m')
             if monthly_stats['month_year'] != current_month_year_str:
                 logger.info(f"ℹ️ สถิติที่โหลดมาเป็นของเดือน {monthly_stats['month_year']} ไม่ตรงกับเดือนนี้ {current_month_year_str}. จะรีเซ็ตสถิติสำหรับเดือนใหม่.")
-                reset_monthly_stats()
+                reset_monthly_stats() # เรียกใช้ได้แล้ว เพราะอยู่หลังการประกาศ
 
         else:
             logger.info(f"🆕 ไม่พบไฟล์สถิติ {STATS_FILE} สร้างไฟล์ใหม่")
-            reset_monthly_stats()
+            reset_monthly_stats() # เรียกใช้ได้แล้ว
 
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการโหลดสถิติ: {e}")
@@ -193,7 +205,7 @@ def load_monthly_stats():
         }
         last_monthly_report_date = None
         last_ema_position_status = None
-        reset_monthly_stats()
+        reset_monthly_stats() # เรียกใช้ได้แล้ว
 
 def add_trade_result(reason: str, pnl: float):
     """เพิ่มผลการเทรดลงในสถิติประจำเดือน."""
