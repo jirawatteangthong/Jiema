@@ -22,11 +22,11 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 SYMBOL = 'BTC/USDT:USDT'
 TIMEFRAME = '1m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 150
-SL_VALUE_POINTS = 500
-BE_PROFIT_TRIGGER_POINTS = 50
-BE_SL_BUFFER_POINTS = 10
-FIXED_USDT_AMOUNT_PER_SLOT = 40.0 # กำหนดจำนวน USDT ต่อ "หนึ่งไม้"
+TP_VALUE_POINTS = 501
+SL_VALUE_POINTS = 999
+BE_PROFIT_TRIGGER_POINTS = 350
+BE_SL_BUFFER_POINTS = 100
+CONTRACTS_PER_SLOT = 40 # จำนวนสัญญาต่อ "หนึ่งไม้" (1 contract = 1 USD สำหรับ BTC/USDT-SWAP)
 CROSS_THRESHOLD_POINTS = 1 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 
 # --- Telegram Notification Settings ---
@@ -73,7 +73,7 @@ sl_moved = False
 portfolio_balance = 0.0
 last_monthly_report_date = None
 initial_balance = 0.0
-current_position_size = 0.0
+current_position_size = 0.0 # ขนาดโพซิชันในหน่วย Contracts
 last_ema_position_status = None # 'above', 'below', หรือ None (เมื่อเริ่มต้น)
 
 # ==============================================================================
@@ -139,7 +139,7 @@ def save_monthly_stats():
             json.dump(monthly_stats, f, indent=4)
         logger.debug(f"💾 บันทึกสถิติการเทรดลงไฟล์ {STATS_FILE} สำเร็จ")
     except Exception as e:
-        logger.error(f"❌ เกิดข้อผิดพลาดในการบันทึกสถิติ: {e}")
+        logger.error(f"❌ เกิดข้อผิดพลาดในการบันทิติสถิติ: {e}")
 
 def load_monthly_stats():
     """โหลดสถิติการเทรดประจำเดือนจากไฟล์ JSON."""
@@ -304,7 +304,7 @@ def get_current_position() -> dict | None:
                     pos_amount = float(pos['info']['posAmt'])
                     return {
                         'side': 'long' if pos_amount > 0 else 'short',
-                        'size': abs(pos_amount),
+                        'size': abs(pos_amount), # จะเป็นจำนวน Contracts
                         'entry_price': float(pos['entryPrice']),
                         'unrealized_pnl': float(pos['unrealizedPnl']),
                         'pos_id': pos.get('id', 'N/A')
@@ -318,7 +318,7 @@ def get_current_position() -> dict | None:
         except Exception as e:
             logger.error(f"❌ Unexpected error in get_current_position: {e}", exc_info=True)
             send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงโพซิชันได้\nรายละเอียด: {e}")
-            return None
+            return 0.0
     logger.error(f"❌ Failed to fetch positions after {retries} attempts.")
     send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงโพซิชันหลังจาก {retries} ครั้ง.")
     return None
@@ -439,89 +439,69 @@ def check_ema_cross() -> str | None:
 # ==============================================================================
 
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float | None]:
-    """เปิดออเดอร์ Market ด้วยจำนวน USDT ที่คำนวณจากจำนวนไม้ และคืนราคา Entry Price."""
+    """เปิดออเดอร์ Market ด้วยจำนวนสัญญาที่คำนวณจากจำนวนไม้ และคืนราคา Entry Price."""
     global current_position_size
 
     try:
         balance = get_portfolio_balance()
         
-        # --- Logic ใหม่: คำนวณจำนวนไม้และมูลค่ารวม USDT ที่จะเทรด ---
-        num_of_slots = int(balance / FIXED_USDT_AMOUNT_PER_SLOT)
+        # --- Logic: คำนวณจำนวนไม้และจำนวนสัญญารวมที่จะเทรด ---
+        # 1 contract = 1 USD สำหรับ BTC/USDT-SWAP
+        num_of_slots = int(balance / CONTRACTS_PER_SLOT)
 
         if num_of_slots <= 0:
-            send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT/ไม้).")
-            logger.error(f"❌ Balance ({balance:,.2f} USDT) is too low for even one slot of {FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT.")
+            send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({CONTRACTS_PER_SLOT:,.2f} Contracts/ไม้).")
+            logger.error(f"❌ Balance ({balance:,.2f} USDT) is too low for even one slot of {CONTRACTS_PER_SLOT:,.2f} Contracts.")
             return False, None
         
-        trade_amount_usdt_calculated = num_of_slots * FIXED_USDT_AMOUNT_PER_SLOT
+        total_contracts_to_trade_raw = num_of_slots * CONTRACTS_PER_SLOT 
+        total_contracts_to_trade = int(total_contracts_to_trade_raw) # ปัดลงเป็นจำนวนเต็ม (จำนวนสัญญาต้องเป็นจำนวนเต็ม)
         
-        required_margin = trade_amount_usdt_calculated / LEVERAGE 
+        # คำนวณ Margin ที่ต้องใช้สำหรับจำนวนสัญญารวมนี้ (1 contract = 1 USD)
+        required_margin = total_contracts_to_trade / LEVERAGE 
 
         if balance < required_margin:
-            error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) สำหรับ Margin {required_margin:,.2f} USDT ที่ต้องใช้กับออเดอร์ {trade_amount_usdt_calculated:,.2f} USDT."
+            error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) สำหรับ Margin {required_margin:,.2f} USDT ที่ต้องใช้กับ {total_contracts_to_trade} Contracts."
             send_telegram(error_msg)
             logger.error(error_msg)
             return False, None
 
         market = exchange.market(SYMBOL)
         
-        # --- ดึงค่าขั้นต่ำและ Precision จาก Exchange ---
-        min_amount_btc_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
+        # --- ดึงค่าขั้นต่ำ (ซึ่งตอนนี้คือขั้นต่ำของ Contracts) ---
+        min_contracts_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
         min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
-        amount_precision = market.get('precision', {}).get('amount')
-        
-        min_amount_btc_display = min_amount_btc_from_exchange_val if min_amount_btc_from_exchange_val is not None else 0.0
+
+        min_contracts_display = min_contracts_from_exchange_val if min_contracts_from_exchange_val is not None else 0.0
         min_notional_usdt_display = min_notional_usdt_from_exchange_val if min_notional_usdt_from_exchange_val is not None else 0.0
-        logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_display:.6f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
-        logger.info(f"DEBUG: Amount Precision: {amount_precision}")
+        logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Contracts={min_contracts_display:.0f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
 
-        # --- กำหนด final_trade_amount_usdt โดยพิจารณาขั้นต่ำทั้งหมด (รวมถึง BTC amount) ---
-        final_trade_amount_usdt = trade_amount_usdt_calculated 
+        # --- ตรวจสอบและปรับ total_contracts_to_trade ให้ถึงขั้นต่ำของ Exchange (ถ้ามี) ---
+        if min_contracts_from_exchange_val is not None and total_contracts_to_trade < min_contracts_from_exchange_val:
+            logger.warning(f"⚠️ จำนวนสัญญา ({total_contracts_to_trade:.0f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_contracts_from_exchange_val:.0f} Contracts). จะปรับไปใช้จำนวนขั้นต่ำของ Exchange แทน.")
+            total_contracts_to_trade = int(min_contracts_from_exchange_val)
 
-        # 1. ตรวจสอบ Min Notional (ถ้ามี)
-        if min_notional_usdt_from_exchange_val is not None and final_trade_amount_usdt < min_notional_usdt_from_exchange_val:
-            logger.warning(f"⚠️ มูลค่าที่คำนวณได้ ({final_trade_amount_usdt:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำของ Exchange ({min_notional_usdt_from_exchange_val:.2f} USDT). จะปรับไปใช้มูลค่าขั้นต่ำของ Exchange แทน.")
-            final_trade_amount_usdt = min_notional_usdt_from_exchange_val
-
-        # 2. ตรวจสอบ Min Amount (BTC) และปรับ final_trade_amount_usdt ให้ถึงขั้นต่ำ BTC
-        if min_amount_btc_from_exchange_val is not None and min_amount_btc_from_exchange_val > 0:
-            required_usdt_for_min_btc = min_amount_btc_from_exchange_val * current_price
-            if final_trade_amount_usdt < required_usdt_for_min_btc:
-                logger.warning(f"⚠️ มูลค่ารวม USDT ({final_trade_amount_usdt:.2f}) ไม่เพียงพอที่จะถึงขั้นต่ำ BTC ({min_amount_btc_from_exchange_val:.6f} BTC = {required_usdt_for_min_btc:.2f} USDT). จะปรับมูลค่ารวม USDT ให้ถึงขั้นต่ำ BTC แทน.")
-                final_trade_amount_usdt = required_usdt_for_min_btc
-        
-        logger.info(f"ℹ️ จะเปิดออเดอร์ด้วย Notional Value รวม: {final_trade_amount_usdt:,.2f} USDT ({num_of_slots} ไม้)")
-
-        # --- คำนวณจำนวน BTC (amount) ที่แท้จริงที่จะส่งไปในคำสั่ง ---
-        amount_btc_to_send = final_trade_amount_usdt / current_price
-        
-        # ปัดเศษ amount_btc_to_send ด้วย precision ที่ดึงมาจาก Exchange
-        amount_btc_to_send = float(exchange.amount_to_precision(SYMBOL, amount_btc_to_send))
-
-        # ตรวจสอบขั้นต่ำ BTC อีกครั้งหลัง precision
-        if amount_btc_to_send < min_amount_btc_from_exchange_val: 
-            logger.warning(f"⚠️ จำนวน BTC สุดท้ายหลัง Precision ({amount_btc_to_send:.6f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange_val:.6f} BTC). จะปรับเป็นขั้นต่ำ.")
-            amount_btc_to_send = min_amount_btc_from_exchange_val
-        
-        if amount_btc_to_send <= 0:
-            send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ Precision/ขั้นต่ำสุดท้าย.")
-            logger.error("❌ Final amount_btc_to_send is zero or negative after final adjustments.")
+        if total_contracts_to_trade <= 0:
+            send_telegram("⛔️ Error: จำนวนสัญญาคำนวณได้เป็นศูนย์หรือติดลบหลังปรับขั้นต่ำ.")
+            logger.error("❌ Final contracts to trade is zero or negative after adjustments.")
             return False, None
-
-        logger.info(f"ℹ️ จำนวน BTC ที่จะส่งไปในคำสั่ง (sz): {amount_btc_to_send:.6f} BTC")
+        
+        logger.info(f"ℹ️ จะเปิดออเดอร์ด้วยจำนวนสัญญา: {total_contracts_to_trade:.0f} Contracts ({num_of_slots} ไม้)")
 
         side = 'buy' if direction == 'long' else 'sell'
 
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
+            'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
         }
 
         order = None
         for i in range(3):
-            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {amount_btc_to_send:.6f} BTC...")
+            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {total_contracts_to_trade:.0f} Contracts...")
             try:
-                order = exchange.create_order(SYMBOL, 'market', side, amount_btc_to_send, price=None, params=params)
+                # ส่งจำนวนสัญญา (amount) โดยตรง และเป็นจำนวนเต็ม
+                order = exchange.create_order(SYMBOL, 'market', side, total_contracts_to_trade, price=None, params=params)
                 time.sleep(2)
                 logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id', 'N/A')}")
                 break
@@ -550,12 +530,12 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
             
-            size_tolerance = amount_btc_to_send * 0.005 
+            size_tolerance = total_contracts_to_trade * 0.005 # ใช้ tolerance สำหรับจำนวนสัญญา
             if confirmed_pos_info and \
                confirmed_pos_info['side'] == direction and \
-               abs(confirmed_pos_info['size'] - amount_btc_to_send) <= size_tolerance:
-                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f} BTC")
-                current_position_size = confirmed_pos_info['size']
+               abs(confirmed_pos_info['size'] - total_contracts_to_trade) <= size_tolerance:
+                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.0f} Contracts") # แสดงเป็นจำนวนเต็ม
+                current_position_size = confirmed_pos_info['size'] # บันทึกขนาดโพซิชันเป็นจำนวนสัญญา
                 return True, confirmed_pos_info['entry_price']
             
         logger.error(f"❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order (หลังจากพยายาม {confirmation_retries} ครั้ง).")
@@ -602,12 +582,13 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
             symbol=SYMBOL,
             type='take_profit_market', 
             side=tp_sl_side,
-            amount=current_position_size,
+            amount=current_position_size, # current_position_size คือ จำนวน Contracts
             price=None,
             params={
                 'triggerPrice': float(tp_price), 
                 'reduceOnly': True,
-                'tdMode': 'cross'
+                'tdMode': 'cross',
+                'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Take Profit สำเร็จ: ID {tp_order.get('id', 'N/A')}, Trigger Price: {tp_price:.2f}")
@@ -617,12 +598,13 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
             symbol=SYMBOL,
             type='stop_loss_market', 
             side=tp_sl_side,
-            amount=current_position_size,
+            amount=current_position_size, # current_position_size คือ จำนวน Contracts
             price=None,
             params={
                 'triggerPrice': float(sl_price), 
                 'reduceOnly': True,
-                'tdMode': 'cross'
+                'tdMode': 'cross',
+                'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Stop Loss สำเร็จ: ID {sl_order.get('id', 'N/A')}, Trigger Price: {sl_price:.2f}")
@@ -690,12 +672,13 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
             symbol=SYMBOL,
             type='stop_loss_market',
             side=new_sl_side,
-            amount=current_position_size,
+            amount=current_position_size, # current_position_size คือ จำนวน Contracts
             price=None,
             params={
                 'triggerPrice': float(breakeven_sl_price),
                 'reduceOnly': True,
-                'tdMode': 'cross'
+                'tdMode': 'cross',
+                'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
             }
         )
         logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
@@ -729,6 +712,7 @@ def monitor_position(pos_info: dict | None, current_price: float):
             closed_price = current_price
             pnl_usdt_actual = 0.0
 
+            # PnL สำหรับ Futures คือ (ราคาปิด - ราคาเข้า) * จำนวนสัญญา
             if entry_price and current_position_size:
                 if current_position == 'long':
                     pnl_usdt_actual = (closed_price - entry_price) * current_position_size
@@ -778,7 +762,7 @@ def monitor_position(pos_info: dict | None, current_price: float):
     unrealized_pnl = pos_info['unrealizedPnl']
     current_position_size = pos_info['size']
 
-    logger.info(f"📊 สถานะปัจจุบัน: {current_position.upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {entry_price:,.1f}")
+    logger.info(f"📊 สถานะปัจจุบัน: {current_position.upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {entry_price:,.1f}, Size: {current_position_size:.0f} Contracts") # แสดงขนาด Contracts
 
     pnl_in_points = 0
     if current_position == 'long':
@@ -886,7 +870,7 @@ def send_startup_message():
 <b>⏰ เวลาเริ่ม:</b> <code>{startup_time}</code>
 <b>📊 เฟรม:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
 <b>🎯 TP:</b> <code>{TP_VALUE_POINTS}</code> | <b>SL:</b> <code>{SL_VALUE_POINTS}</code>
-<b>🔧 ขนาดไม้:</b> <code>{FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT</code> ต่อไม้
+<b>🔧 ขนาดไม้:</b> <code>{CONTRACTS_PER_SLOT:,.0f} Contracts</code> ต่อไม้
 <b>📈 รอสัญญาณ EMA Cross...</b>"""
 
         send_telegram(message)
@@ -911,7 +895,7 @@ def main():
         logger.info("✅ Monthly Report Scheduler Thread Started.")
 
     except Exception as e:
-        error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+        error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | บอทจะลองเริ่มต้นใหม่ใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
         send_telegram(error_msg)
         logger.critical(f"❌ Startup error: {e}", exc_info=True)
         time.sleep(ERROR_RETRY_SLEEP_SECONDS)
@@ -1005,4 +989,5 @@ def main():
 # ==============================================================================
 if __name__ == '__main__':
     main()
+
 
