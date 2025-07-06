@@ -20,13 +20,13 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '30m'
+TIMEFRAME = '5m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 501
+TP_VALUE_POINTS = 150
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
-CROSS_THRESHOLD_POINTS = 50 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
+CROSS_THRESHOLD_POINTS = 5 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 FIXED_USDT_AMOUNT_PER_SLOT = 40.0 # <--- เพิ่มบรรทัดนี้: กำหนดจำนวน USDT ต่อ "หนึ่งไม้"
 
 # --- Telegram Notification Settings ---
