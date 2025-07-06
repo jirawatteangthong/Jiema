@@ -22,12 +22,18 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 SYMBOL = 'BTC/USDT:USDT'
 TIMEFRAME = '1m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 501
+TP_VALUE_POINTS = 390
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
 CONTRACTS_PER_SLOT = 40 # จำนวนสัญญาต่อ "หนึ่งไม้" (1 contract = 1 USD สำหรับ BTC/USDT-SWAP)
 CROSS_THRESHOLD_POINTS = 1 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
+
+# เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
+MIN_BALANCE_SAFETY_MARGIN = 50  # ยอดคงเหลือขั้นต่ำที่ต้องเหลือไว้ (USDT)
+MAX_POSITION_SIZE_LIMIT = 1000  # จำกัดขนาดโพซิชันสูงสุด (contracts)
+CONFIRMATION_RETRIES = 15  # จำนวนครั้งที่ลองยืนยันโพซิชัน
+CONFIRMATION_SLEEP = 3  # วินาทีที่รอระหว่างการยืนยัน
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -188,18 +194,6 @@ def load_monthly_stats():
         last_monthly_report_date = None
         last_ema_position_status = None
         reset_monthly_stats()
-
-def reset_monthly_stats():
-    """รีเซ็ตสถิติประจำเดือนสำหรับเดือนใหม่."""
-    global monthly_stats, last_ema_position_status
-    monthly_stats['month_year'] = datetime.now().strftime('%Y-%m')
-    monthly_stats['tp_count'] = 0
-    monthly_stats['sl_count'] = 0
-    monthly_stats['total_pnl'] = 0.0
-    monthly_stats['trades'] = []
-    last_ema_position_status = None 
-    save_monthly_stats()
-    logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
 def add_trade_result(reason: str, pnl: float):
     """เพิ่มผลการเทรดลงในสถิติประจำเดือน."""
@@ -435,6 +429,108 @@ def check_ema_cross() -> str | None:
         return None
 
 # ==============================================================================
+# 10. ฟังก์ชันช่วยสำหรับการคำนวณและตรวจสอบออเดอร์
+# ==============================================================================
+
+def validate_trading_parameters(balance: float, contracts_per_slot: int) -> tuple[bool, str]:
+    """ตรวจสอบความถูกต้องของพารามิเตอร์การเทรด"""
+    if balance <= MIN_BALANCE_SAFETY_MARGIN:
+        return False, f"ยอดคงเหลือ ({balance:,.2f} USDT) ต่ำเกินไป (ต้องมีอย่างน้อย {MIN_BALANCE_SAFETY_MARGIN} USDT)"
+
+    if contracts_per_slot <= 0:
+        return False, f"จำนวนสัญญาต่อไม้ไม่ถูกต้อง ({contracts_per_slot})"
+
+    if LEVERAGE <= 0:
+        return False, f"ค่า Leverage ไม่ถูกต้อง ({LEVERAGE})"
+
+    return True, "OK"
+
+def calculate_safe_position_size(balance: float) -> tuple[int, int, float]:
+    """คำนวณขนาดโพซิชันที่ปลอดภัย"""
+    available_balance = balance - MIN_BALANCE_SAFETY_MARGIN
+    num_of_slots = max(0, int(available_balance / CONTRACTS_PER_SLOT))
+
+    total_contracts_raw = num_of_slots * CONTRACTS_PER_SLOT
+    total_contracts = int(total_contracts_raw)  # ปัดลงเป็นจำนวนเต็ม
+
+    total_contracts = min(total_contracts, MAX_POSITION_SIZE_LIMIT)
+
+    required_margin = total_contracts / LEVERAGE
+
+    return num_of_slots, total_contracts, required_margin
+
+def check_exchange_limits(market: dict, total_contracts: int) -> tuple[int, bool]:
+    """ตรวจสอบและปรับจำนวนสัญญาตามขั้นต่ำของ Exchange"""
+    min_contracts = market.get('limits', {}).get('amount', {}).get('min')
+    min_notional = market.get('limits', {}).get('cost', {}).get('min')
+
+    logger.info(f"ℹ️ Exchange Limits - Min Contracts: {min_contracts}, Min Notional: {min_notional}")
+
+    adjusted_contracts = total_contracts
+    limit_applied = False
+
+    if min_contracts is not None and total_contracts < min_contracts:
+        adjusted_contracts = int(min_contracts)
+        limit_applied = True
+        logger.warning(f"⚠️ ปรับจำนวนสัญญาจาก {total_contracts} เป็น {adjusted_contracts} ตามขั้นต่ำของ Exchange")
+
+    return adjusted_contracts, limit_applied
+
+def confirm_position_entry(expected_direction: str, expected_contracts: int) -> tuple[bool, float | None]:
+    """ยืนยันการเปิดโพซิชัน"""
+    global current_position_size
+
+    size_tolerance = max(1, expected_contracts * 0.005)
+
+    for attempt in range(CONFIRMATION_RETRIES):
+        logger.info(f"⏳ ยืนยันโพซิชัน ({attempt + 1}/{CONFIRMATION_RETRIES})...")
+        time.sleep(CONFIRMATION_SLEEP)
+        
+        try:
+            position_info = get_current_position()
+            
+            if position_info and position_info.get('side') == expected_direction:
+                actual_size = position_info.get('size', 0)
+                entry_price = position_info.get('entry_price')
+                
+                if abs(actual_size - expected_contracts) <= size_tolerance:
+                    logger.info(f"✅ ยืนยันโพซิชันสำเร็จ:")
+                    logger.info(f"   - Entry Price: {entry_price:.2f}")
+                    logger.info(f"   - Size: {actual_size:,.0f} Contracts")
+                    logger.info(f"   - Direction: {expected_direction.upper()}")
+                    
+                    current_position_size = actual_size
+                    
+                    # ส่งการแจ้งเตือน
+                    profit_loss = position_info.get('unrealizedPnl', 0)
+                    send_telegram(
+                        f"🎯 เปิดโพซิชัน {expected_direction.upper()} สำเร็จ\n"
+                        f"📊 ขนาด: {actual_size:,.0f} Contracts\n"
+                        f"💰 Entry: {entry_price:.2f}\n"
+                        f"📈 P&L: {profit_loss:,.2f} USDT"
+                    )
+                    
+                    return True, entry_price
+                else:
+                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.0f}, ได้: {actual_size:,.0f})")
+            else:
+                logger.warning(f"⚠️ ไม่พบโพซิชันที่ตรงกัน (คาดหวัง: {expected_direction})")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Error ในการยืนยันโพซิชัน: {e}")
+
+    # ล้มเหลวในการยืนยัน
+    logger.error(f"❌ ไม่สามารถยืนยันโพซิชันได้หลังจาก {CONFIRMATION_RETRIES} ครั้ง")
+    send_telegram(
+        f"⛔️ Position Confirmation Failed\n"
+        f"🔍 กรุณาตรวจสอบโพซิชันใน Exchange ด่วน!\n"
+        f"📊 คาดหวัง: {expected_direction.upper()} {expected_contracts:,.0f} Contracts"
+    )
+
+    return False, None
+
+
+# ==============================================================================
 # 10. ฟังก์ชันจัดการคำสั่งซื้อขาย (ORDER MANAGEMENT FUNCTIONS)
 # ==============================================================================
 
@@ -443,109 +539,109 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
     global current_position_size
 
     try:
+        # 1. ดึงยอดคงเหลือและตรวจสอบพื้นฐาน
         balance = get_portfolio_balance()
         
-        # --- Logic: คำนวณจำนวนไม้และจำนวนสัญญารวมที่จะเทรด ---
-        # 1 contract = 1 USD สำหรับ BTC/USDT-SWAP
-        num_of_slots = int(balance / CONTRACTS_PER_SLOT)
-
+        # 2. ตรวจสอบความถูกต้องของพารามิเตอร์
+        is_valid, error_msg = validate_trading_parameters(balance, CONTRACTS_PER_SLOT)
+        if not is_valid:
+            send_telegram(f"⛔️ Parameter Error: {error_msg}")
+            logger.error(f"❌ {error_msg}")
+            return False, None
+        
+        # 3. คำนวณขนาดโพซิชันที่ปลอดภัย
+        num_of_slots, total_contracts, required_margin = calculate_safe_position_size(balance)
+        
         if num_of_slots <= 0:
-            send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({CONTRACTS_PER_SLOT:,.2f} Contracts/ไม้).")
-            logger.error(f"❌ Balance ({balance:,.2f} USDT) is too low for even one slot of {CONTRACTS_PER_SLOT:,.2f} Contracts.")
+            error_msg = f"ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({CONTRACTS_PER_SLOT} Contracts/ไม้)"
+            send_telegram(f"⛔️ Balance Error: {error_msg}")
+            logger.error(f"❌ {error_msg}")
             return False, None
         
-        total_contracts_to_trade_raw = num_of_slots * CONTRACTS_PER_SLOT 
-        total_contracts_to_trade = int(total_contracts_to_trade_raw) # ปัดลงเป็นจำนวนเต็ม (จำนวนสัญญาต้องเป็นจำนวนเต็ม)
-        
-        # คำนวณ Margin ที่ต้องใช้สำหรับจำนวนสัญญารวมนี้ (1 contract = 1 USD)
-        required_margin = total_contracts_to_trade / LEVERAGE 
-
-        if balance < required_margin:
-            error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) สำหรับ Margin {required_margin:,.2f} USDT ที่ต้องใช้กับ {total_contracts_to_trade} Contracts."
-            send_telegram(error_msg)
-            logger.error(error_msg)
+        if total_contracts <= 0:
+            error_msg = "จำนวนสัญญาคำนวณได้เป็นศูนย์หรือติดลบ"
+            send_telegram(f"⛔️ Calculation Error: {error_msg}")
+            logger.error(f"❌ {error_msg}")
             return False, None
-
+        
+        # 4. ตรวจสอบ Margin ที่ต้องใช้
+        available_margin = balance - MIN_BALANCE_SAFETY_MARGIN
+        if available_margin < required_margin:
+            error_msg = f"Margin ไม่เพียงพอ (มี: {available_margin:,.2f}, ต้องการ: {required_margin:,.2f} USDT)"
+            send_telegram(f"⛔️ Margin Error: {error_msg}")
+            logger.error(f"❌ {error_msg}")
+            return False, None
+        
+        # 5. ตรวจสอบข้อจำกัดของ Exchange
         market = exchange.market(SYMBOL)
+        final_contracts, limit_applied = check_exchange_limits(market, total_contracts)
         
-        # --- ดึงค่าขั้นต่ำ (ซึ่งตอนนี้คือขั้นต่ำของ Contracts) ---
-        min_contracts_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
-        min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
-
-        min_contracts_display = min_contracts_from_exchange_val if min_contracts_from_exchange_val is not None else 0.0
-        min_notional_usdt_display = min_notional_usdt_from_exchange_val if min_notional_usdt_from_exchange_val is not None else 0.0
-        logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Contracts={min_contracts_display:.0f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
-
-        # --- ตรวจสอบและปรับ total_contracts_to_trade ให้ถึงขั้นต่ำของ Exchange (ถ้ามี) ---
-        if min_contracts_from_exchange_val is not None and total_contracts_to_trade < min_contracts_from_exchange_val:
-            logger.warning(f"⚠️ จำนวนสัญญา ({total_contracts_to_trade:.0f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_contracts_from_exchange_val:.0f} Contracts). จะปรับไปใช้จำนวนขั้นต่ำของ Exchange แทน.")
-            total_contracts_to_trade = int(min_contracts_from_exchange_val)
-
-        if total_contracts_to_trade <= 0:
-            send_telegram("⛔️ Error: จำนวนสัญญาคำนวณได้เป็นศูนย์หรือติดลบหลังปรับขั้นต่ำ.")
-            logger.error("❌ Final contracts to trade is zero or negative after adjustments.")
+        if final_contracts <= 0:
+            error_msg = "จำนวนสัญญาสุดท้ายเป็นศูนย์หลังปรับตามขั้นต่ำของ Exchange"
+            send_telegram(f"⛔️ Exchange Limit Error: {error_msg}")
+            logger.error(f"❌ {error_msg}")
             return False, None
         
-        logger.info(f"ℹ️ จะเปิดออเดอร์ด้วยจำนวนสัญญา: {total_contracts_to_trade:.0f} Contracts ({num_of_slots} ไม้)")
-
+        # 6. แสดงข้อมูลการเทรด
+        logger.info(f"ℹ️ Trading Summary:")
+        logger.info(f"   - Balance: {balance:,.2f} USDT")
+        logger.info(f"   - Slots: {num_of_slots} ไม้")
+        logger.info(f"   - Contracts: {final_contracts:,.0f}")
+        logger.info(f"   - Required Margin: {required_margin:,.2f} USDT")
+        logger.info(f"   - Direction: {direction.upper()}")
+        
+        # 7. ส่งออเดอร์
         side = 'buy' if direction == 'long' else 'sell'
-
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
-            'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
+            'posSide': 'long' if direction == 'long' else 'short',
         }
-
+        
         order = None
-        for i in range(3):
-            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {total_contracts_to_trade:.0f} Contracts...")
+        for attempt in range(3):
+            logger.info(f"⚡️ ส่งคำสั่ง Market Order (Attempt {attempt + 1}/3) - {final_contracts:,.0f} Contracts")
             try:
-                # ส่งจำนวนสัญญา (amount) โดยตรง และเป็นจำนวนเต็ม
-                order = exchange.create_order(SYMBOL, 'market', side, total_contracts_to_trade, price=None, params=params)
-                time.sleep(2)
-                logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id', 'N/A')}")
-                break
-            except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-                logger.warning(f"⚠️ Error creating market order (Attempt {i+1}/3): {e}. Retrying in 15 seconds...")
-                if i == 2:
-                    send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {e}")
+                order = exchange.create_order(
+                    SYMBOL, 'market', side, final_contracts, 
+                    price=None, params=params
+                )
+                
+                if order and order.get('id'):
+                    logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id')}")
+                    time.sleep(2) # ให้ Exchange มีเวลาประมวลผล
+                    break
+                else:
+                    logger.warning(f"⚠️ Order response ไม่สมบูรณ์ (Attempt {attempt + 1}/3)")
+                    
+            except ccxt.NetworkError as e:
+                logger.warning(f"⚠️ Network Error (Attempt {attempt + 1}/3): {e}")
+                if attempt == 2:
+                    send_telegram(f"⛔️ Network Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
                 time.sleep(15)
+                
+            except ccxt.ExchangeError as e:
+                logger.warning(f"⚠️ Exchange Error (Attempt {attempt + 1}/3): {e}")
+                if attempt == 2:
+                    send_telegram(f"⛔️ Exchange Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
+                time.sleep(15)
+                
             except Exception as e:
-                logger.error(f"❌ Unexpected error creating market order: {e}", exc_info=True)
-                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถสร้างออเดอร์ตลาดได้\nรายละเอียด: {e}")
+                logger.error(f"❌ Unexpected error (Attempt {attempt + 1}/3): {e}", exc_info=True)
+                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
                 return False, None
-
+        
         if not order:
-            logger.error("❌ Failed to create market order after 3 attempts.")
-            send_telegram("⛔️ API Error: ล้มเหลวในการสร้างออเดอร์ตลาดหลังจาก 3 ครั้ง.")
+            logger.error("❌ ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
+            send_telegram("⛔️ Order Failed: ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
             return False, None
-
-        # --- ยืนยันโพซิชันหลังจากเปิดออเดอร์ ---
-        confirmed_pos_info = None
-        confirmation_retries = 15
-        confirmation_sleep = 3 
-
-        for i in range(confirmation_retries):
-            logger.info(f"⏳ รอการยืนยันโพซิชัน ({i+1}/{confirmation_retries})...")
-            time.sleep(confirmation_sleep)
-            confirmed_pos_info = get_current_position()
-            
-            size_tolerance = total_contracts_to_trade * 0.005 # ใช้ tolerance สำหรับจำนวนสัญญา
-            if confirmed_pos_info and \
-               confirmed_pos_info['side'] == direction and \
-               abs(confirmed_pos_info['size'] - total_contracts_to_trade) <= size_tolerance:
-                logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.0f} Contracts") # แสดงเป็นจำนวนเต็ม
-                current_position_size = confirmed_pos_info['size'] # บันทึกขนาดโพซิชันเป็นจำนวนสัญญา
-                return True, confirmed_pos_info['entry_price']
-            
-        logger.error(f"❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order (หลังจากพยายาม {confirmation_retries} ครั้ง).")
-        send_telegram("⛔️ Error: ไม่สามารถยืนยันโพซิชันหลังเปิดออเดอร์ได้. กรุณาตรวจสอบสถานะใน Exchange โดยด่วน!")
-
-        return False, None
-
+        
+        # 8. ยืนยันโพซิชัน
+        return confirm_position_entry(direction, final_contracts)
+        
     except Exception as e:
-        logger.error(f"❌ Error ใน open_market_order (General Error): {e}", exc_info=True)
-        send_telegram(f"⛔️ Error: ไม่สามารถเปิดออเดอร์ตลาดได้ (General Error)\nรายละเอียด: {e}")
+        logger.error(f"❌ Critical Error in open_market_order: {e}", exc_info=True)
+        send_telegram(f"⛔️ Critical Error: ไม่สามารถเปิดออเดอร์ได้\n{str(e)[:200]}...")
         return False, None
 
 # ==============================================================================
@@ -588,7 +684,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
                 'triggerPrice': float(tp_price), 
                 'reduceOnly': True,
                 'tdMode': 'cross',
-                'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
+                'posSide': 'long' if direction == 'long' else 'short',
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Take Profit สำเร็จ: ID {tp_order.get('id', 'N/A')}, Trigger Price: {tp_price:.2f}")
@@ -604,7 +700,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
                 'triggerPrice': float(sl_price), 
                 'reduceOnly': True,
                 'tdMode': 'cross',
-                'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
+                'posSide': 'long' if direction == 'long' else 'short',
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Stop Loss สำเร็จ: ID {sl_order.get('id', 'N/A')}, Trigger Price: {sl_price:.2f}")
@@ -678,7 +774,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
                 'triggerPrice': float(breakeven_sl_price),
                 'reduceOnly': True,
                 'tdMode': 'cross',
-                'posSide': 'long' if direction == 'long' else 'short', # เพิ่ม posSide
+                'posSide': 'long' if direction == 'long' else 'short',
             }
         )
         logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
@@ -762,7 +858,7 @@ def monitor_position(pos_info: dict | None, current_price: float):
     unrealized_pnl = pos_info['unrealizedPnl']
     current_position_size = pos_info['size']
 
-    logger.info(f"📊 สถานะปัจจุบัน: {current_position.upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {entry_price:,.1f}, Size: {current_position_size:.0f} Contracts") # แสดงขนาด Contracts
+    logger.info(f"📊 สถานะปัจจุบัน: {current_position.upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {entry_price:,.1f}, Size: {current_position_size:.0f} Contracts")
 
     pnl_in_points = 0
     if current_position == 'long':
