@@ -455,61 +455,65 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             logger.error(f"❌ Balance ({balance:,.2f} USDT) is too low for even one slot of {FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT.")
             return False, None
         
-        # คำนวณมูลค่า USDT รวมที่จะเทรด
-        trade_amount_usdt = num_of_slots * FIXED_USDT_AMOUNT_PER_SLOT
+        trade_amount_usdt_calculated = num_of_slots * FIXED_USDT_AMOUNT_PER_SLOT # มูลค่า USDT ที่คำนวณจากจำนวนไม้
         
         # คำนวณ Margin ที่ต้องใช้สำหรับมูลค่ารวม USDT นี้
-        required_margin = trade_amount_usdt / LEVERAGE 
+        required_margin = trade_amount_usdt_calculated / LEVERAGE 
 
         if balance < required_margin:
-            # นี่ไม่ควรเกิดขึ้นถ้า num_of_slots > 0 และ balance >= FIXED_USDT_AMOUNT_PER_SLOT
-            # แต่ใส่ไว้เพื่อความปลอดภัย
-            error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) สำหรับ Margin {required_margin:,.2f} USDT ที่ต้องใช้กับออเดอร์ {trade_amount_usdt:,.2f} USDT."
+            error_msg = f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) สำหรับ Margin {required_margin:,.2f} USDT ที่ต้องใช้กับออเดอร์ {trade_amount_usdt_calculated:,.2f} USDT."
             send_telegram(error_msg)
             logger.error(error_msg)
             return False, None
 
         market = exchange.market(SYMBOL)
         
-        # --- ตรวจสอบขั้นต่ำของ Exchange (เผื่อว่า trade_amount_usdt ต่ำกว่าขั้นต่ำ Exchange) ---
-        min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
+        # --- ดึงค่าขั้นต่ำจาก Exchange ---
         min_amount_btc_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
+        min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
 
-        # Log ข้อมูลขั้นต่ำของ Exchange
         min_amount_btc_display = min_amount_btc_from_exchange_val if min_amount_btc_from_exchange_val is not None else 0.0
         min_notional_usdt_display = min_notional_usdt_from_exchange_val if min_notional_usdt_from_exchange_val is not None else 0.0
         logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_display:.6f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
 
-        # ถ้ามูลค่าที่คำนวณได้ ต่ำกว่า Notional ขั้นต่ำของ Exchange ให้ใช้ Notional ขั้นต่ำของ Exchange แทน
-        if min_notional_usdt_from_exchange_val is not None and trade_amount_usdt < min_notional_usdt_from_exchange_val:
-            logger.warning(f"⚠️ มูลค่าที่คำนวณได้ ({trade_amount_usdt:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำของ Exchange ({min_notional_usdt_from_exchange_val:.2f} USDT). จะใช้มูลค่าขั้นต่ำของ Exchange แทน.")
-            trade_amount_usdt = min_notional_usdt_from_exchange_val # บังคับใช้ Notional ขั้นต่ำจาก Exchange
+        # --- ตรวจสอบและปรับ trade_amount_usdt เพื่อให้ถึงขั้นต่ำของ Exchange ---
+        final_trade_amount_usdt = trade_amount_usdt_calculated # เริ่มต้นด้วยค่าที่คำนวณจากไม้
 
-        # สำหรับการคำนวณ 'amount' ที่จะใช้ใน create_order (ถ้า Exchange ไม่รองรับ quoteOrderQty)
-        # หรือเพื่อ Log ค่าประมาณการ
-        order_size_in_btc_estimated = trade_amount_usdt / current_price 
+        # 1. ตรวจสอบ Min Notional (ถ้ามี)
+        if min_notional_usdt_from_exchange_val is not None and final_trade_amount_usdt < min_notional_usdt_from_exchange_val:
+            logger.warning(f"⚠️ มูลค่าที่คำนวณได้ ({final_trade_amount_usdt:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำของ Exchange ({min_notional_usdt_from_exchange_val:.2f} USDT). จะปรับไปใช้มูลค่าขั้นต่ำของ Exchange แทน.")
+            final_trade_amount_usdt = min_notional_usdt_from_exchange_val
+
+        # 2. ตรวจสอบ Min Amount (BTC) และแปลงกลับมาเป็น USDT เพื่อใช้กับ quoteOrderQty
+        # ถ้า Min_Amount_BTC_from_exchange_val คือ 0.01 BTC (ตาม Log)
+        # เราต้องมั่นใจว่าออเดอร์มีมูลค่า Notional เพียงพอที่จะซื้อ 0.01 BTC ได้
+        if min_amount_btc_from_exchange_val is not None and min_amount_btc_from_exchange_val > 0:
+            # คำนวณว่า 0.01 BTC จะมีมูลค่าเป็น USDT เท่าไหร่
+            required_usdt_for_min_btc = min_amount_btc_from_exchange_val * current_price
+            
+            # ถ้า final_trade_amount_usdt ปัจจุบัน น้อยกว่าค่า USDT ที่ต้องใช้เพื่อซื้อ min_amount_btc
+            if final_trade_amount_usdt < required_usdt_for_min_btc:
+                logger.warning(f"⚠️ มูลค่ารวม USDT ({final_trade_amount_usdt:.2f}) ไม่เพียงพอที่จะถึงขั้นต่ำ BTC ({min_amount_btc_from_exchange_val:.6f} BTC = {required_usdt_for_min_btc:.2f} USDT). จะปรับมูลค่ารวม USDT ให้ถึงขั้นต่ำ BTC แทน.")
+                final_trade_amount_usdt = required_usdt_for_min_btc
         
-        # ตรวจสอบว่าขนาด BTC ที่ประมาณได้จาก USDT ที่กำหนด สูงกว่าขั้นต่ำของ BTC (min_amount) หรือไม่
-        if min_amount_btc_from_exchange_val is not None and order_size_in_btc_estimated < min_amount_btc_from_exchange_val:
-             logger.warning(f"⚠️ ขนาด BTC ที่ประมาณได้ ({order_size_in_btc_estimated:.6f}) จาก {trade_amount_usdt:.2f} USDT ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange_val:.6f} BTC). ออเดอร์อาจถูกปฏิเสธหรือปรับขนาด.")
-             # ในกรณีนี้, โดยปกติ Exchange จะปรับขนาดขึ้นไปเองให้ถึง min_amount_btc
-             # หรืออาจต้องคำนวณ trade_amount_usdt ใหม่เพื่อให้ BTC ถึง min_amount_btc
-             # เช่น: trade_amount_usdt = max(trade_amount_usdt, min_amount_btc_from_exchange_val * current_price)
-             # แต่สำหรับ OKX การใช้ quoteOrderQty มักจะทำงานร่วมกับ min_amount ได้ดี
-
-        logger.info(f"ℹ️ จะเปิดออเดอร์ด้วย Notional Value รวม: {trade_amount_usdt:,.2f} USDT ({num_of_slots} ไม้)")
+        logger.info(f"ℹ️ จะเปิดออเดอร์ด้วย Notional Value รวม: {final_trade_amount_usdt:,.2f} USDT ({num_of_slots} ไม้)")
 
         side = 'buy' if direction == 'long' else 'sell'
 
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
-            'quoteOrderQty': trade_amount_usdt, # <-- กำหนดจำนวน USDT ตรงนี้
+            'quoteOrderQty': final_trade_amount_usdt, # <-- ส่งค่า USDT ที่ปรับแล้ว
+            # OKX requires 'sz' (amount) parameter if quoteOrderQty is not supported or if the order type is not compatible.
+            # However, for market orders, quoteOrderQty is generally fine.
+            # If 'sz' (amount in BTC) is explicitly required, we need to calculate it:
+            # 'sz': exchange.amount_to_precision(SYMBOL, final_trade_amount_usdt / current_price)
+            # But let's stick to quoteOrderQty first as it's cleaner.
         }
 
         order = None
         for i in range(3):
-            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {trade_amount_usdt:,.2f} USDT...")
+            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {final_trade_amount_usdt:,.2f} USDT...")
             try:
                 # ส่ง amount เป็น None เพราะใช้ quoteOrderQty แทน
                 order = exchange.create_order(SYMBOL, 'market', side, None, price=None, params=params)
@@ -517,6 +521,8 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id', 'N/A')}")
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
+                # OKX Error Code 51000 Parameter sz error often means amount (sz) is too small
+                # Or invalid precision, or something is wrong with 'amount' parameter when 'quoteOrderQty' is used.
                 logger.warning(f"⚠️ Error creating market order (Attempt {i+1}/3): {e}. Retrying in 15 seconds...")
                 if i == 2:
                     send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {e}")
@@ -541,10 +547,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
             
-            # เมื่อใช้ quoteOrderQty, 'amount' ที่ถูกกรอกจริง (in BTC) อาจไม่ตรงกับที่ประมาณไว้เป๊ะๆ
-            # ต้องตรวจสอบ 'confirmed_pos_info' ว่ามีโพซิชันที่เปิดอยู่จริงหรือไม่ และเป็นด้านที่ถูกต้อง
-            # ไม่สามารถใช้ abs(confirmed_pos_info['size'] - order_size_in_btc) <= size_tolerance ได้อีกต่อไป
-            # เพราะเราไม่รู้ order_size_in_btc ที่แน่นอนจนกว่าจะได้ confirmed_pos_info
             if confirmed_pos_info and confirmed_pos_info['side'] == direction:
                 logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f} BTC")
                 current_position_size = confirmed_pos_info['size'] # บันทึกขนาด BTC ที่ Exchange ยืนยัน
