@@ -20,14 +20,14 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '15m'
+TIMEFRAME = '1m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 501
-SL_VALUE_POINTS = 999
-BE_PROFIT_TRIGGER_POINTS = 350
-BE_SL_BUFFER_POINTS = 100
-CROSS_THRESHOLD_POINTS = 5 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
-FIXED_USDT_AMOUNT_PER_SLOT = 40.0 # <--- เพิ่มบรรทัดนี้: กำหนดจำนวน USDT ต่อ "หนึ่งไม้"
+TP_VALUE_POINTS = 150
+SL_VALUE_POINTS = 500
+BE_PROFIT_TRIGGER_POINTS = 50
+BE_SL_BUFFER_POINTS = 10
+FIXED_USDT_AMOUNT_PER_SLOT = 40.0 # กำหนดจำนวน USDT ต่อ "หนึ่งไม้"
+CROSS_THRESHOLD_POINTS = 1 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -37,13 +37,13 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json' # ตรวจสอบให้แน่ใจว่าได้เปลี่ยนเป็น /data/trading_stats.json หากใช้ Railway Volume
 
 # --- Bot Timing ---
-MAIN_LOOP_SLEEP_SECONDS = 300 # 6 นาที
+MAIN_LOOP_SLEEP_SECONDS = 180 # 6 นาที
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
 MONTHLY_REPORT_MINUTE = 5
 
-# --- Tolerance สำหรับการระบุสาเหตุการปิดออเดอร์ (ใช้สำหรับ Soft TP/SL Detection ถ้าไม่ได้ตั้งใน Exchange) ---
+# --- Tolerance สำหรับการระบุสาเหตุการปิดออเดอร์ ---
 TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005 
 
 # ==============================================================================
@@ -86,7 +86,7 @@ monthly_stats = {
     'total_pnl': 0.0,
     'trades': [],
     'last_report_month_year': None,
-    'last_ema_cross_signal': None, # ยังคงเก็บไว้เผื่อ Logic ในอนาคต
+    'last_ema_cross_signal': None, 
     'last_ema_position_status': None # ใช้สำหรับเก็บสถานะ EMA เพื่อการตรวจจับ Cross
 }
 
@@ -134,7 +134,7 @@ def save_monthly_stats():
     """บันทึกสถิติการเทรดประจำเดือนลงในไฟล์ JSON."""
     global monthly_stats, last_ema_position_status
     try:
-        monthly_stats['last_ema_position_status'] = last_ema_position_status # อัปเดตสถานะ EMA ก่อนบันทึก
+        monthly_stats['last_ema_position_status'] = last_ema_position_status
         with open(STATS_FILE, 'w') as f:
             json.dump(monthly_stats, f, indent=4)
         logger.debug(f"💾 บันทึกสถิติการเทรดลงไฟล์ {STATS_FILE} สำเร็จ")
@@ -156,7 +156,7 @@ def load_monthly_stats():
                 monthly_stats['trades'] = loaded_stats.get('trades', [])
                 monthly_stats['last_report_month_year'] = loaded_stats.get('last_report_month_year', None)
                 monthly_stats['last_ema_cross_signal'] = loaded_stats.get('last_ema_cross_signal', None)
-                last_ema_position_status = loaded_stats.get('last_ema_position_status', None) # โหลดสถานะ EMA
+                last_ema_position_status = loaded_stats.get('last_ema_position_status', None)
 
             logger.info(f"💾 โหลดสถิติการเทรดจากไฟล์ {STATS_FILE} สำเร็จ")
 
@@ -181,7 +181,6 @@ def load_monthly_stats():
 
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการโหลดสถิติ: {e}")
-        # ตั้งค่าเริ่มต้นหากเกิดข้อผิดพลาดในการโหลด
         monthly_stats = {
             'month_year': None, 'tp_count': 0, 'sl_count': 0, 'total_pnl': 0.0, 'trades': [],
             'last_report_month_year': None, 'last_ema_cross_signal': None, 'last_ema_position_status': None
@@ -198,7 +197,7 @@ def reset_monthly_stats():
     monthly_stats['sl_count'] = 0
     monthly_stats['total_pnl'] = 0.0
     monthly_stats['trades'] = []
-    last_ema_position_status = None # รีเซ็ตสถานะ EMA เมื่อเริ่มเดือนใหม่
+    last_ema_position_status = None 
     save_monthly_stats()
     logger.info(f"🔄 รีเซ็ตสถิติประจำเดือนสำหรับเดือน {monthly_stats['month_year']}")
 
@@ -298,7 +297,7 @@ def get_current_position() -> dict | None:
         try:
             logger.debug(f"🔍 กำลังดึงโพซิชันปัจจุบัน (Attempt {i+1}/{retries})...")
             positions = exchange.fetch_positions([SYMBOL])
-            logger.debug(f"DEBUG: Fetched positions raw: {positions}") # <--- เพิ่มบรรทัดนี้เพื่อ debug
+            logger.debug(f"DEBUG: Fetched positions raw: {positions}") 
             time.sleep(2)
             for pos in positions:
                 if float(pos.get('info', {}).get('posAmt', 0)) != 0:
@@ -308,7 +307,7 @@ def get_current_position() -> dict | None:
                         'size': abs(pos_amount),
                         'entry_price': float(pos['entryPrice']),
                         'unrealized_pnl': float(pos['unrealizedPnl']),
-                        'pos_id': pos.get('id', 'N/A') # ใช้ .get() เพื่อความปลอดภัย
+                        'pos_id': pos.get('id', 'N/A')
                     }
             return None
         except (ccxt.NetworkError, ccxt.ExchangeError) as e:
@@ -400,27 +399,26 @@ def check_ema_cross() -> str | None:
         if last_ema_position_status is None:
             if current_ema_position:
                 last_ema_position_status = current_ema_position
-                save_monthly_stats() # บันทึกสถานะเริ่มต้น
+                save_monthly_stats()
                 logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
-            return None # ไม่ส่งสัญญาณเพื่อเปิดออเดอร์ในรอบแรก
+            return None
 
         cross_signal = None
 
-        # Golden Cross (Long) - EMA50 เปลี่ยนจากอยู่ล่าง เป็นอยู่บน และห่างเกิน Threshold
+        # Golden Cross (Long)
         if last_ema_position_status == 'below' and current_ema_position == 'above' and \
            ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
             logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
 
-        # Death Cross (Short) - EMA50 เปลี่ยนจากอยู่บน เป็นอยู่ล่าง และห่างเกิน Threshold
+        # Death Cross (Short)
         elif last_ema_position_status == 'above' and current_ema_position == 'below' and \
              ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
-        # อัปเดตสถานะ EMA ล่าสุดเสมอ (ไม่ว่าจะมีสัญญาณหรือไม่)
-        # ยกเว้นเมื่อมีสัญญาณที่จะถูกส่งออกไป (เพราะหลังเปิดออเดอร์ เราจะรีเซ็ต last_ema_position_status เป็น None ใน main loop)
-        if current_ema_position and cross_signal is None: # ถ้าไม่มีสัญญาณครอส ให้บันทึกสถานะปัจจุบัน
+        # อัปเดตสถานะ EMA ล่าสุดเสมอ
+        if current_ema_position and cross_signal is None:
             last_ema_position_status = current_ema_position
             save_monthly_stats() 
 
@@ -448,16 +446,15 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         balance = get_portfolio_balance()
         
         # --- Logic ใหม่: คำนวณจำนวนไม้และมูลค่ารวม USDT ที่จะเทรด ---
-        num_of_slots = int(balance / FIXED_USDT_AMOUNT_PER_SLOT) # จำนวนไม้ที่เปิดได้ (ปัดลง)
+        num_of_slots = int(balance / FIXED_USDT_AMOUNT_PER_SLOT)
 
         if num_of_slots <= 0:
             send_telegram(f"⛔️ Error: ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT/ไม้).")
             logger.error(f"❌ Balance ({balance:,.2f} USDT) is too low for even one slot of {FIXED_USDT_AMOUNT_PER_SLOT:,.2f} USDT.")
             return False, None
         
-        trade_amount_usdt_calculated = num_of_slots * FIXED_USDT_AMOUNT_PER_SLOT # มูลค่า USDT ที่คำนวณจากจำนวนไม้
+        trade_amount_usdt_calculated = num_of_slots * FIXED_USDT_AMOUNT_PER_SLOT
         
-        # คำนวณ Margin ที่ต้องใช้สำหรับมูลค่ารวม USDT นี้
         required_margin = trade_amount_usdt_calculated / LEVERAGE 
 
         if balance < required_margin:
@@ -468,61 +465,67 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 
         market = exchange.market(SYMBOL)
         
-        # --- ดึงค่าขั้นต่ำจาก Exchange ---
+        # --- ดึงค่าขั้นต่ำและ Precision จาก Exchange ---
         min_amount_btc_from_exchange_val = market.get('limits', {}).get('amount', {}).get('min')
         min_notional_usdt_from_exchange_val = market.get('limits', {}).get('cost', {}).get('min')
-
+        amount_precision = market.get('precision', {}).get('amount')
+        
         min_amount_btc_display = min_amount_btc_from_exchange_val if min_amount_btc_from_exchange_val is not None else 0.0
         min_notional_usdt_display = min_notional_usdt_from_exchange_val if min_notional_usdt_from_exchange_val is not None else 0.0
         logger.info(f"ℹ️ Exchange Minimums for {SYMBOL}: Min_Amount_BTC={min_amount_btc_display:.6f}, Min_Notional_USDT={min_notional_usdt_display:.2f}")
+        logger.info(f"DEBUG: Amount Precision: {amount_precision}")
 
-        # --- ตรวจสอบและปรับ trade_amount_usdt เพื่อให้ถึงขั้นต่ำของ Exchange ---
-        final_trade_amount_usdt = trade_amount_usdt_calculated # เริ่มต้นด้วยค่าที่คำนวณจากไม้
+        # --- กำหนด final_trade_amount_usdt โดยพิจารณาขั้นต่ำทั้งหมด (รวมถึง BTC amount) ---
+        final_trade_amount_usdt = trade_amount_usdt_calculated 
 
         # 1. ตรวจสอบ Min Notional (ถ้ามี)
         if min_notional_usdt_from_exchange_val is not None and final_trade_amount_usdt < min_notional_usdt_from_exchange_val:
             logger.warning(f"⚠️ มูลค่าที่คำนวณได้ ({final_trade_amount_usdt:.2f} USDT) ต่ำกว่ามูลค่า Notional ขั้นต่ำของ Exchange ({min_notional_usdt_from_exchange_val:.2f} USDT). จะปรับไปใช้มูลค่าขั้นต่ำของ Exchange แทน.")
             final_trade_amount_usdt = min_notional_usdt_from_exchange_val
 
-        # 2. ตรวจสอบ Min Amount (BTC) และแปลงกลับมาเป็น USDT เพื่อใช้กับ quoteOrderQty
-        # ถ้า Min_Amount_BTC_from_exchange_val คือ 0.01 BTC (ตาม Log)
-        # เราต้องมั่นใจว่าออเดอร์มีมูลค่า Notional เพียงพอที่จะซื้อ 0.01 BTC ได้
+        # 2. ตรวจสอบ Min Amount (BTC) และปรับ final_trade_amount_usdt ให้ถึงขั้นต่ำ BTC
         if min_amount_btc_from_exchange_val is not None and min_amount_btc_from_exchange_val > 0:
-            # คำนวณว่า 0.01 BTC จะมีมูลค่าเป็น USDT เท่าไหร่
             required_usdt_for_min_btc = min_amount_btc_from_exchange_val * current_price
-            
-            # ถ้า final_trade_amount_usdt ปัจจุบัน น้อยกว่าค่า USDT ที่ต้องใช้เพื่อซื้อ min_amount_btc
             if final_trade_amount_usdt < required_usdt_for_min_btc:
                 logger.warning(f"⚠️ มูลค่ารวม USDT ({final_trade_amount_usdt:.2f}) ไม่เพียงพอที่จะถึงขั้นต่ำ BTC ({min_amount_btc_from_exchange_val:.6f} BTC = {required_usdt_for_min_btc:.2f} USDT). จะปรับมูลค่ารวม USDT ให้ถึงขั้นต่ำ BTC แทน.")
                 final_trade_amount_usdt = required_usdt_for_min_btc
         
         logger.info(f"ℹ️ จะเปิดออเดอร์ด้วย Notional Value รวม: {final_trade_amount_usdt:,.2f} USDT ({num_of_slots} ไม้)")
 
+        # --- คำนวณจำนวน BTC (amount) ที่แท้จริงที่จะส่งไปในคำสั่ง ---
+        amount_btc_to_send = final_trade_amount_usdt / current_price
+        
+        # ปัดเศษ amount_btc_to_send ด้วย precision ที่ดึงมาจาก Exchange
+        amount_btc_to_send = float(exchange.amount_to_precision(SYMBOL, amount_btc_to_send))
+
+        # ตรวจสอบขั้นต่ำ BTC อีกครั้งหลัง precision
+        if amount_btc_to_send < min_amount_btc_from_exchange_val: 
+            logger.warning(f"⚠️ จำนวน BTC สุดท้ายหลัง Precision ({amount_btc_to_send:.6f}) ต่ำกว่าขั้นต่ำของ Exchange ({min_amount_btc_from_exchange_val:.6f} BTC). จะปรับเป็นขั้นต่ำ.")
+            amount_btc_to_send = min_amount_btc_from_exchange_val
+        
+        if amount_btc_to_send <= 0:
+            send_telegram("⛔️ Error: ขนาดออเดอร์คำนวณได้เป็นศูนย์หรือติดลบหลังปรับ Precision/ขั้นต่ำสุดท้าย.")
+            logger.error("❌ Final amount_btc_to_send is zero or negative after final adjustments.")
+            return False, None
+
+        logger.info(f"ℹ️ จำนวน BTC ที่จะส่งไปในคำสั่ง (sz): {amount_btc_to_send:.6f} BTC")
+
         side = 'buy' if direction == 'long' else 'sell'
 
         params = {
             'tdMode': 'cross',
             'mgnCcy': 'USDT',
-            'quoteOrderQty': final_trade_amount_usdt, # <-- ส่งค่า USDT ที่ปรับแล้ว
-            # OKX requires 'sz' (amount) parameter if quoteOrderQty is not supported or if the order type is not compatible.
-            # However, for market orders, quoteOrderQty is generally fine.
-            # If 'sz' (amount in BTC) is explicitly required, we need to calculate it:
-            # 'sz': exchange.amount_to_precision(SYMBOL, final_trade_amount_usdt / current_price)
-            # But let's stick to quoteOrderQty first as it's cleaner.
         }
 
         order = None
         for i in range(3):
-            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {final_trade_amount_usdt:,.2f} USDT...")
+            logger.info(f"⚡️ กำลังส่งคำสั่ง Market Order (Attempt {i+1}/3) ด้วย {amount_btc_to_send:.6f} BTC...")
             try:
-                # ส่ง amount เป็น None เพราะใช้ quoteOrderQty แทน
-                order = exchange.create_order(SYMBOL, 'market', side, None, price=None, params=params)
+                order = exchange.create_order(SYMBOL, 'market', side, amount_btc_to_send, price=None, params=params)
                 time.sleep(2)
                 logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id', 'N/A')}")
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-                # OKX Error Code 51000 Parameter sz error often means amount (sz) is too small
-                # Or invalid precision, or something is wrong with 'amount' parameter when 'quoteOrderQty' is used.
                 logger.warning(f"⚠️ Error creating market order (Attempt {i+1}/3): {e}. Retrying in 15 seconds...")
                 if i == 2:
                     send_telegram(f"⛔️ API Error: ไม่สามารถสร้างออเดอร์ตลาดได้ (Attempt {i+1}/3)\nรายละเอียด: {e}")
@@ -537,7 +540,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             send_telegram("⛔️ API Error: ล้มเหลวในการสร้างออเดอร์ตลาดหลังจาก 3 ครั้ง.")
             return False, None
 
-        # --- ยืนยันโพซิชันหลังจากเปิดออเดอร์ (ยังคงสำคัญมาก) ---
+        # --- ยืนยันโพซิชันหลังจากเปิดออเดอร์ ---
         confirmed_pos_info = None
         confirmation_retries = 15
         confirmation_sleep = 3 
@@ -547,9 +550,12 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             time.sleep(confirmation_sleep)
             confirmed_pos_info = get_current_position()
             
-            if confirmed_pos_info and confirmed_pos_info['side'] == direction:
+            size_tolerance = amount_btc_to_send * 0.005 
+            if confirmed_pos_info and \
+               confirmed_pos_info['side'] == direction and \
+               abs(confirmed_pos_info['size'] - amount_btc_to_send) <= size_tolerance:
                 logger.info(f"✅ ยืนยันโพซิชัน Entry Price: {confirmed_pos_info['entry_price']:.2f}, Size: {confirmed_pos_info['size']:.6f} BTC")
-                current_position_size = confirmed_pos_info['size'] # บันทึกขนาด BTC ที่ Exchange ยืนยัน
+                current_position_size = confirmed_pos_info['size']
                 return True, confirmed_pos_info['entry_price']
             
         logger.error(f"❌ ไม่สามารถยืนยันโพซิชันและ Entry Price ได้หลังเปิด Market Order (หลังจากพยายาม {confirmation_retries} ครั้ง).")
@@ -567,7 +573,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
 # ==============================================================================
 
 def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
-    """ตั้งค่า Take Profit และ Stop Loss สำหรับโพซิชันที่เปิดอยู่"""
+    """ตั้งค่า Take Profit และ Stop Loss สำหรับโพซิชันที่เปิดอยู่."""
     global current_position_size
 
     if not current_position_size:
@@ -589,8 +595,6 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
     sl_price = exchange.price_to_precision(SYMBOL, sl_price)
 
     try:
-        # ถ้า direction เป็น long, ต้องการขาย (sell) ที่ TP และ SL
-        # ถ้า direction เป็น short, ต้องการซื้อ (buy) ที่ TP และ SL
         tp_sl_side = 'sell' if direction == 'long' else 'buy'
         
         # --- Setting Take Profit ---
@@ -599,11 +603,11 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
             type='take_profit_market', 
             side=tp_sl_side,
             amount=current_position_size,
-            price=None, # Market order after trigger
+            price=None,
             params={
                 'triggerPrice': float(tp_price), 
                 'reduceOnly': True,
-                'tdMode': 'cross' # Cross-margin mode
+                'tdMode': 'cross'
             }
         )
         logger.info(f"✅ ส่งคำสั่ง Take Profit สำเร็จ: ID {tp_order.get('id', 'N/A')}, Trigger Price: {tp_price:.2f}")
@@ -614,7 +618,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
             type='stop_loss_market', 
             side=tp_sl_side,
             amount=current_position_size,
-            price=None, # Market order after trigger
+            price=None,
             params={
                 'triggerPrice': float(sl_price), 
                 'reduceOnly': True,
@@ -640,7 +644,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
 
 
 def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
-    """เลื่อน Stop Loss ไปที่จุด Breakeven (หรือ +BE_SL_BUFFER_POINTS)"""
+    """เลื่อน Stop Loss ไปที่จุด Breakeven (หรือ +BE_SL_BUFFER_POINTS)."""
     global sl_moved, current_position_size
 
     if sl_moved:
@@ -660,40 +664,34 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
     breakeven_sl_price = exchange.price_to_precision(SYMBOL, breakeven_sl_price)
 
     try:
-        # ขั้นตอนที่ 1: ยกเลิกคำสั่ง Stop Loss เก่าทั้งหมดสำหรับ Symbol นี้ (Algo Orders)
         logger.info("⏳ กำลังยกเลิกคำสั่ง Stop Loss เก่า...")
         
-        # Fetch only 'conditional' (algo) orders which include TP/SL on OKX
-        # Docs: https://www.okx.com/docs-v5/en/#trading-account-rest-api-get-algo-order-list
         open_algo_orders = exchange.fetch_open_orders(SYMBOL, params={'ordType': 'conditional'})
         
         sl_order_ids_to_cancel = []
         for order in open_algo_orders:
-            # OKX 'algoOrderType' can be 'sl', 'tp', 'ts', 'conditional'
-            # We are looking for the previous stop loss order
             if order.get('info', {}).get('algoOrdType') == 'sl' and order.get('status') == 'live':
                 sl_order_ids_to_cancel.append(order['id'])
         
         if sl_order_ids_to_cancel:
             for sl_id in sl_order_ids_to_cancel:
                 try:
-                    exchange.cancel_order(sl_id, SYMBOL) # OKX cancel_order can take algo order ID
+                    exchange.cancel_order(sl_id, SYMBOL)
                     logger.info(f"✅ ยกเลิก SL Order ID {sl_id} สำเร็จ.")
                 except Exception as cancel_e:
                     logger.warning(f"⚠️ ไม่สามารถยกเลิก SL Order ID {sl_id} ได้: {cancel_e}")
         else:
             logger.info("ℹ️ ไม่พบคำสั่ง Stop Loss เก่าที่ต้องยกเลิก.")
 
-        time.sleep(1) # รอให้คำสั่งยกเลิกได้รับการประมวลผล
+        time.sleep(1)
 
-        # ขั้นตอนที่ 2: ตั้ง Stop Loss ใหม่ที่ราคา Breakeven
         new_sl_side = 'sell' if direction == 'long' else 'buy'
         new_sl_order = exchange.create_order(
             symbol=SYMBOL,
             type='stop_loss_market',
             side=new_sl_side,
             amount=current_position_size,
-            price=None, # Market order after trigger
+            price=None,
             params={
                 'triggerPrice': float(breakeven_sl_price),
                 'reduceOnly': True,
@@ -701,7 +699,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
             }
         )
         logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
-        sl_moved = True # อัปเดตสถานะว่า SL ถูกเลื่อนแล้ว
+        sl_moved = True
         return True
 
     except (ccxt.NetworkError, ccxt.ExchangeError) as e:
@@ -725,13 +723,12 @@ def monitor_position(pos_info: dict | None, current_price: float):
 
     logger.debug(f"🔄 กำลังตรวจสอบสถานะโพซิชัน: Pos_Info={pos_info}, Current_Price={current_price}")
     if not pos_info:
-        if current_position: # หากก่อนหน้านี้มีโพซิชัน แต่ตอนนี้ไม่มีแล้ว แสดงว่าถูกปิด
+        if current_position:
             logger.info(f"ℹ️ โพซิชัน {current_position.upper()} ถูกปิดแล้ว.")
 
             closed_price = current_price
             pnl_usdt_actual = 0.0
 
-            # พยายามคำนวณ PnL จากข้อมูล Entry Price ที่บันทึกไว้ในบอท
             if entry_price and current_position_size:
                 if current_position == 'long':
                     pnl_usdt_actual = (closed_price - entry_price) * current_position_size
@@ -741,8 +738,6 @@ def monitor_position(pos_info: dict | None, current_price: float):
             close_reason = "ปิดโดยไม่ทราบสาเหตุ"
             emoji = "❓"
 
-            # การระบุสาเหตุการปิดออเดอร์จากราคา (ใช้ได้ดีเมื่อ TP/SL ถูกตั้งในบอท)
-            # ถ้า TP/SL ถูกตั้งใน Exchange แล้ว Exchange อาจแจ้งเหตุผลใน Log ของตัวเอง
             tp_sl_be_tolerance_points = entry_price * TP_SL_BE_PRICE_TOLERANCE_PERCENT if entry_price else 0
             if current_position == 'long' and entry_price:
                 if closed_price >= (entry_price + TP_VALUE_POINTS) - tp_sl_be_tolerance_points:
@@ -772,9 +767,9 @@ def monitor_position(pos_info: dict | None, current_price: float):
             current_position = None
             entry_price = None
             current_position_size = 0.0
-            sl_moved = False # <<-- สำคัญ: รีเซ็ตสถานะ SL
-            last_ema_position_status = None # <<-- สำคัญ: รีเซ็ตสถานะ EMA เพื่อรอการครอสครั้งใหม่
-            save_monthly_stats() # บันทึกสถานะที่รีเซ็ตแล้ว
+            sl_moved = False
+            last_ema_position_status = None
+            save_monthly_stats()
 
         return
 
@@ -861,12 +856,7 @@ def monthly_report_scheduler():
                  logger.info(f"⏰ ตรวจพบว่าถึงเวลาส่งรายงานประจำเดือน ({now.strftime('%H:%M')}) และยังไม่ได้ส่งสำหรับเดือนนี้. กำลังส่ง...")
                  monthly_report()
             
-            # คำนวณเวลาสำหรับรอบถัดไป (ในเดือนถัดไป)
-            if next_report_time.month == 12:
-                next_report_time = next_report_time.replace(year=next_report_time.year + 1, month=1)
-            else:
-                next_report_time = next_report_time.replace(month=next_report_time.month + 1)
-            
+            next_report_time = next_report_time.replace(month=next_report_time.month + 1) if next_report_time.month < 12 else next_report_time.replace(year=next_report_time.year + 1, month=1)
             max_day_in_next_month = calendar.monthrange(next_report_time.year, next_report_time.month)[1]
             report_day_for_next_month = min(MONTHLY_REPORT_DAY, max_day_in_next_month)
             next_report_time = next_report_time.replace(day=report_day_for_next_month)
@@ -877,7 +867,7 @@ def monthly_report_scheduler():
             logger.info(f"⏰ กำหนดส่งรายงานประจำเดือนถัดไปในอีก {int(time_to_wait / 86400)} วัน {int((time_to_wait % 86400) / 3600)} ชั่วโมง {int((time_to_wait % 3600) / 60)} นาที.")
             time.sleep(max(time_to_wait, 60))
         else:
-            time.sleep(60) # ถ้าเวลาติดลบหรือ 0 ให้รอ 1 นาทีเพื่อเลี่ยง loop ถี่เกินไป
+            time.sleep(60)
 
 # ==============================================================================
 # 14. ฟังก์ชันเริ่มต้นบอท (BOT STARTUP FUNCTIONS)
@@ -921,7 +911,7 @@ def main():
         logger.info("✅ Monthly Report Scheduler Thread Started.")
 
     except Exception as e:
-        error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | บอทจะลองเริ่มต้นใหม่ใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+        error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
         send_telegram(error_msg)
         logger.critical(f"❌ Startup error: {e}", exc_info=True)
         time.sleep(ERROR_RETRY_SLEEP_SECONDS)
@@ -979,9 +969,8 @@ def main():
                         set_tpsl_success = set_tpsl_for_position(signal, confirmed_entry_price)
 
                         if set_tpsl_success:
-                            # รีเซ็ตสถานะ EMA เพื่อรอสัญญาณใหม่หลังเปิดออเดอร์
                             last_ema_position_status = None 
-                            save_monthly_stats() # บันทึกสถานะที่รีเซ็ตแล้ว
+                            save_monthly_stats()
                             logger.info(f"✅ เปิดออเดอร์ {signal.upper()} และตั้ง TP/SL สำเร็จ.")
                         else:
                             logger.error(f"❌ เปิดออเดอร์ {signal.upper()} ได้ แต่ตั้ง TP/SL ไม่สำเร็จ. กรุณาตรวจสอบและปิดออเดอร์ด้วยตนเอง!")
