@@ -20,13 +20,9 @@ if not all([API_KEY, SECRET, PASSWORD]):
 SYMBOL = 'ETH/USDT'
 TP_DISTANCE = 30
 SL_DISTANCE = 50
-LEVERAGE = 30 # ยังคง Leverage 30 ไว้ แต่เราจะลดเปอร์เซ็นต์การใช้ทุน
-# ✅ สิ่งที่ต้องลองปรับ: MARGIN_BUFFER
-# ลองเพิ่มค่านี้ เพื่อลดขนาดออเดอร์ที่คำนวณได้ลงอย่างมาก
-MARGIN_BUFFER = 15 # ✅ ลองเพิ่มเป็น 15 USDT
-# MIN_NOTIONAL_VALUE_USDT และ CONTRACT_SIZE_UNIT ยังคงไว้ตามเดิม
-MIN_NOTIONAL_VALUE_USDT = 20
-CONTRACT_SIZE_UNIT = 0.001
+LEVERAGE = 30
+MARGIN_BUFFER = 15 # ลองเพิ่มเป็น 15 USDT
+MIN_NOTIONAL_VALUE_USDT = 20 # ยังคงไว้ที่ 20 USDT
 
 # ------------------------------------------------------------------------------
 # 🔌 Connect to OKX Exchange (Futures, Cross Margin)
@@ -72,8 +68,13 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
         print(f"❌ Could not fetch market info for {SYMBOL} in calculate_order_amount_and_margin.")
         return (0, 0)
 
-    # ✅ ลดเปอร์เซ็นต์การใช้ทุนลงเหลือ 50% เพื่อทดสอบ
-    desired_available_for_margin = available_usdt * 0.50 - MARGIN_BUFFER # ✅ เปลี่ยนจาก 0.80 เป็น 0.50
+    # ✅ เพิ่ม DEBUG print เพื่อดู Market Info (โดยเฉพาะ precision และ limits)
+    print(f"💡 DEBUG: Market Info Precision: {market_info.get('precision', {}).get('amount')}")
+    print(f"💡 DEBUG: Market Info Limits Amount: {market_info.get('limits', {}).get('amount')}")
+    print(f"💡 DEBUG: Market Info Limits Cost: {market_info.get('limits', {}).get('cost')}")
+
+
+    desired_available_for_margin = available_usdt * 0.80 - MARGIN_BUFFER
     if desired_available_for_margin <= 0:
         print(f"❌ Desired available for margin is too low after buffer: {desired_available_for_margin:.2f} USDT.")
         return (0, 0)
@@ -97,6 +98,8 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
 
     contracts_raw = target_notional / price
 
+    # ✅ ใช้ amount_to_precision ที่ได้จาก market_info ที่โหลดมา
+    # ถ้าพิมพ์ได้แค่ 0.71 แสดงว่า precision.amount อาจจะเป็น 2
     contracts_precision = exchange.amount_to_precision(SYMBOL, contracts_raw)
     contracts_to_open = float(contracts_precision)
 
@@ -123,7 +126,7 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
     print(f"💡 DEBUG: Max Exchange Notional (limits.cost.max): {max_notional_exchange:.2f}")
     print(f"💡 DEBUG: Target Notional (after limits): {target_notional:.2f}")
     print(f"💡 DEBUG: Raw contracts: {contracts_raw:.4f}")
-    print(f"💡 DEBUG: Contracts after precision: {contracts_to_open:.4f}")
+    print(f"💡 DEBUG: Contracts after precision (from CCXT): {contracts_to_open:.4f}")
     print(f"💡 DEBUG: Actual Notional (after precision): {actual_notional_after_precision:.2f}")
     print(f"💡 DEBUG: Calculated Required Margin (Estimated Cost): {required_margin:.2f} USDT")
     print(f"💡 DEBUG: Min Exchange Amount: {min_exchange_amount:.4f}")
