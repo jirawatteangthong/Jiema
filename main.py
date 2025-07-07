@@ -11,10 +11,10 @@ PASSWORD = os.getenv("RAILWAY_PASSWORD", "your_password_here")
 # ------------------------------------------------------------------------------
 # ⚙️ Config Settings
 # ------------------------------------------------------------------------------
-SYMBOL = 'BTC/USDT:USDT'
-TP_DISTANCE = 100
-SL_DISTANCE = 400
-LEVERAGE = 10
+SYMBOL = 'ETH/USDT:USDT'
+TP_DISTANCE = 70
+SL_DISTANCE = 200
+LEVERAGE = 30
 MARGIN_BUFFER = 2  # เผื่อค่าธรรมเนียม
 
 # ------------------------------------------------------------------------------
