@@ -67,14 +67,24 @@ def calculate_order_amount(available_usdt: float, price: float, leverage: int) -
 # 🔍 Check if a Short position already exists
 # ------------------------------------------------------------------------------
 def get_open_position():
-    positions = exchange.fetch_positions([SYMBOL])
-    for pos in positions:
-        if pos['symbol'] == SYMBOL and pos['contracts'] > 0 and pos['side'] == 'short':
-            return pos
-    return None
+    try:
+        positions = exchange.fetch_positions([SYMBOL])
+        for pos in positions:
+            if pos['symbol'] == SYMBOL and pos['contracts'] > 0 and pos['side'] == 'short':
+                return pos
+        return None
+    except ccxt.NetworkError as e:
+        print(f"Network error fetching positions: {e}")
+        return None
+    except ccxt.ExchangeError as e:
+        print(f"Exchange error fetching positions: {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred while fetching positions: {e}")
+        return None
 
 # ------------------------------------------------------------------------------
-# 📉 Open Short Market Order + TP/SL
+# 📉 Open Short Market Order + Set TP then SL
 # ------------------------------------------------------------------------------
 def open_short_order():
     try:
@@ -103,11 +113,10 @@ def open_short_order():
 
         tp_price = round(current_price - TP_DISTANCE, 1) # สำหรับ Short, TP ต่ำกว่าราคาเข้า
         sl_price = round(current_price + SL_DISTANCE, 1) # สำหรับ Short, SL สูงกว่าราคาเข้า
-        print(f"🎯 TP: {tp_price} | 🛑 SL: {sl_price}")
+        print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
 
-        # ✅ สิ่งที่ต้องแก้: ย้าย TP/SL กลับไปใส่ใน 'params' dictionary
-        # ✅ ใช้ tpTriggerPx และ slTriggerPx เหมือนเดิม
-        # ✅ และสำคัญ: ใช้ "str(ราคา)" สำหรับ OKX เพื่อให้แน่ใจว่าเป็น string
+        # --- ขั้นตอนที่ 1: เปิด Market Short Order โดยไม่มี TP/SL ---
+        print(f"⏳ Placing market SELL order for {order_amount} contracts of {SYMBOL}...")
         order = exchange.create_market_sell_order(
             symbol=SYMBOL,
             amount=order_amount,
@@ -115,24 +124,60 @@ def open_short_order():
                 "tdMode": "cross",
                 "posSide": "short",
                 "reduceOnly": False,
-                # ✅ เพิ่ม TP/SL พารามิเตอร์ของ OKX กลับเข้าไปใน params
-                "tpTriggerPx": str(tp_price), # ราคา TP Trigger
-                "tpOrdPx": "-1",              # -1 หมายถึง Market order เมื่อถึง TP
-                "slTriggerPx": str(sl_price), # ราคา SL Trigger
-                "slOrdPx": "-1",              # -1 หมายถึง Market order เมื่อถึง SL
             }
         )
-        print(f"✅ Short order successfully placed: Order ID → {order['id']}")
+        print(f"✅ Market SELL order placed: ID → {order['id']}")
+        # IMPORTANT: Wait a bit for the order to be confirmed on the exchange
+        time.sleep(2) # รอ 2 วินาที เพื่อให้ OKX ประมวลผลคำสั่งแรก
+
+        # --- ขั้นตอนที่ 2: ตั้ง TP Order (Limit Order) ---
+        print(f"⏳ Setting Take Profit order at {tp_price}...")
+        try:
+            tp_order = exchange.create_order(
+                symbol=SYMBOL,
+                type='limit',      # TP เป็น Limit Order
+                side='buy',        # สำหรับ Short Position, ปิดด้วย Buy
+                amount=order_amount, # จำนวนเท่ากับขนาดโพซิชันที่เปิด
+                price=tp_price,
+                params={
+                    "tdMode": "cross",
+                    "posSide": "short",   # ระบุ posSide ของโพซิชันที่กำลังปิด
+                    "reduceOnly": True,   # สำคัญมาก: เพื่อให้คำสั่งนี้เป็นการปิดสถานะเท่านั้น
+                }
+            )
+            print(f"✅ Take Profit order placed: ID → {tp_order['id']}")
+        except ccxt.BaseError as e:
+            print(f"❌ Failed to set Take Profit order: {str(e)}")
+            # If TP fails, you might want to cancel the main order or notify.
+            # For simplicity, we just print an error and continue to SL.
+
+        # --- ขั้นตอนที่ 3: ตั้ง SL Order (Stop Market Order) ---
+        print(f"⏳ Setting Stop Loss order at {sl_price}...")
+        try:
+            # OKX specific parameters for Stop Market
+            sl_order = exchange.create_order(
+                symbol=SYMBOL,
+                type='stop_market', # หรือ 'stop_loss_market' ถ้า 'stop_market' ไม่ทำงาน
+                side='buy',         # สำหรับ Short Position, ปิดด้วย Buy
+                amount=order_amount,
+                price=None,         # Market order ไม่ต้องระบุ price แต่ต้องมี trigger price
+                params={
+                    "tdMode": "cross",
+                    "posSide": "short",
+                    "reduceOnly": True,
+                    "triggerPx": str(sl_price), # ราคาที่จะ trigger stop loss
+                    "ordPx": "-1"               # -1 สำหรับ Market Order เมื่อ trigger
+                }
+            )
+            print(f"✅ Stop Loss order placed: ID → {sl_order['id']}")
+        except ccxt.BaseError as e:
+            print(f"❌ Failed to set Stop Loss order: {str(e)}")
 
     except ccxt.NetworkError as e:
         print(f"❌ Network error during order placement: {e}")
     except ccxt.ExchangeError as e:
         print(f"❌ Exchange error during order placement: {e}")
-        # ตัวอย่างการ handle error จาก OKX:
-        # หากเห็น Error Code "51000", "Parameter ordType error" อีก
-        # อาจต้องลองลบ tpOrdPx, slOrdPx ออก หรือตรวจสอบเอกสาร OKX API อย่างละเอียด
-        if "51000" in str(e):
-            print("💡 OKX specific error: Parameter ordType error. Double check TP/SL parameters or remove tpOrdPx/slOrdPx if still problematic.")
+        print("💡 General Exchange Error. Check OKX dashboard for more details or current market status.")
     except Exception as e:
         print(f"❌ An unexpected error occurred: {e}")
 
