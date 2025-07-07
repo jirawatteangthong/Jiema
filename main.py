@@ -44,11 +44,10 @@ def get_cross_balance():
 
 
 def calculate_order_amount(balance: float) -> float:
-    """คำนวณจำนวนสัญญา futures ตามทุน + leverage"""
-    usable = balance * TRADE_PERCENT * SAFETY_BUFFER
-    position_value = usable * LEVERAGE
-    contract_value = 100  # OKX BTC Futures = 100 USD ต่อสัญญา
-    amount = position_value / contract_value
+    available_margin = balance * 0.95  # กันไว้อีก 5% ป้องกัน margin error
+    contract_value = 100  # OKX BTC = 100 USD/contract
+    max_position_value = available_margin * LEVERAGE
+    amount = max_position_value / contract_value
     return round(amount, 2)
 
 
