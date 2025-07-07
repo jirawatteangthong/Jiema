@@ -2,16 +2,15 @@ import ccxt
 import time
 import os
 from datetime import datetime
-import math # Import math for calculations like log10
+import math
 
 class OKXTradingBot:
     def __init__(self):
         # OKX API credentials - MAKE SURE THESE MATCH YOUR RAILWAY ENVIRONMENT VARIABLES
-        self.api_key = os.getenv('RAILWAY_API_KEY') # Assuming RAILWAY_API_KEY consistent with previous
-        self.secret = os.getenv('RAILWAY_SECRET')   # Assuming RAILWAY_SECRET consistent with previous
-        self.passphrase = os.getenv('RAILWAY_PASSWORD') # Assuming RAILWAY_PASSWORD maps to passphrase
+        self.api_key = os.getenv('RAILWAY_API_KEY')
+        self.secret = os.getenv('RAILWAY_SECRET')
+        self.passphrase = os.getenv('RAILWAY_PASSWORD')
 
-        # Validate credentials
         if not all([self.api_key, self.secret, self.passphrase]):
             print("Error: Please set RAILWAY_API_KEY, RAILWAY_SECRET, and RAILWAY_PASSWORD environment variables.")
             exit()
@@ -20,15 +19,15 @@ class OKXTradingBot:
         self.exchange = ccxt.okx({
             'apiKey': self.api_key,
             'secret': self.secret,
-            'password': self.passphrase, # CCXT uses 'password' for OKX's 'passphrase'
+            'password': self.passphrase,
             'sandbox': False,  # Set to True for testnet
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'swap',  # Changed to 'swap' for perpetuals
+                'defaultType': 'swap',
                 'defaultMarket': 'linear',
-                'marginMode': 'cross', # Explicitly setting cross margin
+                'marginMode': 'cross',
             },
-            'urls': { # Explicitly setting URLs for robustness
+            'urls': {
                 'api': {
                     'public': 'https://www.okx.com/api/v5/public',
                     'private': 'https://www.okx.com/api/v5/private',
@@ -37,17 +36,17 @@ class OKXTradingBot:
         })
         
         # Trading parameters
-        self.symbol = 'ETH/USDT' # Changed to ETH/USDT for feasibility with 153 USDT
-        self.position_size_percent = 0.8  # 80% of available margin
-        self.leverage = 30
-        self.tp_distance = 30  # Take profit distance (e.g., +30 USDT from entry)
-        self.sl_distance = 50  # Stop loss distance (e.g., -50 USDT from entry)
-        self.margin_buffer = 5 # Buffer for fees/slippage
+        self.symbol = 'ETH/USDT'
+        self.position_size_percent = 0.8
+        # ✅ สิ่งที่ต้องแก้: ปรับค่า leverage นี้ให้เป็นค่าที่ OKX อนุญาต
+        # (เช่น 20 หรือ 10)
+        self.leverage = 20 # ✅ ลองปรับลด Leverage ลงเป็น 20 เพื่อทดสอบ
+        self.tp_distance = 30
+        self.sl_distance = 50
+        self.margin_buffer = 5 # กลับมาใช้ 5 USDT เพราะเราจะจำกัด Notional Value โดยตรง
 
-        # Based on previous tests, OKX ETH/USDT uses 0.01 as a step size for amount
+        self.target_notional_usdt = 43.5 
         self.forced_amount_step_size = 0.01 
-        # Based on previous tests, we found 43.5 USDT notional worked manually
-        self.target_notional_usdt = 43.5 # Notional value to target for order size
 
         # Load markets early
         try:
@@ -61,15 +60,15 @@ class OKXTradingBot:
     def setup_leverage(self):
         """ตั้งค่า leverage และ margin mode"""
         try:
-            # OKX set_leverage can also set margin mode.
-            # We already set 'marginMode': 'cross' in init, so this primarily sets leverage.
             result = self.exchange.set_leverage(self.leverage, self.symbol, {'marginMode': 'cross'})
             print(f"Leverage set to {self.leverage}x for {self.symbol}: {result}")
             return True
         except ccxt.ExchangeError as e:
+            if "Leverage exceeds the maximum limit" in str(e):
+                print(f"❌ Error: Leverage {self.leverage}x exceeds the maximum limit for {self.symbol} on OKX.")
+                print("Please check OKX UI for max allowed leverage for ETH/USDT in Cross margin mode and update self.leverage in config.")
+                return False # Critical error, cannot proceed if leverage is too high
             print(f"Error setting leverage: {e}. This often happens if leverage is already set, or in 'isolated' mode. Details: {e}")
-            # If leverage is already set, it might still be OK to continue.
-            # You might want to check current leverage if this error occurs frequently.
             return True # Allow to continue if it's just 'already set' error
         except Exception as e:
             print(f"An unexpected error occurred setting leverage: {e}")
@@ -98,8 +97,6 @@ class OKXTradingBot:
             print(f"❌ Could not fetch market info for {self.symbol}.")
             return (0, 0)
         
-        # Determine actual step size for amount. Use our FORCED_AMOUNT_STEP_SIZE if it's more restrictive.
-        # Otherwise, use what CCXT reports.
         exchange_amount_step = market_info['limits']['amount']['step'] if 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None else self.forced_amount_step_size
         actual_step_size = max(self.forced_amount_step_size, float(exchange_amount_step))
 
@@ -108,7 +105,6 @@ class OKXTradingBot:
         
         # Round contracts to the nearest actual_step_size
         contracts_to_open = round(contracts_raw / actual_step_size) * actual_step_size
-        # Ensure floating point precision
         contracts_to_open = float(f"{contracts_to_open:.10f}") 
 
         # Recalculate actual notional and required margin based on the precise contracts
@@ -118,12 +114,10 @@ class OKXTradingBot:
         # Final check against available margin and min/max limits
         min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
         
-        # Check if the calculated amount is less than the exchange's minimum allowed amount
         if contracts_to_open < min_exchange_amount:
             print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {min_exchange_amount:.4f}. Cannot open.")
             return (0, 0)
         
-        # Check if there's enough margin (including buffer)
         if available_usdt < required_margin + self.margin_buffer:
             print(f"❌ Margin not sufficient. Available: {available_usdt:.2f}, Required: {required_margin:.2f} + {self.margin_buffer} (Buffer) = {required_margin + self.margin_buffer:.2f} USDT.")
             return (0, 0)
@@ -134,6 +128,8 @@ class OKXTradingBot:
         print(f"💡 DEBUG (calculate_order_details): Contracts after step size adjustment: {contracts_to_open:.4f}")
         print(f"💡 DEBUG (calculate_order_details): Actual Notional after step size: {actual_notional_after_precision:.2f}")
         print(f"💡 DEBUG (calculate_order_details): Calculated Required Margin: {required_margin:.2f} USDT")
+        print(f"💡 DEBUG (calculate_order_details): Min Exchange Amount: {min_exchange_amount:.4f}")
+
 
         return (contracts_to_open, required_margin)
 
@@ -155,7 +151,7 @@ class OKXTradingBot:
             print(f"Error fetching positions: {e}")
             return None
 
-    def open_short_position(self): # Changed to open_short_position for consistency
+    def open_short_position(self):
         """เปิด Short position"""
         try:
             current_price = self.get_current_price()
@@ -163,17 +159,15 @@ class OKXTradingBot:
                 print("Failed to get current price.")
                 return False
             
-            # Fetch current balance dynamically
             available_balance = self.get_account_balance()
             if available_balance is None:
                 print("Failed to get available balance.")
                 return False
 
-            # Check for existing short position before opening
             existing_positions = self.get_positions()
             for pos in existing_positions:
                 if pos['symbol'] == self.symbol and pos['side'] == 'short' and pos['contracts'] > 0:
-                    print(f"⚠️ An open short position already exists for {self.symbol} (size: {pos['contracts']}). Skipping new order.")
+                    print(f"⚠️ An open short position already exists for {self.symbol} (size: {pos['contracts']:.4f}). Skipping new order.")
                     return False
             
             order_amount, estimated_used_margin = self.calculate_order_details(available_balance, current_price)
@@ -183,7 +177,6 @@ class OKXTradingBot:
                 return False
             
             print(f"📈 Estimated Margin for Order: {estimated_used_margin:.2f} USDT")
-            # Calculate decimal places for printing based on actual step size
             decimal_places = int(round(-math.log10(self.forced_amount_step_size))) if self.forced_amount_step_size < 1 else 0
             print(f"🔢 Opening quantity: {order_amount:.{decimal_places}f} contracts")
             
@@ -197,12 +190,11 @@ class OKXTradingBot:
                 symbol=self.symbol,
                 amount=float(order_amount),
                 params={
-                    'tdMode': 'cross', # Cross margin mode
-                    'reduceOnly': False, # This is to open a new position
+                    'tdMode': 'cross',
+                    'reduceOnly': False,
                 }
             )
             print(f"✅ Market SELL order placed: ID → {order['id']}")
-            # Wait for order to be confirmed on the exchange
             time.sleep(2) 
 
             # --- Step 2: Set Take Profit Order ---
@@ -210,14 +202,14 @@ class OKXTradingBot:
             try:
                 tp_order = self.exchange.create_order(
                     symbol=self.symbol,
-                    type='limit', # TP is typically a limit order
-                    side='buy',   # To close a SHORT position, you BUY
+                    type='limit',
+                    side='buy',
                     amount=float(order_amount),
                     price=tp_price,
                     params={
                         'tdMode': 'cross',
-                        'posSide': 'short', # This TP is for a SHORT position
-                        'reduceOnly': True, # This order is only to reduce existing position
+                        'posSide': 'short',
+                        'reduceOnly': True,
                     }
                 )
                 print(f"✅ Take Profit order placed: ID → {tp_order['id']}")
@@ -229,16 +221,16 @@ class OKXTradingBot:
             try:
                 sl_order = self.exchange.create_order(
                     symbol=self.symbol,
-                    type='stop_market', # Stop-loss market order
-                    side='buy',         # To close a SHORT position, you BUY
+                    type='stop_market',
+                    side='buy',
                     amount=float(order_amount),
-                    price=None,         # Market order, so price is None
+                    price=None,
                     params={
                         'tdMode': 'cross',
-                        'posSide': 'short', # This SL is for a SHORT position
+                        'posSide': 'short',
                         'reduceOnly': True,
-                        'triggerPx': str(sl_price), # Trigger price for the stop
-                        'ordPx': '-1'               # -1 means market order upon trigger
+                        'triggerPx': str(sl_price),
+                        'ordPx': '-1'
                     }
                 )
                 print(f"✅ Stop Loss order placed: ID → {sl_order['id']}")
@@ -264,29 +256,29 @@ class OKXTradingBot:
         print(f"Time: {datetime.now()}")
         print("=" * 50)
         
-        # Initial setup (leverage, etc.)
         if not self.setup_leverage():
-            print("Failed initial setup. Exiting.")
+            print("Failed initial setup (leverage). Exiting.")
             return
         
-        # Main bot loop
         print("\nBot is now monitoring and attempting to open position...")
         while True:
             try:
-                # Check for existing positions
                 current_positions = self.get_positions()
                 if not current_positions:
                     print("\nNo active positions. Attempting to open new SHORT position...")
-                    if self.open_short_position(): # Changed to open_short_position
+                    if self.open_short_position():
                         print("✓ Successfully opened a new position. Monitoring...")
                     else:
                         print("✗ Failed to open new position. Retrying after delay...")
                 else:
                     print("\nActive positions found. Monitoring current state...")
                     for pos in current_positions:
-                        # Check position side to display correctly
                         pos_side_display = 'LONG' if pos['side'] == 'long' else 'SHORT'
-                        print(f"Position: {pos_side_display} {pos['contracts']:.4f} {pos['symbol']}")
+                        # Ensure 'contracts' is converted to float if necessary for formatting
+                        contracts_val = float(pos.get('contracts', 0))
+                        decimal_places = int(round(-math.log10(self.forced_amount_step_size))) if self.forced_amount_step_size < 1 else 0
+                        
+                        print(f"Position: {pos_side_display} {contracts_val:.{decimal_places}f} {pos['symbol']}")
                         print(f"Entry Price: {pos['entryPrice']:.2f}")
                         print(f"Mark Price: {pos['markPrice']:.2f}")
                         print(f"PnL: {pos['unrealizedPnl']:.2f} USDT")
@@ -297,9 +289,8 @@ class OKXTradingBot:
             except Exception as e:
                 print(f"Error in main loop: {e}")
             
-            time.sleep(60)  # Check every minute
+            time.sleep(60)
 
 if __name__ == "__main__":
     bot = OKXTradingBot()
     bot.run_bot()
-
