@@ -17,14 +17,13 @@ if not all([API_KEY, SECRET, PASSWORD]):
 # ------------------------------------------------------------------------------
 # ⚙️ Config Settings
 # ------------------------------------------------------------------------------
-SYMBOL = 'XRP/USDT'
-TP_DISTANCE = 0.02
-SL_DISTANCE = 0.05
-LEVERAGE = 30
+SYMBOL = 'ETH/USDT'
+TP_DISTANCE = 30
+SL_DISTANCE = 50
+LEVERAGE = 30 # ยังคง Leverage 30 ไว้ แต่เราจะลดเปอร์เซ็นต์การใช้ทุน
 # ✅ สิ่งที่ต้องลองปรับ: MARGIN_BUFFER
-# ลองเพิ่มค่านี้ เพื่อลดขนาดออเดอร์ที่คำนวณได้ลง
-# ถ้า 5 ไม่พอ ลอง 10, 20, 30 เพื่อดูว่า OKX ยอมให้เปิดหรือไม่
-MARGIN_BUFFER = 10 # ✅ ลองเพิ่มเป็น 10 USDT
+# ลองเพิ่มค่านี้ เพื่อลดขนาดออเดอร์ที่คำนวณได้ลงอย่างมาก
+MARGIN_BUFFER = 15 # ✅ ลองเพิ่มเป็น 15 USDT
 # MIN_NOTIONAL_VALUE_USDT และ CONTRACT_SIZE_UNIT ยังคงไว้ตามเดิม
 MIN_NOTIONAL_VALUE_USDT = 20
 CONTRACT_SIZE_UNIT = 0.001
@@ -73,8 +72,8 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
         print(f"❌ Could not fetch market info for {SYMBOL} in calculate_order_amount_and_margin.")
         return (0, 0)
 
-    # ✅ หัก MARGIN_BUFFER ก่อนคำนวณ Notional
-    desired_available_for_margin = available_usdt * 0.80 - MARGIN_BUFFER
+    # ✅ ลดเปอร์เซ็นต์การใช้ทุนลงเหลือ 50% เพื่อทดสอบ
+    desired_available_for_margin = available_usdt * 0.50 - MARGIN_BUFFER # ✅ เปลี่ยนจาก 0.80 เป็น 0.50
     if desired_available_for_margin <= 0:
         print(f"❌ Desired available for margin is too low after buffer: {desired_available_for_margin:.2f} USDT.")
         return (0, 0)
@@ -110,7 +109,6 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
     
     if contracts_to_open < min_exchange_amount:
         print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {min_exchange_amount:.4f}. Trying minimum allowed.")
-        # หากคำนวณได้น้อยกว่าขั้นต่ำของ Exchange ให้ลองใช้ขั้นต่ำของ Exchange ถ้าเงินพอ
         min_amount_required_margin = (min_exchange_amount * price) / leverage
         if available_usdt >= min_amount_required_margin + MARGIN_BUFFER:
             print(f"✅ Sufficient funds to open minimum exchange amount: {min_exchange_amount} contracts. Using this amount.")
