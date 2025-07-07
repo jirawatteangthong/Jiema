@@ -21,12 +21,12 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
 TIMEFRAME = '15m' # ยังคงอยู่แต่ไม่ได้ใช้ในการเปิดออเดอร์ทันที
-LEVERAGE = 30
+LEVERAGE = 20
 TP_VALUE_POINTS = 501
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 350
 BE_SL_BUFFER_POINTS = 100
-CONTRACTS_PER_SLOT = 40 # จำนวนสัญญาต่อ "หนึ่งไม้" (1 contract = 1 USD สำหรับ BTC/USDT-SWAP)
+CONTRACTS_PER_SLOT = 20 # จำนวนสัญญาต่อ "หนึ่งไม้" (1 contract = 1 USD สำหรับ BTC/USDT-SWAP)
 CROSS_THRESHOLD_POINTS = 5 # ยังคงอยู่แต่ไม่ได้ใช้ในการเปิดออเดอร์ทันที
 
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
