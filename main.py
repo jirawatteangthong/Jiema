@@ -191,7 +191,7 @@ class BinanceTradingBot:
                 json.dump(self.monthly_stats, f, indent=4)
             logger.debug(f"💾 บันทึกสถิติการเทรดลงไฟล์ {self.stats_file} สำเร็จ")
         except Exception as e:
-            logger.error(f"❌ เกิดข้อผิดพลาดในการบันทิติสถิติ: {e}")
+            logger.error(f"❌ เกิดข้อผิดพลาดในการบันติติสถิติ: {e}")
 
     def reset_monthly_stats(self):
         """รีเซ็ตสถิติประจำเดือนสำหรับเดือนใหม่."""
@@ -510,35 +510,29 @@ class BinanceTradingBot:
             return (0, 0)
         
         exchange_amount_step = market_info['limits']['amount']['step'] if 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None else self.forced_amount_step_size
-        actual_step_size = float(actual_step_size) if isinstance(actual_step_size, str) else actual_step_size # Ensure it's float type
+        actual_step_size = float(actual_step_size) if isinstance(actual_step_size, str) else actual_step_size 
         
-        # In case exchange_amount_step is extremely small or zero
         if actual_step_size == 0:
-            actual_step_size = self.forced_amount_step_size # Fallback if Binance reports 0
+            actual_step_size = self.forced_amount_step_size 
             logger.warning(f"⚠️ Exchange amount step is 0, using forced_amount_step_size: {actual_step_size}")
 
 
-        # คำนวณ Notional Value สูงสุดที่ทำได้จากทุน
         max_notional_from_available_margin = (available_usdt - self.margin_buffer) * self.leverage
         if max_notional_from_available_margin <= 0:
             logger.warning(f"❌ Available margin ({available_usdt:.2f}) too low after buffer ({self.margin_buffer}) for any notional value.")
             return (0, 0)
 
-        # คำนวณ target notional โดยใช้ factor เป็นเปอร์เซ็นต์ของ max_notional_from_available_margin
         target_notional_for_order = max_notional_from_available_margin * self.target_position_size_factor
         
-        # ตรวจสอบขั้นต่ำ/สูงสุดของ Notional Value ที่ Exchange อนุญาต (ถ้ามีใน market_info)
         min_notional_exchange = market_info['limits']['cost']['min'] if 'cost' in market_info['limits'] and 'min' in market_info['limits']['cost'] and market_info['limits']['cost']['min'] is not None else 0
         max_notional_exchange = market_info['limits']['cost']['max'] if 'cost' in market_info['limits'] and 'max' in market_info['limits']['cost'] and market_info['limits']['cost']['max'] is not None else float('inf')
 
-        # หาก target_notional_for_order ยังคงต่ำกว่ามูลค่าของ min_exchange_amount * price
         min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
         min_notional_from_min_amount = min_exchange_amount * price
 
         target_notional_for_order = max(target_notional_for_order, min_notional_exchange, min_notional_from_min_amount)
         target_notional_for_order = min(target_notional_for_order, max_notional_exchange)
         
-        # Convert notional to contracts (amount)
         contracts_raw = target_notional_for_order / price
         
         contracts_to_open = round(contracts_raw / actual_step_size) * actual_step_size
@@ -1076,7 +1070,8 @@ class BinanceTradingBot:
                 self.monitor_position(current_pos_info, current_price)
 
                 if not current_pos_info:
-                    self.cancel_open_tp_sl_orders() 
+                    # ✅ สิ่งที่ต้องแก้: แก้ไขการเรียกใช้ฟังก์ชัน cancel_open_tp_sl_orders
+                    self.cancel_open_tp_sl_orders() # ✅ ใส่ self. นำหน้า
 
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่. กำลังตรวจสอบสัญญาณ EMA Cross...")
                     signal = self.check_ema_cross() 
@@ -1125,3 +1120,4 @@ class BinanceTradingBot:
 if __name__ == '__main__':
     bot = BinanceTradingBot()
     bot.run_bot()
+
