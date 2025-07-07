@@ -1070,8 +1070,8 @@ class BinanceTradingBot:
                 self.monitor_position(current_pos_info, current_price)
 
                 if not current_pos_info:
-                    # ✅ สิ่งที่ต้องแก้: แก้ไขการเรียกใช้ฟังก์ชัน cancel_open_tp_sl_orders
-                    self.cancel_open_tp_sl_orders() # ✅ ใส่ self. นำหน้า
+                    # ✅ แก้ไข: ย้ายฟังก์ชันนี้เข้ามาในคลาส
+                    self.cancel_open_tp_sl_orders() 
 
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่. กำลังตรวจสอบสัญญาณ EMA Cross...")
                     signal = self.check_ema_cross() 
