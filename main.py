@@ -162,11 +162,9 @@ class BinanceTradingBot:
 
         self.target_position_size_factor = 0.95
 
-    # ✅ สิ่งที่ต้องแก้: ย้ายฟังก์ชัน setup_leverage เข้ามาในคลาส
     def setup_leverage(self):
         """ตั้งค่า leverage และ margin mode"""
         try:
-            # ✅ ใช้ self.exchange และ self.symbol
             result = self.exchange.set_leverage(self.leverage, self.symbol, {'marginMode': 'cross'})
             logger.info(f"Leverage set to {self.leverage}x for {self.symbol}: {result}")
             return True
@@ -512,15 +510,21 @@ class BinanceTradingBot:
             return (0, 0)
         
         exchange_amount_step = market_info['limits']['amount']['step'] if 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None else self.forced_amount_step_size
-        actual_step_size = max(self.forced_amount_step_size, float(exchange_amount_step))
+        actual_step_size = float(actual_step_size) if isinstance(actual_step_size, str) else actual_step_size # Ensure it's float type
+        
+        # In case exchange_amount_step is extremely small or zero
+        if actual_step_size == 0:
+            actual_step_size = self.forced_amount_step_size # Fallback if Binance reports 0
+            logger.warning(f"⚠️ Exchange amount step is 0, using forced_amount_step_size: {actual_step_size}")
 
-        # ✅ คำนวณ Notional Value สูงสุดที่ทำได้จากทุน
+
+        # คำนวณ Notional Value สูงสุดที่ทำได้จากทุน
         max_notional_from_available_margin = (available_usdt - self.margin_buffer) * self.leverage
         if max_notional_from_available_margin <= 0:
             logger.warning(f"❌ Available margin ({available_usdt:.2f}) too low after buffer ({self.margin_buffer}) for any notional value.")
             return (0, 0)
 
-        # ✅ คำนวณ target notional โดยใช้ factor เป็นเปอร์เซ็นต์ของ max_notional_from_available_margin
+        # คำนวณ target notional โดยใช้ factor เป็นเปอร์เซ็นต์ของ max_notional_from_available_margin
         target_notional_for_order = max_notional_from_available_margin * self.target_position_size_factor
         
         # ตรวจสอบขั้นต่ำ/สูงสุดของ Notional Value ที่ Exchange อนุญาต (ถ้ามีใน market_info)
@@ -784,7 +788,6 @@ class BinanceTradingBot:
         try:
             logger.info("⏳ กำลังยกเลิกคำสั่ง Stop Loss เก่า...")
             
-            # ✅ ใช้ fetch_open_orders เพื่อหาคำสั่ง SL เก่า
             open_orders_to_cancel = []
             all_open_orders = self.exchange.fetch_open_orders(self.symbol)
             for order in all_open_orders:
@@ -808,7 +811,7 @@ class BinanceTradingBot:
             else:
                 logger.info(f"✓ ยกเลิก {sl_canceled_count} คำสั่ง Stop Loss เก่าสำเร็จ.")
 
-            time.sleep(1)
+            time.sleep(1) 
 
             new_sl_side = 'sell' if direction == 'long' else 'buy'
             new_sl_order = self.exchange.create_order(
@@ -1070,13 +1073,10 @@ class BinanceTradingBot:
                 current_price = float(ticker['last'])
                 logger.info(f"💲 ราคาปัจจุบันของ {self.symbol}: {current_price:,.1f}")
 
-                # มอนิเตอร์โพซิชัน (รวมถึงการเลื่อน SL ไปกันทุน)
                 self.monitor_position(current_pos_info, current_price)
 
-                # ✅ แก้ไข: ย้าย cancel_open_tp_sl_orders() มาที่นี่
-                # จะยกเลิกคำสั่ง TP/SL ที่ค้างอยู่เสมอเมื่อไม่มีโพซิชันเปิดอยู่
                 if not current_pos_info:
-                    self.cancel_open_tp_sl_orders() # ✅ ยกเลิกก่อนพยายามเปิดออเดอร์ใหม่
+                    self.cancel_open_tp_sl_orders() 
 
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่. กำลังตรวจสอบสัญญาณ EMA Cross...")
                     signal = self.check_ema_cross() 
@@ -1122,11 +1122,6 @@ class BinanceTradingBot:
                 self.send_telegram(error_msg)
                 time.sleep(self.error_retry_sleep_seconds)
 
-# ==============================================================================
-
-# 16. จุดเริ่มต้นการทำงานของโปรแกรม (ENTRY POINT)
-# ==============================================================================
 if __name__ == '__main__':
     bot = BinanceTradingBot()
     bot.run_bot()
-
