@@ -68,7 +68,8 @@ def open_long_order():
     # --- ข้อมูลพื้นฐาน ---
     price = exchange.fetch_ticker(SYMBOL)['last']
     balance = get_cross_balance()
-    amount = calculate_order_amount(balance)
+    FIXED_CONTRACT_AMOUNT = 5  # หรือเริ่มที่ 5 ก็ได้
+amount = FIXED_CONTRACT_AMOUNT
     estimated_cost = amount * 100 / LEVERAGE
 
     print(f"\n📊 ราคา BTC ปัจจุบัน: {price:.2f} USDT")
