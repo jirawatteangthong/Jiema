@@ -22,11 +22,8 @@ TP_DISTANCE = 30
 SL_DISTANCE = 50
 LEVERAGE = 30
 MARGIN_BUFFER = 15
-TARGET_NOTIONAL_USDT = 43.5 # Notional value ที่ทดลองเปิดได้ด้วยมือ
-# ✅ สิ่งที่ต้องเพิ่ม: กำหนด Step Size ของ Amount ด้วยตัวเอง
-# เพราะ OKX UI บอกว่าพิมพ์ได้แค่ 0.01 (พหุคูณของ 0.01)
-FORCED_AMOUNT_STEP_SIZE = 0.01 # ✅ กำหนดให้ปัดเป็นพหุคูณของ 0.01
-
+TARGET_NOTIONAL_USDT = 43.5
+FORCED_AMOUNT_STEP_SIZE = 0.01
 
 # ------------------------------------------------------------------------------
 # 🔌 Connect to OKX Exchange (Futures, Cross Margin)
@@ -61,6 +58,7 @@ except Exception as e:
 
 # ------------------------------------------------------------------------------
 # 🔢 Calculate number of contracts based on TARGET_NOTIONAL_USDT
+# ✅ สิ่งที่ต้องแก้: ย้ายฟังก์ชันนี้ขึ้นมาไว้ตรงนี้
 # ------------------------------------------------------------------------------
 def calculate_amount_from_notional(available_usdt: float, price: float, leverage: int, target_notional: float) -> tuple[float, float]:
     if price <= 0 or leverage <= 0 or target_notional <= 0:
@@ -94,26 +92,19 @@ def calculate_amount_from_notional(available_usdt: float, price: float, leverage
         if 'max' in cost_limits and cost_limits['max'] is not None:
             max_notional_exchange = cost_limits['max']
     
-    # ดึงค่า min amount ที่ Exchange กำหนดจาก market_info
     min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
 
-    # ✅ ใช้ FORCED_AMOUNT_STEP_SIZE เป็นขั้นต่ำของ amount แทน min_exchange_amount ที่ได้จาก market_info ถ้ามันใหญ่กว่า
-    # เพื่อให้แน่ใจว่าเราไม่ส่งจำนวนที่น้อยกว่า 0.01
     actual_min_amount = max(min_exchange_amount, FORCED_AMOUNT_STEP_SIZE)
 
-    target_notional = max(notional, actual_min_amount * price) # ✅ target_notional ต้องไม่น้อยกว่ามูลค่า Notional ของ actual_min_amount
+    target_notional = max(notional, actual_min_amount * price)
     target_notional = min(target_notional, max_notional_exchange)
 
     contracts_raw = target_notional / price
 
-    # ✅ สิ่งที่ต้องแก้: ปัดเศษให้เป็นพหุคูณของ FORCED_AMOUNT_STEP_SIZE
-    # โดยการหารด้วย step size, ปัดขึ้น/ลง, แล้วคูณกลับ
     contracts_to_open = round(contracts_raw / FORCED_AMOUNT_STEP_SIZE) * FORCED_AMOUNT_STEP_SIZE
-    contracts_to_open = float(f"{contracts_to_open:.10f}") # ปัดให้แม่นยำเพื่อเลี่ยง floating point issues
+    contracts_to_open = float(f"{contracts_to_open:.10f}")
 
-    # ตรวจสอบว่าจำนวนสัญญาที่ปัดแล้วยังถึงขั้นต่ำที่แท้จริงหรือไม่
     if contracts_to_open < actual_min_amount:
-        # ถ้าคำนวณแล้วได้น้อยกว่า actual_min_amount ให้ใช้ actual_min_amount เลย
         contracts_to_open = actual_min_amount
         print(f"💡 DEBUG: Contracts too low after step size, adjusted to actual_min_amount: {contracts_to_open:.4f}")
 
@@ -132,7 +123,7 @@ def calculate_amount_from_notional(available_usdt: float, price: float, leverage
     print(f"💡 DEBUG: Actual Minimum Amount (based on CCXT or FORCED_AMOUNT_STEP_SIZE): {actual_min_amount:.4f}")
     print(f"💡 DEBUG: Target Notional (after limits): {target_notional:.2f}")
     print(f"💡 DEBUG: Raw contracts: {contracts_raw:.4f}")
-    print(f"💡 DEBUG: Contracts after step size adjustment (FORCED): {contracts_to_open:.4f}") # ✅ แก้ print format
+    print(f"💡 DEBUG: Contracts after step size adjustment (FORCED): {contracts_to_open:.4f}")
     print(f"💡 DEBUG: Actual Notional (after step size): {actual_notional_after_precision:.2f}")
     print(f"💡 DEBUG: Calculated Required Margin (Estimated Cost): {required_margin:.2f} USDT")
 
@@ -177,15 +168,15 @@ def open_short_order():
             print(f"⚠️ An open short position already exists for {SYMBOL} (size: {existing_position['contracts']}). Skipping new order.")
             return
 
-        order_amount, estimated_used_margin = calculate_order_amount_and_margin(available_usdt, current_price, LEVERAGE, TARGET_NOTIONAL_USDT)
+        order_amount, estimated_used_margin = calculate_amount_from_notional( # ✅ เรียกใช้ฟังก์ชันที่ย้ายมาด้านบน
+            available_usdt, current_price, LEVERAGE, TARGET_NOTIONAL_USDT
+        )
 
         if float(order_amount) == 0:
             print("❌ Cannot open order as calculated amount is zero or insufficient after all checks.")
             return
 
         print(f"📈 Estimated Margin for Order (Recalculated): {estimated_used_margin:.2f} USDT")
-        # ✅ แสดงจำนวนสัญญาในรูปแบบที่เหมาะสมตาม FORCED_AMOUNT_STEP_SIZE
-        # ต้องคำนวณจำนวนทศนิยมจาก FORCED_AMOUNT_STEP_SIZE
         decimal_places = int(round(-math.log10(FORCED_AMOUNT_STEP_SIZE))) if FORCED_AMOUNT_STEP_SIZE < 1 else 0
         print(f"🔢 Opening quantity: {order_amount:.{decimal_places}f} contracts") 
 
@@ -194,7 +185,7 @@ def open_short_order():
         print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
 
         # --- ขั้นตอนที่ 1: เปิด Market Short Order โดยไม่มี TP/SL ---
-        print(f"⏳ Placing market SELL order for {order_amount:.{decimal_places}f} contracts of {SYMBOL}...") # ✅ แก้ไข format string
+        print(f"⏳ Placing market SELL order for {order_amount:.{decimal_places}f} contracts of {SYMBOL}...")
         order = exchange.create_market_sell_order(
             symbol=SYMBOL,
             amount=float(order_amount),
