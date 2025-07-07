@@ -6,7 +6,7 @@ import math
 
 class BinanceTradingBot:
     def __init__(self):
-        # Binance API credentials
+        # Binance API credentials - MAKE SURE THESE MATCH YOUR RAILWAY ENVIRONMENT VARIABLES
         self.api_key = os.getenv('BINANCE_API_KEY') 
         self.secret = os.getenv('BINANCE_SECRET')   
 
@@ -14,37 +14,40 @@ class BinanceTradingBot:
             print("Error: Please set BINANCE_API_KEY and BINANCE_SECRET environment variables.")
             exit()
 
+        # Initialize exchange
         self.exchange = ccxt.binance({ 
             'apiKey': self.api_key,
             'secret': self.secret,
-            'sandbox': False, 
+            'sandbox': False,  # Set to True for testnet
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'future',
-                'marginMode': 'cross',
+                'defaultType': 'future', # For Binance Futures
+                'marginMode': 'cross', # Explicitly setting cross margin
             },
         })
         
         # Trading parameters
-        self.symbol = 'ETH/USDT'
+        self.symbol = 'BTC/USDT' # ใช้ BTC/USDT ตามที่คุณต้องการทดสอบ
         self.position_size_percent = 0.8  
-        self.leverage = 20 # ตามที่ลองใช้แล้ว Binance ยอมรับ
-        self.tp_distance = 30  
-        self.sl_distance = 50  
+        self.leverage = 30 # Leverage 30x ตามที่คุณต้องการ
+        self.tp_distance = 100  # Take profit +100 USDT
+        self.sl_distance = 200  # Stop loss -200 USDT
         self.margin_buffer = 5 
 
-        self.target_notional_usdt = 50 
         self.forced_amount_step_size = 0.001 
+        self.target_notional_usdt = 80 # Notional Value สำหรับ BTC (เพื่อให้ได้ 0.001 BTC ขั้นต่ำ)
 
+        # Load markets early
         try:
             self.exchange.load_markets()
             print("✅ Binance markets loaded successfully.")
         except Exception as e:
-            print(f"❌ Failed to load Binance markets: {e}")
+            print(f"❌ Failed to load Binance markets: {e}") 
             print("Please check your API keys, network connection, or Binance status.")
             exit()
     
     def setup_leverage(self):
+        """ตั้งค่า leverage และ margin mode"""
         try:
             result = self.exchange.set_leverage(self.leverage, self.symbol)
             print(f"Leverage set to {self.leverage}x for {self.symbol}: {result}")
@@ -52,7 +55,7 @@ class BinanceTradingBot:
         except ccxt.ExchangeError as e:
             if "leverage is not valid" in str(e) or "not valid for this symbol" in str(e):
                 print(f"❌ Error: Leverage {self.leverage}x is not valid for {self.symbol} on Binance.")
-                print("Please check Binance UI for max allowed leverage for ETH/USDT and update self.leverage in config.")
+                print("Please check Binance UI for max allowed leverage for BTC/USDT and update self.leverage in config.")
                 return False
             print(f"Error setting leverage: {e}. Details: {e}")
             return False 
@@ -61,6 +64,7 @@ class BinanceTradingBot:
             return False
 
     def get_current_price(self):
+        """ดึงราคาปัจจุบันของ Symbol"""
         try:
             ticker = self.exchange.fetch_ticker(self.symbol)
             return ticker['last']
@@ -69,6 +73,10 @@ class BinanceTradingBot:
             return None
 
     def calculate_order_details(self, available_usdt: float, price: float) -> tuple[float, float]:
+        """
+        Calculates the order amount (contracts) and estimated margin required
+        based on target notional value and exchange rules.
+        """
         if price <= 0 or self.leverage <= 0 or self.target_notional_usdt <= 0:
             print("Error: Price, leverage, and target_notional_usdt must be positive.")
             return (0, 0)
@@ -92,7 +100,7 @@ class BinanceTradingBot:
         min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
         
         if contracts_to_open < min_exchange_amount:
-            print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {min_exchange_amount:.4f}. Cannot open.")
+            print(f"❌ Calculated amount {contracts_to_open:.8f} is less than exchange's minimum amount {min_exchange_amount:.8f}. Cannot open.") 
             return (0, 0)
         
         if available_usdt < required_margin + self.margin_buffer:
@@ -100,12 +108,12 @@ class BinanceTradingBot:
             return (0, 0)
         
         print(f"💡 DEBUG (calculate_order_details): Target Notional: {self.target_notional_usdt:.2f}")
-        print(f"💡 DEBUG (calculate_order_details): Raw contracts: {contracts_raw:.4f}")
+        print(f"💡 DEBUG (calculate_order_details): Raw contracts: {contracts_raw:.8f}") 
         print(f"💡 DEBUG (calculate_order_details): Actual Step Size Used: {actual_step_size}")
-        print(f"💡 DEBUG (calculate_order_details): Contracts after step size adjustment: {contracts_to_open:.4f}")
+        print(f"💡 DEBUG (calculate_order_details): Contracts after step size adjustment: {contracts_to_open:.8f}") 
         print(f"💡 DEBUG (calculate_order_details): Actual Notional after step size: {actual_notional_after_precision:.2f}")
         print(f"💡 DEBUG (calculate_order_details): Calculated Required Margin: {required_margin:.2f} USDT")
-        print(f"💡 DEBUG (calculate_order_details): Min Exchange Amount: {min_exchange_amount:.4f}")
+        print(f"💡 DEBUG (calculate_order_details): Min Exchange Amount: {min_exchange_amount:.8f}") 
 
 
         return (contracts_to_open, required_margin)
@@ -114,21 +122,11 @@ class BinanceTradingBot:
         """ดูยอดเงินในบัญชี (เฉพาะ USDT free balance)"""
         try:
             balance = self.exchange.fetch_balance() 
-            # ✅ สิ่งที่ต้องแก้: พิมพ์ balance object ทั้งหมดเพื่อ Debug
-            print(f"💡 DEBUG (fetch_balance): Full balance object: {balance}") 
-            # Binance Futures, free balance มักจะอยู่ใน balance['info']['assets']
-            # หรือ balance['total']['USDT'] หรือ balance['free']['USDT']
-            # ต้องดูโครงสร้างจริงๆ ที่พิมพ์ออกมา
-            
-            # ลองดึงจาก 'free' ก่อน ถ้าไม่ได้ ค่อยหาทางอื่น
             free_usdt = balance.get('USDT', {}).get('free', 0)
             if free_usdt == 0:
-                # ถ้า 'USDT' 'free' เป็น 0 ลองตรวจสอบโครงสร้างอื่น
-                # ตัวอย่าง: สำหรับ Binance Futures, ยอดเงินอาจอยู่ใน balance['info']['assets']
                 for asset_info in balance.get('info', {}).get('assets', []):
                     if asset_info.get('asset') == 'USDT':
-                        free_usdt = float(asset_info.get('availableBalance', 0)) # Binance Futures specific
-                        print(f"💡 DEBUG (fetch_balance): Found USDT in info.assets: {free_usdt}")
+                        free_usdt = float(asset_info.get('availableBalance', 0)) 
                         break
             
             return float(free_usdt)
@@ -144,6 +142,46 @@ class BinanceTradingBot:
         except Exception as e:
             print(f"Error fetching positions: {e}")
             return None
+
+    def cancel_open_tp_sl_orders(self):
+        """ยกเลิกคำสั่ง TP/SL ที่ค้างอยู่สำหรับ Symbol ปัจจุบัน"""
+        print(f"⏳ Checking for and canceling open TP/SL orders for {self.symbol}...")
+        try:
+            # ดึงคำสั่งที่เปิดอยู่ทั้งหมดสำหรับ Symbol นี้
+            open_orders = self.exchange.fetch_open_orders(self.symbol)
+            
+            canceled_count = 0
+            for order in open_orders:
+                # ตรวจสอบว่าเป็นคำสั่ง TP/SL ที่เราสร้างขึ้นมาหรือไม่
+                # Binance Futures TP/SL orders often have specific types like 'TAKE_PROFIT_MARKET', 'STOP_MARKET', 'STOP'
+                # or have 'reduceOnly' param set to true.
+                if order['type'] in ['TAKE_PROFIT_MARKET', 'STOP_MARKET', 'STOP', 'TAKE_PROFIT', 'STOP_LOSS'] and \
+                   order['reduceOnly'] == True: # Check if it's a reduce-only order
+                    try:
+                        self.exchange.cancel_order(order['id'], self.symbol)
+                        print(f"✅ Canceled old TP/SL order: ID {order['id']}, Type: {order['type']}, Side: {order['side']}, Price: {order['price']}")
+                        canceled_count += 1
+                    except ccxt.BaseError as e:
+                        print(f"❌ Failed to cancel order {order['id']}: {str(e)}")
+                elif order['type'] in ['LIMIT', 'MARKET'] and order['reduceOnly'] == True: # In case reduce-only LIMIT/MARKET are used
+                     try:
+                        self.exchange.cancel_order(order['id'], self.symbol)
+                        print(f"✅ Canceled old reduce-only order: ID {order['id']}, Type: {order['type']}, Side: {order['side']}, Price: {order['price']}")
+                        canceled_count += 1
+                     except ccxt.BaseError as e:
+                        print(f"❌ Failed to cancel order {order['id']}: {str(e)}")
+            
+            if canceled_count == 0:
+                print("No old TP/SL orders found to cancel.")
+            else:
+                print(f"✓ Successfully canceled {canceled_count} old TP/SL orders.")
+
+        except ccxt.NetworkError as e:
+            print(f"❌ Network error while fetching/canceling open orders: {e}")
+        except ccxt.ExchangeError as e:
+            print(f"❌ Exchange error while fetching/canceling open orders: {e}")
+        except Exception as e:
+            print(f"❌ An unexpected error occurred while canceling orders: {e}")
 
     def open_short_position(self):
         """เปิด Short position"""
@@ -161,7 +199,10 @@ class BinanceTradingBot:
             existing_positions = self.get_positions()
             for pos in existing_positions:
                 if pos['symbol'] == self.symbol and pos['side'] == 'short' and pos['contracts'] > 0:
-                    print(f"⚠️ An open short position already exists for {self.symbol} (size: {pos['contracts']:.4f}). Skipping new order.")
+                    print(f"⚠️ An open short position already exists for {self.symbol} (size: {pos['contracts']:.8f}). Skipping new order.") 
+                    # ✅ เพิ่มการเรียก cancel_open_tp_sl_orders ที่นี่ด้วย ถ้ามีสถานะอยู่แล้ว และไม่ได้ปิดไปก่อนหน้านี้
+                    # อาจจะเป็นกรณีที่บอทรันใหม่ แล้วเจอสถานะที่ยังไม่ได้เคลียร์ TP/SL เก่า
+                    self.cancel_open_tp_sl_orders() 
                     return False
             
             order_amount, estimated_used_margin = self.calculate_order_details(available_balance, current_price)
@@ -174,8 +215,8 @@ class BinanceTradingBot:
             decimal_places = int(round(-math.log10(self.forced_amount_step_size))) if self.forced_amount_step_size < 1 else 0
             print(f"🔢 Opening quantity: {order_amount:.{decimal_places}f} contracts")
             
-            tp_price = round(current_price - self.tp_distance, 1) 
-            sl_price = round(current_price + self.sl_distance, 1) 
+            tp_price = round(current_price - self.tp_distance, 1) # TP for Short
+            sl_price = round(current_price + self.sl_distance, 1) # SL for Short
             print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
 
             # --- Step 1: Place Market SELL Order (Short) ---
@@ -198,7 +239,7 @@ class BinanceTradingBot:
                     type='TAKE_PROFIT_MARKET',
                     side='buy',   
                     amount=float(order_amount),
-                    price=None, # Market order, no limit price
+                    price=None, 
                     params={
                         'stopPrice': tp_price,
                         'reduceOnly': True, 
@@ -252,6 +293,9 @@ class BinanceTradingBot:
         print("\nBot is now monitoring and attempting to open position...")
         while True:
             try:
+                # ✅ เพิ่มการตรวจสอบและยกเลิกคำสั่งค้างอยู่ก่อนที่จะดำเนินการอื่นๆ
+                self.cancel_open_tp_sl_orders()
+
                 current_positions = self.get_positions()
                 if not current_positions:
                     print("\nNo active positions. Attempting to open new SHORT position...")
@@ -282,4 +326,3 @@ class BinanceTradingBot:
 if __name__ == "__main__":
     bot = BinanceTradingBot()
     bot.run_bot()
-
