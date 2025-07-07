@@ -29,17 +29,16 @@ class BinanceTradingBot:
         self.leverage = 30 
         self.tp_distance = 100  
         self.sl_distance = 200  
-        self.margin_buffer = 5 
+        self.margin_buffer = 5 # เพิ่ม Margin Buffer เพื่อความปลอดภัย (เผื่อค่าธรรมเนียม, slippage)
 
         self.forced_amount_step_size = 0.001 
         
-        # ✅ สิ่งที่ต้องปรับ: TARGET_POSITION_SIZE_FACTOR
-        # 0.5 = เปิดออเดอร์ที่ใช้ Margin ประมาณ 50% ของ Margin ที่เปิดได้สูงสุดจากทุนที่มี
-        # 0.8 = เปิดออเดอร์ที่ใช้ Margin ประมาณ 80% ของ Margin ที่เปิดได้สูงสุดจากทุนที่มี
-        self.target_position_size_factor = 0.5 # ✅ เริ่มต้นที่ 50% ของขนาดสูงสุดที่เปิดได้
+        # ✅ ปรับ TARGET_POSITION_SIZE_FACTOR เป็น 0.95 เพื่อเปิดเกือบเต็ม Max
+        self.target_position_size_factor = 0.95 # ✅ ใช้ 95% ของ Notional ที่สูงสุดที่เปิดได้
         
-        # ✅ ไม่จำเป็นต้องตั้ง TARGET_NOTIONAL_USDT ที่เป็นค่าตายตัวแล้ว
-        # self.target_notional_usdt = 80 # <-- ลบบรรทัดนี้ออก หรือคอมเมนต์ไว้
+        # ✅ ลบ self.target_notional_usdt ออกไป เพราะเราจะคำนวณจากทุนจริง
+        # ถ้าต้องการให้มีเพดานสูงสุดจริงๆ ก็สามารถตั้งเป็นค่าสูงๆ ได้ เช่น 100000 (1 แสน USDT)
+        # self.target_notional_usdt = 135 # <-- ลบบรรทัดนี้ออก หรือตั้งค่าใหม่ตามต้องการ
 
 
         try:
@@ -75,7 +74,7 @@ class BinanceTradingBot:
             return None
 
     def calculate_order_details(self, available_usdt: float, price: float) -> tuple[float, float]:
-        if price <= 0 or self.leverage <= 0 or self.target_position_size_factor <= 0: # ✅ ตรวจสอบ factor แทน target_notional_usdt
+        if price <= 0 or self.leverage <= 0 or self.target_position_size_factor <= 0: 
             print("Error: Price, leverage, and target_position_size_factor must be positive.")
             return (0, 0)
 
@@ -87,30 +86,26 @@ class BinanceTradingBot:
         exchange_amount_step = market_info['limits']['amount']['step'] if 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None else self.forced_amount_step_size
         actual_step_size = max(self.forced_amount_step_size, float(exchange_amount_step))
 
-        # ✅ คำนวณ Notional Value ที่ต้องการจากทุนที่มีและ factor
+        # ✅ คำนวณ Notional Value สูงสุดที่ทำได้จากทุน
         max_notional_from_available_margin = (available_usdt - self.margin_buffer) * self.leverage
         if max_notional_from_available_margin <= 0:
             print(f"❌ Available margin ({available_usdt:.2f}) too low after buffer ({self.margin_buffer}) for any notional value.")
             return (0, 0)
 
-        # ✅ คำนวณ target notional โดยใช้ factor
+        # ✅ คำนวณ target notional โดยใช้ factor เป็นเปอร์เซ็นต์ของ max_notional_from_available_margin
         target_notional_for_order = max_notional_from_available_margin * self.target_position_size_factor
         
-        # ตรวจสอบขั้นต่ำ/สูงสุดของ Notional Value ที่ Exchange อนุญาต
+        # ตรวจสอบขั้นต่ำ/สูงสุดของ Notional Value ที่ Exchange อนุญาต (ถ้ามีใน market_info)
         min_notional_exchange = market_info['limits']['cost']['min'] if 'cost' in market_info['limits'] and 'min' in market_info['limits']['cost'] and market_info['limits']['cost']['min'] is not None else 0
         max_notional_exchange = market_info['limits']['cost']['max'] if 'cost' in market_info['limits'] and 'max' in market_info['limits']['cost'] and market_info['limits']['cost']['max'] is not None else float('inf')
 
-        # ให้แน่ใจว่า target notional ไม่น้อยกว่าขั้นต่ำของ Exchange และไม่เกินสูงสุด
-        target_notional_for_order = max(target_notional_for_order, min_notional_exchange)
-        target_notional_for_order = min(target_notional_for_order, max_notional_exchange)
-        
-        # หาก target_notional_for_order ยังคงต่ำกว่ามูลค่าของ min_exchange_amount * price
+        # หาก target_notional_for_order ต่ำกว่ามูลค่าของ min_exchange_amount * price
         min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
         min_notional_from_min_amount = min_exchange_amount * price
 
-        if target_notional_for_order < min_notional_from_min_amount:
-            print(f"💡 DEBUG: Calculated target notional {target_notional_for_order:.2f} is less than exchange's min amount notional {min_notional_from_min_amount:.2f}. Adjusting to min amount notional.")
-            target_notional_for_order = min_notional_from_min_amount
+        # ✅ รวมการตรวจสอบทั้งหมด: ต้องไม่น้อยกว่าขั้นต่ำของ Exchange และไม่เกินสูงสุด
+        target_notional_for_order = max(target_notional_for_order, min_notional_exchange, min_notional_from_min_amount)
+        target_notional_for_order = min(target_notional_for_order, max_notional_exchange)
         
         # Convert notional to contracts (amount)
         contracts_raw = target_notional_for_order / price
@@ -138,6 +133,8 @@ class BinanceTradingBot:
         print(f"💡 DEBUG (calculate_order_details): Actual Notional after step size: {actual_notional_after_precision:.2f}")
         print(f"💡 DEBUG (calculate_order_details): Calculated Required Margin: {required_margin:.2f} USDT")
         print(f"💡 DEBUG (calculate_order_details): Min Exchange Amount: {min_exchange_amount:.8f}") 
+        print(f"💡 DEBUG (calculate_order_details): Min Notional Exchange: {min_notional_exchange:.2f}")
+        print(f"💡 DEBUG (calculate_order_details): Min Notional from Min Amount: {min_notional_from_min_amount:.2f}")
 
 
         return (contracts_to_open, required_margin)
@@ -175,15 +172,18 @@ class BinanceTradingBot:
             
             canceled_count = 0
             for order in open_orders:
+                # Binance Futures TP/SL orders often have specific types like 'TAKE_PROFIT_MARKET', 'STOP_MARKET', etc.
+                # และควรมี 'reduceOnly' เป็น True เพื่อเป็นคำสั่งปิด
                 if order['type'] in ['TAKE_PROFIT_MARKET', 'STOP_MARKET', 'STOP', 'TAKE_PROFIT', 'STOP_LOSS'] and \
-                   order['reduceOnly'] == True: 
+                   order.get('reduceOnly', False) == True: # ✅ ใช้ .get('reduceOnly', False) เพื่อป้องกัน KeyError
                     try:
                         self.exchange.cancel_order(order['id'], self.symbol)
                         print(f"✅ Canceled old TP/SL order: ID {order['id']}, Type: {order['type']}, Side: {order['side']}, Price: {order['price']}")
                         canceled_count += 1
                     except ccxt.BaseError as e:
                         print(f"❌ Failed to cancel order {order['id']}: {str(e)}")
-                elif order['type'] in ['LIMIT', 'MARKET'] and order['reduceOnly'] == True:
+                # บางทีอาจเป็น Limit/Market order ที่ reduceOnly (เช่น ถ้าเราใช้ create_order(type='limit', reduceOnly=True))
+                elif order['type'] in ['LIMIT', 'MARKET'] and order.get('reduceOnly', False) == True:
                      try:
                         self.exchange.cancel_order(order['id'], self.symbol)
                         print(f"✅ Canceled old reduce-only order: ID {order['id']}, Type: {order['type']}, Side: {order['side']}, Price: {order['price']}")
@@ -223,7 +223,6 @@ class BinanceTradingBot:
                     self.cancel_open_tp_sl_orders() 
                     return False
             
-            # ✅ ใช้ available_balance ใน calculate_order_details
             order_amount, estimated_used_margin = self.calculate_order_details(available_balance, current_price)
             
             if order_amount == 0:
@@ -312,6 +311,7 @@ class BinanceTradingBot:
         print("\nBot is now monitoring and attempting to open position...")
         while True:
             try:
+                # ✅ เรียกใช้ฟังก์ชันยกเลิกคำสั่งค้างอยู่
                 self.cancel_open_tp_sl_orders()
 
                 current_positions = self.get_positions()
