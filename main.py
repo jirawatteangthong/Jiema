@@ -15,42 +15,36 @@ import math
 # ==============================================================================
 
 # --- API Keys & Credentials (ดึงจาก Environment Variables เพื่อความปลอดภัย) ---
-# ✅ ใช้ชื่อ Env Vars ที่เราตกลงกันสำหรับ Binance
 API_KEY_ENV = 'BINANCE_API_KEY' 
 SECRET_ENV = 'BINANCE_SECRET'
-# Binance Futures ไม่มี Passphrase
-# PASSWORD_ENV = 'RAILWAY_PASSWORD' 
 
 # --- Trading Parameters ---
-SYMBOL = 'BTC/USDT' # ✅ สำหรับ Binance Futures
+SYMBOL = 'BTC/USDT' 
 TIMEFRAME = '15m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 501 # ✅ ตามโค้ดแนวคิด (สำหรับ BTC)
-SL_VALUE_POINTS = 999 # ✅ ตามโค้ดแนวคิด (สำหรับ BTC)
-BE_PROFIT_TRIGGER_POINTS = 350 # ✅ ตามโค้ดแนวคิด
-BE_SL_BUFFER_POINTS = 100 # ✅ ตามโค้ดแนวคิด
-CONTRACTS_PER_SLOT = 40 # จำนวนสัญญาต่อ "หนึ่งไม้" (1 contract = 1 USD สำหรับ BTC/USDT-SWAP)
-CROSS_THRESHOLD_POINTS = 5 # จำนวนจุดที่ EMA ต้องห่างกันเพื่อยืนยันสัญญาณ
+TP_VALUE_POINTS = 501 
+SL_VALUE_POINTS = 999 
+BE_PROFIT_TRIGGER_POINTS = 350 
+BE_SL_BUFFER_POINTS = 80 
+CONTRACTS_PER_SLOT = 40 
+CROSS_THRESHOLD_POINTS = 5 
 
-# เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
-MIN_BALANCE_SAFETY_MARGIN = 50  # ยอดคงเหลือขั้นต่ำที่ต้องเหลือไว้ (USDT)
-MAX_POSITION_SIZE_LIMIT = 1000  # จำกัดขนาดโพซิชันสูงสุด (contracts)
-REQUIRED_MARGIN_BUFFER_PERCENT = 0.10 # 10% ของ Margin ที่ต้องการ (เผื่อไว้สำหรับค่าธรรมเนียมและ Margin แฝง)
+MIN_BALANCE_SAFETY_MARGIN = 50  
+MAX_POSITION_SIZE_LIMIT = 1000  
+REQUIRED_MARGIN_BUFFER_PERCENT = 0.10 
 
-# ค่าสำหรับยืนยันโพซิชันหลังเปิดออเดอร์ (ใช้ใน confirm_position_entry)
-CONFIRMATION_RETRIES = 15  # จำนวนครั้งที่ลองยืนยันโพซิชัน
-CONFIRMATION_SLEEP = 3  # วินาทีที่รอระหว่างการยืนยัน
+CONFIRMATION_RETRIES = 15  
+CONFIRMATION_SLEEP = 3  
 
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TESTING')
 
 # --- Files & Paths ---
-# ✅ ถ้าใช้ Railway Volume, ควรจะเป็น '/data/trading_stats.json'
 STATS_FILE = os.getenv('STATS_FILE_PATH', 'trading_stats.json') 
 
 # --- Bot Timing ---
-MAIN_LOOP_SLEEP_SECONDS = 300 # 6 นาที
+MAIN_LOOP_SLEEP_SECONDS = 300 
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
@@ -66,7 +60,7 @@ logging.basicConfig(
     level=logging.INFO, 
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(os.path.dirname(STATS_FILE), 'bot.log'), encoding='utf-8'), # ✅ ให้ log file อยู่ในโฟลเดอร์เดียวกันกับ stats file
+        logging.FileHandler(os.path.join(os.path.dirname(STATS_FILE), 'bot.log'), encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -76,27 +70,6 @@ for handler in logging.root.handlers:
 
 logger = logging.getLogger(__name__)
 
-# ==============================================================================
-# 3. ตัวแปรสถานะการเทรด (GLOBAL TRADE STATE VARIABLES - จะถูกย้ายเข้า Class)
-# ==============================================================================
-# current_position = None # จะเป็น self.current_position
-# entry_price = None # จะเป็น self.entry_price
-# sl_moved = False # จะเป็น self.sl_moved
-# portfolio_balance = 0.0 # จะเป็น self.portfolio_balance
-# last_monthly_report_date = None # จะเป็น self.last_monthly_report_date
-# initial_balance = 0.0 # จะเป็น self.initial_balance
-# current_position_size = 0.0 # จะเป็น self.current_position_size
-# last_ema_position_status = None # จะเป็น self.last_ema_position_status
-
-# ==============================================================================
-# 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE - จะถูกรวมเข้า Class)
-# ==============================================================================
-# monthly_stats = {...} # จะเป็น self.monthly_stats
-
-# ==============================================================================
-# 5. การตั้งค่า Exchange (CCXT EXCHANGE SETUP - จะถูกรวมเข้า Class __init__)
-# ==============================================================================
-# try: ... except ... (จะย้ายไปใน __init__)
 
 # ==============================================================================
 # 6. คลาสบอทเทรด (BinanceTradingBot Class)
@@ -107,53 +80,42 @@ class BinanceTradingBot:
         # --- API Keys & Credentials ---
         self.api_key = os.getenv(API_KEY_ENV)
         self.secret = os.getenv(SECRET_ENV)
-        # self.passphrase = os.getenv(PASSWORD_ENV) # Binance ไม่มี Passphrase
 
-        # --- Validate API Keys ---
         if not all([self.api_key, self.secret]):
             logger.critical(f"❌ Configuration Error: {API_KEY_ENV} หรือ {SECRET_ENV} ไม่ถูกตั้งค่าใน Environment Variables.")
-            sys.exit(1) # ออกจากโปรแกรมทันที
+            sys.exit(1)
 
         # --- Initialize Exchange ---
         try:
-            self.exchange = ccxt.binance({ # ✅ ใช้ Binance
+            self.exchange = ccxt.binance({ 
                 'apiKey': self.api_key,
                 'secret': self.secret,
-                # 'password': self.passphrase, # ✅ ลบออก
+                'sandbox': False,  
                 'enableRateLimit': True,
                 'rateLimit': 1000,
                 'options': {
-                    'defaultType': 'future', # ✅ สำหรับ Binance Futures
-                    'marginMode': 'cross', # ✅ Cross Margin
-                    'warnOnFetchOHLCVLimitArgument': False,
-                    'adjustForTimeDifference': True,
-                    # 'loadMarkets': False, # ✅ ไม่ต้องใช้ เพราะเรา load_markets() เอง
-                    # 'loadInstruments': False, # ✅ ไม่ต้องใช้
-                    # 'loadCurrencies': False, # ✅ ไม่ต้องใช้
+                    'defaultType': 'future', 
+                    'marginMode': 'cross', 
                 },
-                'verbose': False, 
-                'timeout': 30000,
             })
-            # self.exchange.set_sandbox_mode(False) # ✅ ไม่จำเป็นสำหรับ Binance โดยตรง (ตั้งใน init options)
             
-            # ✅ โหลด markets ทันทีหลัง init
             self.exchange.load_markets()
             logger.info("✅ เชื่อมต่อกับ Binance Exchange และโหลด markets สำเร็จ")
 
         except Exception as e:
             logger.critical(f"❌ ไม่สามารถเชื่อมต่อหรือโหลดข้อมูล Exchange เบื้องต้นได้: {e}", exc_info=True)
-            sys.exit(1) # ออกจากโปรแกรมทันที
+            sys.exit(1)
 
         # --- Trading Parameters ---
         self.symbol = SYMBOL 
         self.timeframe = TIMEFRAME
         self.leverage = LEVERAGE
-        self.tp_value_points = TP_VALUE_POINTS # ✅ ค่าจากโค้ดแนวคิด
-        self.sl_value_points = SL_VALUE_POINTS # ✅ ค่าจากโค้ดแนวคิด
-        self.be_profit_trigger_points = BE_PROFIT_TRIGGER_POINTS # ✅ ค่าจากโค้ดแนวคิด
-        self.be_sl_buffer_points = BE_SL_BUFFER_POINTS # ✅ ค่าจากโค้ดแนวคิด
-        self.contracts_per_slot = CONTRACTS_PER_SLOT # ✅ ค่าจากโค้ดแนวคิด
-        self.cross_threshold_points = CROSS_THRESHOLD_POINTS # ✅ ค่าจากโค้ดแนวคิด
+        self.tp_value_points = TP_VALUE_POINTS 
+        self.sl_value_points = SL_VALUE_POINTS 
+        self.be_profit_trigger_points = BE_PROFIT_TRIGGER_POINTS 
+        self.be_sl_buffer_points = BE_SL_BUFFER_POINTS 
+        self.contracts_per_slot = CONTRACTS_PER_SLOT 
+        self.cross_threshold_points = CROSS_THRESHOLD_POINTS 
 
         self.min_balance_safety_margin = MIN_BALANCE_SAFETY_MARGIN
         self.max_position_size_limit = MAX_POSITION_SIZE_LIMIT
@@ -164,7 +126,7 @@ class BinanceTradingBot:
 
         self.telegram_token = TELEGRAM_TOKEN
         self.telegram_chat_id = TELEGRAM_CHAT_ID
-        self.stats_file = STATS_FILE # ใช้ STATS_FILE จาก global config
+        self.stats_file = STATS_FILE 
 
         self.main_loop_sleep_seconds = MAIN_LOOP_SLEEP_SECONDS
         self.error_retry_sleep_seconds = ERROR_RETRY_SLEEP_SECONDS
@@ -174,13 +136,13 @@ class BinanceTradingBot:
         self.tp_sl_be_price_tolerance_percent = TP_SL_BE_PRICE_TOLERANCE_PERCENT
 
         # --- สถานะการเทรด (ใน Class Instance) ---
-        self.current_position = None # dict {'side', 'size', 'entry_price', ...}
+        self.current_position = None 
         self.entry_price = None
-        self.sl_moved = False # ใช้สำหรับ Breakeven SL
-        self.portfolio_balance = 0.0 # อัปเดตล่าสุด
-        self.initial_balance = 0.0 # ยอดเริ่มต้นตอนรันบอท
-        self.current_position_size = 0.0 # ขนาดโพซิชันในหน่วย Contracts
-        self.last_ema_position_status = None # 'above', 'below', หรือ None (เมื่อเริ่มต้น)
+        self.sl_moved = False 
+        self.portfolio_balance = 0.0 
+        self.initial_balance = 0.0 
+        self.current_position_size = 0.0 
+        self.last_ema_position_status = None 
 
         # --- สถิติ (ใน Class Instance) ---
         self.monthly_stats = {
@@ -193,14 +155,31 @@ class BinanceTradingBot:
             'last_ema_cross_signal': None, 
             'last_ema_position_status': None 
         }
-        self.last_monthly_report_date = None # เพื่อเก็บวันที่ส่งรายงานล่าสุด
+        self.last_monthly_report_date = None 
 
         # --- กำหนด Step Size ของ Amount ด้วยตัวเอง (จากที่ทดลองกับ Binance) ---
-        # สำหรับ BTC/USDT Futures บน Binance, step size คือ 0.001 BTC
         self.forced_amount_step_size = 0.001 
 
-        # ✅ กำหนด Factor สำหรับการเปิดออเดอร์ Max (ใช้ 95%)
         self.target_position_size_factor = 0.95
+
+    # ✅ สิ่งที่ต้องแก้: ย้ายฟังก์ชัน setup_leverage เข้ามาในคลาส
+    def setup_leverage(self):
+        """ตั้งค่า leverage และ margin mode"""
+        try:
+            # ✅ ใช้ self.exchange และ self.symbol
+            result = self.exchange.set_leverage(self.leverage, self.symbol, {'marginMode': 'cross'})
+            logger.info(f"Leverage set to {self.leverage}x for {self.symbol}: {result}")
+            return True
+        except ccxt.ExchangeError as e:
+            if "leverage is not valid" in str(e) or "not valid for this symbol" in str(e):
+                logger.error(f"❌ Error: Leverage {self.leverage}x exceeds the maximum limit for {self.symbol} on Binance.")
+                logger.error("Please check Binance UI for max allowed leverage for this symbol and update self.leverage in config.")
+                return False 
+            logger.error(f"Error setting leverage: {e}. Details: {e}")
+            return False 
+        except Exception as e:
+            logger.error(f"An unexpected error occurred setting leverage: {e}")
+            return False
 
     # ==============================================================================
     # 6. ฟังก์ชันจัดการสถิติ (STATISTICS MANAGEMENT FUNCTIONS)
@@ -333,18 +312,15 @@ class BinanceTradingBot:
         for i in range(retries):
             try:
                 logger.debug(f"🔍 กำลังดึงยอดคงเหลือ (Attempt {i+1}/{retries})...")
-                # ✅ ใช้ self.exchange
-                balance_data = self.exchange.fetch_balance(params={'type': 'future'}) # ✅ สำหรับ Binance Futures
+                balance_data = self.exchange.fetch_balance(params={'type': 'future'})
                 time.sleep(2)
 
-                # ✅ ปรับการดึง balance สำหรับ Binance Futures (USDT free)
                 usdt_balance = float(balance_data.get('USDT', {}).get('free', 0.0))
                 if usdt_balance > 0:
                     self.portfolio_balance = usdt_balance
                     logger.info(f"💰 ยอดคงเหลือ USDT (Trading Account): {usdt_balance:,.2f}")
                     return usdt_balance
                 else:
-                    # ✅ Fallback สำหรับ Binance ถ้า free ไม่ตรง
                     for asset_info in balance_data.get('info', {}).get('assets', []):
                         if asset_info.get('asset') == 'USDT':
                             usdt_balance = float(asset_info.get('availableBalance', 0))
@@ -353,7 +329,7 @@ class BinanceTradingBot:
                             return usdt_balance
                     
                     logger.warning("⚠️ ไม่พบ 'free' balance ใน USDT หรือใน info.assets.")
-                    self.portfolio_balance = 0.0 # ไม่พบยอดที่ถูกต้อง
+                    self.portfolio_balance = 0.0
                     return 0.0
 
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
@@ -375,15 +351,14 @@ class BinanceTradingBot:
         for i in range(retries):
             try:
                 logger.debug(f"🔍 กำลังดึงโพซิชันปัจจุบัน (Attempt {i+1}/{retries})...")
-                # ✅ ใช้ self.exchange และ self.symbol
                 positions = self.exchange.fetch_positions([self.symbol])
                 logger.debug(f"DEBUG: Fetched positions raw: {positions}") 
                 time.sleep(2)
                 for pos in positions:
-                    if float(pos.get('contracts', 0)) != 0: # ✅ ใช้ 'contracts' สำหรับปริมาณ (Binance)
+                    if float(pos.get('contracts', 0)) != 0: 
                         return {
                             'side': pos['side'],
-                            'size': float(pos['contracts']), # ✅ ใช้ 'contracts' เป็นจำนวน Contracts
+                            'size': float(pos['contracts']), 
                             'entry_price': float(pos['entryPrice']),
                             'unrealized_pnl': float(pos['unrealizedPnl']),
                             'pos_id': pos.get('id', 'N/A')
@@ -397,7 +372,7 @@ class BinanceTradingBot:
             except Exception as e:
                 logger.error(f"❌ Unexpected error in get_current_position: {e}", exc_info=True)
                 self.send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึงโพซิชันได้\nรายละเอียด: {e}")
-                return None # ควร return None แทน 0.0 ถ้าไม่มี position
+                return None
         logger.error(f"❌ Failed to fetch positions after {retries} attempts.")
         self.send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงโพซิชันหลังจาก {retries} ครั้ง.")
         return None
@@ -432,7 +407,6 @@ class BinanceTradingBot:
             for i in range(retries):
                 logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...")
                 try:
-                    # ✅ ใช้ self.exchange และ self.symbol และ self.timeframe
                     ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=250)
                     time.sleep(2)
                     break
@@ -458,8 +432,8 @@ class BinanceTradingBot:
 
             closes = [candle[4] for candle in ohlcv]
 
-            ema50_current = self.calculate_ema(closes, 50) # ✅ ใช้ self.calculate_ema
-            ema200_current = self.calculate_ema(closes, 200) # ✅ ใช้ self.calculate_ema
+            ema50_current = self.calculate_ema(closes, 50)
+            ema200_current = self.calculate_ema(closes, 200)
 
             logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f}") 
             
@@ -473,10 +447,10 @@ class BinanceTradingBot:
             elif ema50_current < ema200_current:
                 current_ema_position = 'below'
             
-            if self.last_ema_position_status is None: # ✅ ใช้ self.last_ema_position_status
+            if self.last_ema_position_status is None: 
                 if current_ema_position:
                     self.last_ema_position_status = current_ema_position
-                    self.save_monthly_stats() # ✅ ใช้ self.save_monthly_stats
+                    self.save_monthly_stats() 
                     logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
                 return None
 
@@ -484,19 +458,19 @@ class BinanceTradingBot:
 
             # Golden Cross (Long)
             if self.last_ema_position_status == 'below' and current_ema_position == 'above' and \
-               ema50_current > (ema200_current + self.cross_threshold_points): # ✅ ใช้ self.cross_threshold_points
+               ema50_current > (ema200_current + self.cross_threshold_points): 
                 cross_signal = 'long'
                 logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {self.cross_threshold_points} points above EMA200({ema200_current:.2f})")
 
             # Death Cross (Short)
             elif self.last_ema_position_status == 'above' and current_ema_position == 'below' and \
-                 ema50_current < (ema200_current - self.cross_threshold_points): # ✅ ใช้ self.cross_threshold_points
+                 ema50_current < (ema200_current - self.cross_threshold_points): 
                 cross_signal = 'short'
                 logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {self.cross_threshold_points} points below EMA200({ema200_current:.2f})")
 
             if current_ema_position and cross_signal is None:
-                self.last_ema_position_status = current_ema_position # ✅ ใช้ self.last_ema_position_status
-                self.save_monthly_stats() # ✅ ใช้ self.save_monthly_stats
+                self.last_ema_position_status = current_ema_position 
+                self.save_monthly_stats() 
 
             if cross_signal:
                 logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
@@ -514,26 +488,25 @@ class BinanceTradingBot:
     # 10. ฟังก์ชันช่วยสำหรับการคำนวณและตรวจสอบออเดอร์
     # ==============================================================================
 
-    def validate_trading_parameters(self, balance: float) -> tuple[bool, str]: # ✅ ลบ contracts_per_slot เพราะจะคำนวณใน calculate_order_details
+    def validate_trading_parameters(self, balance: float) -> tuple[bool, str]:
         """ตรวจสอบความถูกต้องของพารามิเตอร์การเทรด"""
-        if balance <= self.min_balance_safety_margin: # ✅ ใช้ self.min_balance_safety_margin
+        if balance <= self.min_balance_safety_margin: 
             return False, f"ยอดคงเหลือ ({balance:,.2f} USDT) ต่ำเกินไป (ต้องมีอย่างน้อย {self.min_balance_safety_margin} USDT)"
 
-        if self.contracts_per_slot <= 0: # ✅ ใช้ self.contracts_per_slot
+        if self.contracts_per_slot <= 0:
             return False, f"จำนวนสัญญาต่อไม้ไม่ถูกต้อง ({self.contracts_per_slot})"
 
-        if self.leverage <= 0: # ✅ ใช้ self.leverage
+        if self.leverage <= 0:
             return False, f"ค่า Leverage ไม่ถูกต้อง ({self.leverage})"
 
         return True, "OK"
 
-    # ✅ ใช้ฟังก์ชัน calculate_order_details จากโค้ดก่อนหน้า
     def calculate_order_details(self, available_usdt: float, price: float) -> tuple[float, float]:
-        if price <= 0 or self.leverage <= 0 or self.target_position_size_factor <= 0:
+        if price <= 0 or self.leverage <= 0 or self.target_position_size_factor <= 0: 
             logger.error("Error: Price, leverage, and target_position_size_factor must be positive.")
             return (0, 0)
 
-        market_info = self.exchange.market(self.symbol) # ✅ ใช้ self.exchange และ self.symbol
+        market_info = self.exchange.market(self.symbol) 
         if not market_info:
             logger.error(f"❌ Could not fetch market info for {self.symbol}.")
             return (0, 0)
@@ -541,13 +514,13 @@ class BinanceTradingBot:
         exchange_amount_step = market_info['limits']['amount']['step'] if 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None else self.forced_amount_step_size
         actual_step_size = max(self.forced_amount_step_size, float(exchange_amount_step))
 
-        # คำนวณ Notional Value สูงสุดที่ทำได้จากทุน
+        # ✅ คำนวณ Notional Value สูงสุดที่ทำได้จากทุน
         max_notional_from_available_margin = (available_usdt - self.margin_buffer) * self.leverage
         if max_notional_from_available_margin <= 0:
             logger.warning(f"❌ Available margin ({available_usdt:.2f}) too low after buffer ({self.margin_buffer}) for any notional value.")
             return (0, 0)
 
-        # กำหนด target notional โดยใช้ factor เป็นเปอร์เซ็นต์ของ max_notional_from_available_margin
+        # ✅ คำนวณ target notional โดยใช้ factor เป็นเปอร์เซ็นต์ของ max_notional_from_available_margin
         target_notional_for_order = max_notional_from_available_margin * self.target_position_size_factor
         
         # ตรวจสอบขั้นต่ำ/สูงสุดของ Notional Value ที่ Exchange อนุญาต (ถ้ามีใน market_info)
@@ -561,6 +534,7 @@ class BinanceTradingBot:
         target_notional_for_order = max(target_notional_for_order, min_notional_exchange, min_notional_from_min_amount)
         target_notional_for_order = min(target_notional_for_order, max_notional_exchange)
         
+        # Convert notional to contracts (amount)
         contracts_raw = target_notional_for_order / price
         
         contracts_to_open = round(contracts_raw / actual_step_size) * actual_step_size
@@ -592,17 +566,17 @@ class BinanceTradingBot:
 
         return (contracts_to_open, required_margin)
 
-    def confirm_position_entry(self, expected_direction: str, expected_contracts: float) -> tuple[bool, float | None]: # ✅ เปลี่ยน expected_contracts เป็น float
+    def confirm_position_entry(self, expected_direction: str, expected_contracts: float) -> tuple[bool, float | None]:
         """ยืนยันการเปิดโพซิชัน"""
-        self.current_position_size = 0.0 # รีเซ็ตก่อนยืนยัน
-        size_tolerance = max(self.forced_amount_step_size, expected_contracts * 0.005) # tolerance อย่างน้อย 1 step size
+        self.current_position_size = 0.0 
+        size_tolerance = max(self.forced_amount_step_size, expected_contracts * 0.005)
 
-        for attempt in range(self.confirmation_retries): # ✅ ใช้ self.confirmation_retries
+        for attempt in range(self.confirmation_retries): 
             logger.info(f"⏳ ยืนยันโพซิชัน ({attempt + 1}/{self.confirmation_retries})...")
-            time.sleep(self.confirmation_sleep) # ✅ ใช้ self.confirmation_sleep
+            time.sleep(self.confirmation_sleep) 
             
             try:
-                position_info = self.get_current_position() # ✅ ใช้ self.get_current_position
+                position_info = self.get_current_position()
                 
                 if position_info and position_info.get('side') == expected_direction:
                     actual_size = position_info.get('size', 0)
@@ -611,20 +585,16 @@ class BinanceTradingBot:
                     if abs(actual_size - expected_contracts) <= size_tolerance:
                         logger.info(f"✅ ยืนยันโพซิชันสำเร็จ:")
                         logger.info(f"   - Entry Price: {entry_price:.2f}")
-                        logger.info(f"   - Size: {actual_size:,.8f} Contracts") # ✅ ปรับการแสดงผล
+                        logger.info(f"   - Size: {actual_size:,.8f} Contracts") 
                         logger.info(f"   - Direction: {expected_direction.upper()}")
                         
-                        self.current_position_size = actual_size # ✅ อัปเดต self.current_position_size
+                        self.current_position_size = actual_size 
                         
-                        # ส่งการแจ้งเตือน
-                        # ✅ ใช้ self.send_telegram
                         self.send_telegram(
                             f"🎯 เปิดโพซิชัน {expected_direction.upper()} สำเร็จ\n"
                             f"📊 ขนาด: {actual_size:,.8f} Contracts\n"
                             f"💰 Entry: {entry_price:.2f}"
                         )
-                        # ✅ ไม่ต้องดึง PnL ตอนยืนยัน เพราะอาจจะยังไม่ทันอัปเดต
-                        
                         return True, entry_price
                     else:
                         logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.8f}, ได้: {actual_size:,.8f})")
@@ -635,10 +605,10 @@ class BinanceTradingBot:
                 logger.warning(f"⚠️ Error ในการยืนยันโพซิชัน: {e}", exc_info=True)
                 
         logger.error(f"❌ ไม่สามารถยืนยันโพซิชันได้หลังจาก {self.confirmation_retries} ครั้ง")
-        self.send_telegram( # ✅ ใช้ self.send_telegram
+        self.send_telegram(
             f"⛔️ Position Confirmation Failed\n"
             f"🔍 กรุณาตรวจสอบโพซิชันใน Exchange ด่วน!\n"
-            f"📊 คาดหวัง: {expected_direction.upper()} {expected_contracts:,.8f} Contracts" # ✅ ปรับการแสดงผล
+            f"📊 คาดหวัง: {expected_direction.upper()} {expected_contracts:,.8f} Contracts" 
         )
 
         return False, None
@@ -648,28 +618,23 @@ class BinanceTradingBot:
     # 11. ฟังก์ชันจัดการคำสั่งซื้อขาย (ORDER MANAGEMENT FUNCTIONS)
     # ==============================================================================
 
-    def open_market_order(self, direction: str) -> tuple[bool, float | None]: # ✅ ลบ current_price เพราะจะดึงในนี้
+    def open_market_order(self, direction: str) -> tuple[bool, float | None]: 
         """เปิดออเดอร์ Market ด้วยจำนวนสัญญาที่คำนวณจากจำนวนไม้ และคืนราคา Entry Price."""
         try:
-            # ดึงราคาปัจจุบัน
-            current_price = self.get_current_price() # ✅ ใช้ self.get_current_price
+            current_price = self.get_current_price() 
             if not current_price:
                 logger.error("❌ ไม่สามารถดึงราคาปัจจุบันได้.")
                 return False, None
 
-            # 1. ดึงยอดคงเหลือและตรวจสอบพื้นฐาน
-            balance = self.get_portfolio_balance() # ✅ ใช้ self.get_portfolio_balance
+            balance = self.get_portfolio_balance() 
             
-            # 2. ตรวจสอบความถูกต้องของพารามิเตอร์
-            is_valid, error_msg = self.validate_trading_parameters(balance) # ✅ ใช้ self.validate_trading_parameters
+            is_valid, error_msg = self.validate_trading_parameters(balance) 
             if not is_valid:
                 self.send_telegram(f"⛔️ Parameter Error: {error_msg}")
                 logger.error(f"❌ {error_msg}")
                 return False, None
             
-            # 3. คำนวณขนาดโพซิชันที่เหมาะสม
-            # calculate_order_details จะดูแลเรื่อง contract size, required margin, limits
-            final_contracts, required_margin = self.calculate_order_details(balance, current_price) # ✅ ใช้ self.calculate_order_details
+            final_contracts, required_margin = self.calculate_order_details(balance, current_price) 
             
             if final_contracts == 0:
                 error_msg = "จำนวนสัญญาคำนวณได้เป็นศูนย์หรือติดลบหลังการตรวจสอบทั้งหมด"
@@ -677,26 +642,23 @@ class BinanceTradingBot:
                 logger.error(f"❌ {error_msg}")
                 return False, None
             
-            # 4. แสดงข้อมูลการเทรด
             logger.info(f"ℹ️ Trading Summary:")
             logger.info(f"   - Balance: {balance:,.2f} USDT")
-            logger.info(f"   - Contracts: {final_contracts:,.8f}") # ✅ ปรับการแสดงผล
+            logger.info(f"   - Contracts: {final_contracts:,.8f}") 
             logger.info(f"   - Required Margin (est.): {required_margin:,.2f} USDT")
             logger.info(f"   - Direction: {direction.upper()}")
             
-            # 5. ส่งออเดอร์
             side = 'buy' if direction == 'long' else 'sell'
-            # ✅ สำหรับ Binance ไม่ต้องการ params 'tdMode' หรือ 'mgnCcy' ใน create_order
             params = {
                 'reduceOnly': False,
             }
             
             order = None
             for attempt in range(3):
-                logger.info(f"⚡️ ส่งคำสั่ง Market Order (Attempt {attempt + 1}/3) - {final_contracts:,.8f} Contracts") # ✅ ปรับการแสดงผล
+                logger.info(f"⚡️ ส่งคำสั่ง Market Order (Attempt {attempt + 1}/3) - {final_contracts:,.8f} Contracts") 
                 try:
-                    order = self.exchange.create_order( # ✅ ใช้ self.exchange
-                        self.symbol, 'market', side, float(final_contracts), # ✅ ส่ง final_contracts เป็น float
+                    order = self.exchange.create_order(
+                        self.symbol, 'market', side, float(final_contracts), 
                         price=None, params=params
                     )
                     
@@ -729,8 +691,7 @@ class BinanceTradingBot:
                 self.send_telegram("⛔️ Order Failed: ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
                 return False, None
             
-            # 6. ยืนยันโพซิชัน
-            return self.confirm_position_entry(direction, final_contracts) # ✅ ใช้ self.confirm_position_entry
+            return self.confirm_position_entry(direction, final_contracts) 
             
         except Exception as e:
             logger.error(f"❌ Critical Error in open_market_order: {e}", exc_info=True)
@@ -739,7 +700,7 @@ class BinanceTradingBot:
 
     def set_tpsl_for_position(self, direction: str, entry_price: float) -> bool:
         """ตั้งค่า Take Profit และ Stop Loss สำหรับโพซิชันที่เปิดอยู่."""
-        if not self.current_position_size: # ✅ ใช้ self.current_position_size
+        if not self.current_position_size: 
             logger.error("❌ ไม่สามารถตั้ง TP/SL ได้: ขนาดโพซิชันเป็น 0.")
             self.send_telegram("⛔️ Error: ไม่สามารถตั้ง TP/SL ได้ (ขนาดโพซิชันเป็น 0).")
             return False
@@ -748,47 +709,40 @@ class BinanceTradingBot:
         sl_price = 0.0
 
         if direction == 'long':
-            tp_price = entry_price + self.tp_value_points # ✅ ใช้ self.tp_value_points
-            sl_price = entry_price - self.sl_value_points # ✅ ใช้ self.sl_value_points
+            tp_price = entry_price + self.tp_value_points 
+            sl_price = entry_price - self.sl_value_points 
         elif direction == 'short':
-            tp_price = entry_price - self.tp_value_points # ✅ ใช้ self.tp_value_points
-            sl_price = entry_price + self.sl_value_points # ✅ ใช้ self.sl_value_points
+            tp_price = entry_price - self.tp_value_points 
+            sl_price = entry_price + self.sl_value_points 
         
-        # ✅ ใช้ self.exchange
-        tp_price = self.exchange.price_to_precision(self.symbol, tp_price) # ✅ ใช้ self.symbol
-        sl_price = self.exchange.price_to_precision(self.symbol, sl_price) # ✅ ใช้ self.symbol
+        tp_price = self.exchange.price_to_precision(self.symbol, tp_price) 
+        sl_price = self.exchange.price_to_precision(self.symbol, sl_price) 
 
         try:
             tp_sl_side = 'sell' if direction == 'long' else 'buy'
             
-            # --- Setting Take Profit ---
-            tp_order = self.exchange.create_order( # ✅ ใช้ self.exchange
+            tp_order = self.exchange.create_order( 
                 symbol=self.symbol,
-                type='TAKE_PROFIT_MARKET', # ✅ Binance specific type
+                type='TAKE_PROFIT_MARKET', 
                 side=tp_sl_side,
-                amount=float(self.current_position_size), # ✅ ใช้ self.current_position_size และเป็น float
-                price=None, # Market order, no limit price
+                amount=float(self.current_position_size), 
+                price=None, 
                 params={
-                    'stopPrice': tp_price, # ✅ Binance uses stopPrice
-                    'reduceOnly': True,
-                    # 'tdMode': 'cross', # ✅ ไม่จำเป็นสำหรับ Binance TP/SL
-                    # 'posSide': 'long' if direction == 'long' else 'short', # ✅ ไม่จำเป็นสำหรับ Binance TP/SL
+                    'stopPrice': tp_price, 
+                    'reduceOnly': True, 
                 }
             )
             logger.info(f"✅ ส่งคำสั่ง Take Profit สำเร็จ: ID {tp_order.get('id', 'N/A')}, Trigger Price: {tp_price:.2f}")
 
-            # --- Setting Stop Loss ---
-            sl_order = self.exchange.create_order( # ✅ ใช้ self.exchange
+            sl_order = self.exchange.create_order( 
                 symbol=self.symbol,
-                type='STOP_MARKET', # ✅ Binance specific type
+                type='STOP_MARKET', 
                 side=tp_sl_side,
-                amount=float(self.current_position_size), # ✅ ใช้ self.current_position_size และเป็น float
-                price=None,
+                amount=float(self.current_position_size), 
+                price=None,         
                 params={
-                    'stopPrice': sl_price, # ✅ Binance uses stopPrice
+                    'stopPrice': sl_price, 
                     'reduceOnly': True,
-                    # 'tdMode': 'cross', # ✅ ไม่จำเป็นสำหรับ Binance TP/SL
-                    # 'posSide': 'long' if direction == 'long' else 'short', # ✅ ไม่จำเป็นสำหรับ Binance TP/SL
                 }
             )
             logger.info(f"✅ ส่งคำสั่ง Stop Loss สำเร็จ: ID {sl_order.get('id', 'N/A')}, Trigger Price: {sl_price:.2f}")
@@ -796,36 +750,36 @@ class BinanceTradingBot:
             return True
 
         except ccxt.ArgumentsRequired as e:
-            logger.error(f"❌ Error setting TP/SL: Arguments missing or incorrect for Binance. {e}", exc_info=True) # ✅ แก้ข้อความ Error
-            self.send_telegram(f"⛔️ API Error (TP/SL Arguments): {e.args[0] if e.args else str(e)}") # ✅ ใช้ self.send_telegram
+            logger.error(f"❌ Error setting TP/SL: Arguments missing or incorrect for Binance. {e}", exc_info=True) 
+            self.send_telegram(f"⛔️ API Error (TP/SL Arguments): {e.args[0] if e.args else str(e)}") 
             return False
         except (ccxt.NetworkError, ccxt.ExchangeError) as e:
             logger.error(f"❌ Error setting TP/SL: API/Network issue. {e}", exc_info=True)
-            self.send_telegram(f"⛔️ API Error (TP/SL): {e.args[0] if e.args else str(e)}") # ✅ ใช้ self.send_telegram
+            self.send_telegram(f"⛔️ API Error (TP/SL): {e.args[0] if e.args else str(e)}") 
             return False
         except Exception as e:
             logger.error(f"❌ Unexpected error setting TP/SL: {e}", exc_info=True)
-            self.send_telegram(f"⛔️ Unexpected Error (TP/SL): {e}") # ✅ ใช้ self.send_telegram
+            self.send_telegram(f"⛔️ Unexpected Error (TP/SL): {e}") 
             return False
 
 
     def move_sl_to_breakeven(self, direction: str, entry_price: float) -> bool:
         """เลื่อน Stop Loss ไปที่จุด Breakeven (หรือ +BE_SL_BUFFER_POINTS)."""
-        if self.sl_moved: # ✅ ใช้ self.sl_moved
+        if self.sl_moved: 
             logger.info("ℹ️ SL ถูกเลื่อนไปที่กันทุนแล้ว ไม่จำเป็นต้องเลื่อนอีก.")
             return True
 
-        if not self.current_position_size: # ✅ ใช้ self.current_position_size
+        if not self.current_position_size: 
             logger.error("❌ ไม่สามารถเลื่อน SL ได้: ขนาดโพซิชันเป็น 0.")
             return False
 
         breakeven_sl_price = 0.0
         if direction == 'long':
-            breakeven_sl_price = entry_price + self.be_sl_buffer_points # ✅ ใช้ self.be_sl_buffer_points
+            breakeven_sl_price = entry_price + self.be_sl_buffer_points 
         elif direction == 'short':
-            breakeven_sl_price = entry_price - self.be_sl_buffer_points # ✅ ใช้ self.be_sl_buffer_points
+            breakeven_sl_price = entry_price - self.be_sl_buffer_points 
         
-        breakeven_sl_price = self.exchange.price_to_precision(self.symbol, breakeven_sl_price) # ✅ ใช้ self.exchange และ self.symbol
+        breakeven_sl_price = self.exchange.price_to_precision(self.symbol, breakeven_sl_price) 
 
         try:
             logger.info("⏳ กำลังยกเลิกคำสั่ง Stop Loss เก่า...")
@@ -834,7 +788,6 @@ class BinanceTradingBot:
             open_orders_to_cancel = []
             all_open_orders = self.exchange.fetch_open_orders(self.symbol)
             for order in all_open_orders:
-                # ตรวจสอบว่าเป็นคำสั่ง SL (Stop Loss) ที่เปิดอยู่ (และ reduceOnly)
                 if order['type'] in ['STOP_MARKET', 'STOP_LOSS', 'STOP'] and order.get('reduceOnly', False) == True:
                     open_orders_to_cancel.append(order)
             
@@ -842,10 +795,10 @@ class BinanceTradingBot:
             if open_orders_to_cancel:
                 for sl_order in open_orders_to_cancel:
                     try:
-                        self.exchange.cancel_order(sl_order['id'], self.symbol) # ✅ ใช้ self.exchange
+                        self.exchange.cancel_order(sl_order['id'], self.symbol) 
                         logger.info(f"✅ ยกเลิก SL Order ID {sl_order['id']} สำเร็จ.")
                         sl_canceled_count += 1
-                    except ccxt.OrderNotFound: # ✅ จับ OrderNotFound โดยเฉพาะ
+                    except ccxt.OrderNotFound: 
                         logger.info(f"💡 SL Order {sl_order['id']} ไม่พบ/ถูกยกเลิกไปแล้ว. ไม่ต้องทำอะไร.")
                     except Exception as cancel_e:
                         logger.warning(f"⚠️ ไม่สามารถยกเลิก SL Order ID {sl_order['id']} ได้: {cancel_e}")
@@ -855,22 +808,22 @@ class BinanceTradingBot:
             else:
                 logger.info(f"✓ ยกเลิก {sl_canceled_count} คำสั่ง Stop Loss เก่าสำเร็จ.")
 
-            time.sleep(1) # รอสักครู่หลังจากยกเลิก
+            time.sleep(1)
 
             new_sl_side = 'sell' if direction == 'long' else 'buy'
-            new_sl_order = self.exchange.create_order( # ✅ ใช้ self.exchange
+            new_sl_order = self.exchange.create_order(
                 symbol=self.symbol,
-                type='STOP_MARKET', # ✅ Binance specific type
+                type='STOP_MARKET', 
                 side=new_sl_side,
                 amount=float(self.current_position_size), 
-                price=None, # Market order
+                price=None, 
                 params={
-                    'stopPrice': float(breakeven_sl_price), # ✅ Binance uses stopPrice
+                    'stopPrice': float(breakeven_sl_price), 
                     'reduceOnly': True,
                 }
             )
             logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
-            self.sl_moved = True # ✅ อัปเดต self.sl_moved
+            self.sl_moved = True 
             return True
 
         except (ccxt.NetworkError, ccxt.ExchangeError) as e:
@@ -890,15 +843,13 @@ class BinanceTradingBot:
         """ตรวจสอบสถานะโพซิชันปัจจุบันและจัดการ Stop Loss."""
         logger.debug(f"🔄 กำลังตรวจสอบสถานะโพซิชัน: Pos_Info={pos_info}, Current_Price={current_price}")
         
-        # ✅ เมื่อไม่มีโพซิชัน (สถานะเพิ่งถูกปิดไป)
         if not pos_info:
-            if self.current_position: # ถ้าก่อนหน้านี้มีโพซิชัน
+            if self.current_position: 
                 logger.info(f"ℹ️ โพซิชัน {self.current_position.upper()} ถูกปิดแล้ว.")
 
                 closed_price = current_price
                 pnl_usdt_actual = 0.0
 
-                # PnL สำหรับ Futures คือ (ราคาปิด - ราคาเข้า) * จำนวนสัญญา
                 if self.entry_price and self.current_position_size:
                     if self.current_position == 'long':
                         pnl_usdt_actual = (closed_price - self.entry_price) * self.current_position_size
@@ -910,55 +861,46 @@ class BinanceTradingBot:
 
                 tp_sl_be_tolerance_points = self.entry_price * self.tp_sl_be_price_tolerance_percent if self.entry_price else 0
                 
-                # ✅ ปรับการตรวจสอบ TP/SL/BE ให้แม่นยำขึ้น โดยใช้ราคาปัจจุบันเทียบกับราคาเป้าหมาย
                 if self.current_position == 'long' and self.entry_price:
-                    # ตรวจสอบว่าใกล้ TP ไหม
                     if abs(current_price - (self.entry_price + self.tp_value_points)) <= tp_sl_be_tolerance_points:
                         close_reason = "TP"
                         emoji = "✅"
-                    # ตรวจสอบว่าใกล้ SL กันทุนไหม
                     elif self.sl_moved and abs(current_price - (self.entry_price + self.be_sl_buffer_points)) <= tp_sl_be_tolerance_points:
                          close_reason = "SL (กันทุน)"
                          emoji = "🛡️"
-                    # ตรวจสอบว่าใกล้ SL ปกติไหม
                     elif abs(current_price - (self.entry_price - self.sl_value_points)) <= tp_sl_be_tolerance_points:
                         close_reason = "SL"
                         emoji = "❌"
                 elif self.current_position == 'short' and self.entry_price:
-                    # ตรวจสอบว่าใกล้ TP ไหม
                     if abs(current_price - (self.entry_price - self.tp_value_points)) <= tp_sl_be_tolerance_points:
                         close_reason = "TP"
                         emoji = "✅"
-                    # ตรวจสอบว่าใกล้ SL กันทุนไหม
                     elif self.sl_moved and abs(current_price - (self.entry_price - self.be_sl_buffer_points)) <= tp_sl_be_tolerance_points:
                          close_reason = "SL (กันทุน)"
                          emoji = "🛡️"
-                    # ตรวจสอบว่าใกล้ SL ปกติไหม
                     elif abs(current_price - (self.entry_price + self.sl_value_points)) <= tp_sl_be_tolerance_points:
                         close_reason = "SL"
                         emoji = "❌"
 
                 self.send_telegram(f"{emoji} <b>ปิดออเดอร์ด้วย {close_reason}</b>\n<b>PnL (ประมาณ):</b> <code>{pnl_usdt_actual:,.2f} USDT</code>")
                 logger.info(f"✅ โพซิชันปิด: {close_reason}, PnL (ประมาณ): {pnl_usdt_actual:.2f}")
-                self.add_trade_result(close_reason, pnl_usdt_actual) # ✅ ใช้ close_reason
+                self.add_trade_result(close_reason, pnl_usdt_actual)
                 
-                # ✅ รีเซ็ตสถานะโพซิชันหลังจากปิด
                 self.current_position = None
                 self.entry_price = None
                 self.current_position_size = 0.0
                 self.sl_moved = False
-                self.last_ema_position_status = None # ✅ รีเซ็ต EMA status เพื่อรอสัญญาณใหม่
+                self.last_ema_position_status = None 
                 self.save_monthly_stats()
 
-            return # ไม่ต้องทำอะไรต่อถ้าไม่มีโพซิชัน
+            return 
 
-        # ถ้ามีโพซิชันเปิดอยู่
         self.current_position = pos_info['side']
         self.entry_price = pos_info['entry_price']
-        unrealized_pnl = pos_info['unrealized_pnl'] # ✅ แก้ไขจาก 'unrealizedPnl'
-        self.current_position_size = pos_info['size'] # ✅ ใช้ 'size' จาก get_current_position
+        unrealized_pnl = pos_info['unrealized_pnl'] 
+        self.current_position_size = pos_info['size'] 
 
-        logger.info(f"📊 สถานะปัจจุบัน: {self.current_position.upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {self.entry_price:,.1f}, Size: {self.current_position_size:.8f} Contracts") # ✅ ปรับการแสดงผล
+        logger.info(f"📊 สถานะปัจจุบัน: {self.current_position.upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {self.entry_price:,.1f}, Size: {self.current_position_size:.8f} Contracts") 
 
         pnl_in_points = 0
         if self.current_position == 'long':
@@ -966,9 +908,9 @@ class BinanceTradingBot:
         elif self.current_position == 'short':
             pnl_in_points = self.entry_price - current_price
 
-        if not self.sl_moved and pnl_in_points >= self.be_profit_trigger_points: # ✅ ใช้ self.sl_moved, self.be_profit_trigger_points
+        if not self.sl_moved and pnl_in_points >= self.be_profit_trigger_points: 
             logger.info(f"ℹ️ กำไรถึงจุดเลื่อน SL: {pnl_in_points:,.0f} จุด (PnL: {unrealized_pnl:,.2f} USDT)")
-            self.move_sl_to_breakeven(self.current_position, self.entry_price) # ✅ ใช้ self.move_sl_to_breakeven
+            self.move_sl_to_breakeven(self.current_position, self.entry_price) 
 
     # ==============================================================================
     # 13. ฟังก์ชันรายงานประจำเดือน (MONTHLY REPORT FUNCTIONS)
@@ -985,16 +927,16 @@ class BinanceTradingBot:
             return
 
         try:
-            balance = self.get_portfolio_balance() # ✅ ใช้ self.get_portfolio_balance
+            balance = self.get_portfolio_balance() 
 
             if self.monthly_stats['month_year'] != current_month_year:
                 logger.info(f"🆕 สถิติประจำเดือนที่ใช้ไม่ตรงกับเดือนนี้ ({self.monthly_stats['month_year']} vs {current_month_year}). กำลังรีเซ็ตสถิติเพื่อรายงานเดือนนี้.")
-                self.reset_monthly_stats() # ✅ ใช้ self.reset_monthly_stats
+                self.reset_monthly_stats() 
 
             tp_count = self.monthly_stats['tp_count']
             sl_count = self.monthly_stats['sl_count']
             total_pnl = self.monthly_stats['total_pnl']
-            pnl_from_start = balance - self.initial_balance if self.initial_balance > 0 else 0.0 # ✅ ใช้ self.initial_balance
+            pnl_from_start = balance - self.initial_balance if self.initial_balance > 0 else 0.0 
 
             message = f"""📊 <b>รายงานสรุปผลประจำเดือน - {now.strftime('%B %Y')}</b>
 <b>🔹 กำไรสุทธิเดือนนี้:</b> <code>{total_pnl:+,.2f} USDT</code>
@@ -1005,15 +947,15 @@ class BinanceTradingBot:
 <b>⏱ บอทยังทำงานปกติ</b> ✅
 <b>เวลา:</b> <code>{now.strftime('%H:%M')}</code>"""
 
-            self.send_telegram(message) # ✅ ใช้ self.send_telegram
-            self.last_monthly_report_date = now.date() # ✅ ใช้ self.last_monthly_report_date
+            self.send_telegram(message) 
+            self.last_monthly_report_date = now.date() 
             self.monthly_stats['last_report_month_year'] = current_month_year
-            self.save_monthly_stats() # ✅ ใช้ self.save_monthly_stats
+            self.save_monthly_stats() 
             logger.info("✅ ส่งรายงานประจำเดือนแล้ว.")
 
         except Exception as e:
             logger.error(f"❌ เกิดข้อผิดพลาดในการส่งรายงานประจำเดือน: {e}", exc_info=True)
-            self.send_telegram(f"⛔️ Error: ไม่สามารถส่งรายงานประจำเดือนได้\nรายละเอียด: {e}") # ✅ ใช้ self.send_telegram
+            self.send_telegram(f"⛔️ Error: ไม่สามารถส่งรายงานประจำเดือนได้\nรายละเอียด: {e}") 
 
     def monthly_report_scheduler(self):
         """ตั้งเวลาสำหรับส่งรายงานประจำเดือน."""
@@ -1021,20 +963,20 @@ class BinanceTradingBot:
         while True:
             now = datetime.now()
             
-            report_day = min(self.monthly_report_day, calendar.monthrange(now.year, now.month)[1]) # ✅ ใช้ self.monthly_report_day
+            report_day = min(self.monthly_report_day, calendar.monthrange(now.year, now.month)[1]) 
             
-            next_report_time = now.replace(day=report_day, hour=self.monthly_report_hour, minute=self.monthly_report_minute, second=0, microsecond=0) # ✅ ใช้ self.monthly_report_hour, self.monthly_report_minute
+            next_report_time = now.replace(day=report_day, hour=self.monthly_report_hour, minute=self.monthly_report_minute, second=0, microsecond=0)
 
             if now >= next_report_time:
                 if self.last_monthly_report_date is None or \
                    self.last_monthly_report_date.year != now.year or \
                    self.last_monthly_report_date.month != now.month:
                      logger.info(f"⏰ ตรวจพบว่าถึงเวลาส่งรายงานประจำเดือน ({now.strftime('%H:%M')}) และยังไม่ได้ส่งสำหรับเดือนนี้. กำลังส่ง...")
-                     self.monthly_report() # ✅ ใช้ self.monthly_report
+                     self.monthly_report() 
                 
                 next_report_time = next_report_time.replace(month=next_report_time.month + 1) if next_report_time.month < 12 else next_report_time.replace(year=next_report_time.year + 1, month=1)
                 max_day_in_next_month = calendar.monthrange(next_report_time.year, next_report_time.month)[1]
-                report_day_for_next_month = min(self.monthly_report_day, max_day_in_next_month) # ✅ ใช้ self.monthly_report_day
+                report_day_for_next_month = min(self.monthly_report_day, max_day_in_next_month) 
                 next_report_time = next_report_time.replace(day=report_day_for_next_month)
 
 
@@ -1051,7 +993,7 @@ class BinanceTradingBot:
     def send_startup_message(self):
         """ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน."""
         try:
-            self.initial_balance = self.get_portfolio_balance() # ✅ ใช้ self.initial_balance, self.get_portfolio_balance
+            self.initial_balance = self.get_portfolio_balance() 
             startup_time = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
             message = f"""🔄 <b>บอทเริ่มทำงาน</b>
@@ -1063,7 +1005,7 @@ class BinanceTradingBot:
 <b>🔧 ขนาดไม้:</b> <code>{self.contracts_per_slot:,.0f} Contracts</code> ต่อไม้
 <b>📈 รอสัญญาณ EMA Cross...</b>"""
 
-            self.send_telegram(message) # ✅ ใช้ self.send_telegram
+            self.send_telegram(message) 
             logger.info("✅ ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
 
         except Exception as e:
@@ -1072,25 +1014,25 @@ class BinanceTradingBot:
     # ==============================================================================
     # 15. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
     # ==============================================================================
-    def run_bot(self): # ✅ เปลี่ยนชื่อฟังก์ชันเป็น run_bot
+    def run_bot(self): 
         """ฟังก์ชันหลักที่รัน Bot."""
         try:
-            self.load_monthly_stats() # ✅ ใช้ self.load_monthly_stats
-            self.send_startup_message() # ✅ ใช้ self.send_startup_message
+            self.load_monthly_stats() 
+            self.send_startup_message() 
 
-            monthly_thread = threading.Thread(target=self.monthly_report_scheduler, daemon=True) # ✅ ใช้ self.monthly_report_scheduler
+            monthly_thread = threading.Thread(target=self.monthly_report_scheduler, daemon=True) 
             monthly_thread.start()
             logger.info("✅ Monthly Report Scheduler Thread Started.")
 
-            if not self.setup_leverage(): # ✅ ตั้งค่า leverage ที่นี่
+            if not self.setup_leverage(): 
                 logger.error("❌ Failed initial setup (leverage). Exiting.")
                 return
 
         except Exception as e:
-            error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {self.error_retry_sleep_seconds} วินาที." # ✅ ใช้ self.error_retry_sleep_seconds
-            self.send_telegram(error_msg) # ✅ ใช้ self.send_telegram
+            error_msg = f"⛔️ Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {self.error_retry_sleep_seconds} วินาที." 
+            self.send_telegram(error_msg) 
             logger.critical(f"❌ Startup error: {e}", exc_info=True)
-            time.sleep(self.error_retry_sleep_seconds) # ✅ ใช้ self.error_retry_sleep_seconds
+            time.sleep(self.error_retry_sleep_seconds) 
             return
 
         logger.info("🚀 บอทเข้าสู่ Main Loop แล้วและพร้อมทำงาน...")
@@ -1101,35 +1043,35 @@ class BinanceTradingBot:
                 current_pos_info = None
                 try:
                     logger.info("🔎 กำลังดึงสถานะโพซิชันปัจจุบัน...")
-                    current_pos_info = self.get_current_position() # ✅ ใช้ self.get_current_position
+                    current_pos_info = self.get_current_position() 
                     logger.info(f"☑️ ดึงสถานะโพซิชันปัจจุบันสำเร็จ: {'มีโพซิชัน' if current_pos_info else 'ไม่มีโพซิชัน'}.")
                 except Exception as e:
                     logger.error(f"❌ Error ในการดึงสถานะโพซิชัน: {e}", exc_info=True)
-                    self.send_telegram(f"⛔️ API Error: ไม่สามารถดึงสถานะโพซิชันได้. รายละเอียด: {e.args[0] if e.args else str(e)}") # ✅ ใช้ self.send_telegram
-                    time.sleep(self.error_retry_sleep_seconds) # ✅ ใช้ self.error_retry_sleep_seconds
+                    self.send_telegram(f"⛔️ API Error: ไม่สามารถดึงสถานะโพซิชันได้. รายละเอียด: {e.args[0] if e.args else str(e)}") 
+                    time.sleep(self.error_retry_sleep_seconds) 
                     continue
 
                 ticker = None
                 try:
                     logger.info("📊 กำลังดึงราคาล่าสุด (Ticker)...")
-                    ticker = self.exchange.fetch_ticker(self.symbol) # ✅ ใช้ self.exchange, self.symbol
+                    ticker = self.exchange.fetch_ticker(self.symbol) 
                 except Exception as e:
-                    logger.warning(f"⚠️ Error fetching ticker: {e}. Retrying in {self.error_retry_sleep_seconds} วินาที...") # ✅ ใช้ self.error_retry_sleep_seconds
-                    self.send_telegram(f"⛔️ API Error: ไม่สามารถดึงราคาล่าสุดได้. รายละเอียด: {e.args[0] if e.args else str(e)}") # ✅ ใช้ self.send_telegram
-                    time.sleep(self.error_retry_sleep_seconds) # ✅ ใช้ self.error_retry_sleep_seconds
+                    logger.warning(f"⚠️ Error fetching ticker: {e}. Retrying in {self.error_retry_sleep_seconds} วินาที...") 
+                    self.send_telegram(f"⛔️ API Error: ไม่สามารถดึงราคาล่าสุดได้. รายละเอียด: {e.args[0] if e.args else str(e)}") 
+                    time.sleep(self.error_retry_sleep_seconds) 
                     continue
 
                 if not ticker or 'last' not in ticker:
                     logger.error("❌ Failed to fetch valid ticker. Skipping loop and retrying.")
-                    self.send_telegram("⛔️ Error: ไม่สามารถดึงราคาล่าสุดได้ถูกต้อง. Skipping.") # ✅ ใช้ self.send_telegram
-                    time.sleep(self.error_retry_sleep_seconds) # ✅ ใช้ self.error_retry_sleep_seconds
+                    self.send_telegram("⛔️ Error: ไม่สามารถดึงราคาล่าสุดได้ถูกต้อง. Skipping.") 
+                    time.sleep(self.error_retry_sleep_seconds) 
                     continue
 
                 current_price = float(ticker['last'])
-                logger.info(f"💲 ราคาปัจจุบันของ {self.symbol}: {current_price:,.1f}") # ✅ ใช้ self.symbol
+                logger.info(f"💲 ราคาปัจจุบันของ {self.symbol}: {current_price:,.1f}")
 
                 # มอนิเตอร์โพซิชัน (รวมถึงการเลื่อน SL ไปกันทุน)
-                self.monitor_position(current_pos_info, current_price) # ✅ ใช้ self.monitor_position
+                self.monitor_position(current_pos_info, current_price)
 
                 # ✅ แก้ไข: ย้าย cancel_open_tp_sl_orders() มาที่นี่
                 # จะยกเลิกคำสั่ง TP/SL ที่ค้างอยู่เสมอเมื่อไม่มีโพซิชันเปิดอยู่
@@ -1137,16 +1079,16 @@ class BinanceTradingBot:
                     self.cancel_open_tp_sl_orders() # ✅ ยกเลิกก่อนพยายามเปิดออเดอร์ใหม่
 
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่. กำลังตรวจสอบสัญญาณ EMA Cross...")
-                    signal = self.check_ema_cross() # ✅ ใช้ self.check_ema_cross
+                    signal = self.check_ema_cross() 
 
-                    if signal: # ถ้าพบสัญญาณ
+                    if signal: 
                         logger.info(f"🌟 ตรวจพบสัญญาณ EMA Cross: {signal.upper()}")
                         logger.info(f"✨ สัญญาณ {signal.upper()} ที่เข้าเงื่อนไข. กำลังพยายามเปิดออเดอร์.")
 
-                        market_order_success, confirmed_entry_price = self.open_market_order(signal) # ✅ ใช้ self.open_market_order
+                        market_order_success, confirmed_entry_price = self.open_market_order(signal) 
 
                         if market_order_success and confirmed_entry_price:
-                            set_tpsl_success = self.set_tpsl_for_position(signal, confirmed_entry_price) # ✅ ใช้ self.set_tpsl_for_position
+                            set_tpsl_success = self.set_tpsl_for_position(signal, confirmed_entry_price) 
 
                             if set_tpsl_success:
                                 self.last_ema_position_status = None 
@@ -1154,7 +1096,7 @@ class BinanceTradingBot:
                                 logger.info(f"✅ เปิดออเดอร์ {signal.upper()} และตั้ง TP/SL สำเร็จ.")
                             else:
                                 logger.error(f"❌ เปิดออเดอร์ {signal.upper()} ได้ แต่ตั้ง TP/SL ไม่สำเร็จ. กรุณาตรวจสอบและปิดออเดอร์ด้วยตนเอง!")
-                                self.send_telegram(f"⛔️ <b>ข้อผิดพลาดร้ายแรง:</b> เปิดออเดอร์ {signal.upper()} ได้ แต่ตั้ง TP/SL ไม่สำเร็จ. โพซิชันไม่มี SL/TP! โปรดจัดการด้วยตนเอง!") # ✅ ใช้ self.send_telegram
+                                self.send_telegram(f"⛔️ <b>ข้อผิดพลาดร้ายแรง:</b> เปิดออเดอร์ {signal.upper()} ได้ แต่ตั้ง TP/SL ไม่สำเร็จ. โพซิชันไม่มี SL/TP! โปรดจัดการด้วยตนเอง!") 
                         else:
                             logger.warning(f"⚠️ ไม่สามารถเปิด Market Order {signal.upper()} ได้.")
                     else:
@@ -1162,12 +1104,12 @@ class BinanceTradingBot:
                 else:
                     logger.info(f"Current Position: {current_pos_info['side'].upper()}. รอการปิดหรือเลื่อน SL.")
 
-                logger.info(f"😴 จบรอบ Main Loop. รอ {self.main_loop_sleep_seconds} วินาทีสำหรับรอบถัดไป.") # ✅ ใช้ self.main_loop_sleep_seconds
+                logger.info(f"😴 จบรอบ Main Loop. รอ {self.main_loop_sleep_seconds} วินาทีสำหรับรอบถัดไป.") 
                 time.sleep(self.main_loop_sleep_seconds)
 
             except KeyboardInterrupt:
                 logger.info("🛑 บอทหยุดทำงานโดยผู้ใช้ (KeyboardInterrupt).")
-                self.send_telegram("🛑 Bot หยุดทำงานโดยผู้ใช้.") # ✅ ใช้ self.send_telegram
+                self.send_telegram("🛑 Bot หยุดทำงานโดยผู้ใช้.") 
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
                 error_msg = f"⛔️ Error: API Error\nรายละเอียด: {e} | Retry อีกครั้งใน {self.error_retry_sleep_seconds} วินาที."
@@ -1185,6 +1127,6 @@ class BinanceTradingBot:
 # 16. จุดเริ่มต้นการทำงานของโปรแกรม (ENTRY POINT)
 # ==============================================================================
 if __name__ == '__main__':
-    bot = BinanceTradingBot() # ✅ สร้าง instance ของคลาส
-    bot.run_bot() # ✅ เรียกใช้เมธอด run_bot
+    bot = BinanceTradingBot()
+    bot.run_bot()
 
