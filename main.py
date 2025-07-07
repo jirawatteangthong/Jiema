@@ -10,17 +10,15 @@ SECRET = os.getenv("RAILWAY_SECRET")
 PASSWORD = os.getenv("RAILWAY_PASSWORD")
 
 if not all([API_KEY, SECRET, PASSWORD]):
-    print("Error: Please set OKX_API_KEY, OKX_SECRET, and OKX_PASSWORD environment variables.")
+    print("Error: Please set RAILWAY_API_KEY, RAILWAY_SECRET, and RAILWAY_PASSWORD environment variables.")
     exit()
 
 # ------------------------------------------------------------------------------
 # ⚙️ Config Settings
 # ------------------------------------------------------------------------------
 SYMBOL = 'ETH/USDT'
-# สำหรับ Short: TP_DISTANCE จะเป็นระยะห่างจากราคาปัจจุบัน "ลงไป"
-# SL_DISTANCE จะเป็นระยะห่างจากราคาปัจจุบัน "ขึ้นไป"
-TP_DISTANCE = 30    # Take Profit เมื่อราคาลงไป 30 USDT
-SL_DISTANCE = 50    # Stop Loss เมื่อราคาขึ้นไป 50 USDT
+TP_DISTANCE = 30
+SL_DISTANCE = 50
 LEVERAGE = 30
 MARGIN_BUFFER = 2
 
@@ -71,7 +69,6 @@ def calculate_order_amount(available_usdt: float, price: float, leverage: int) -
 def get_open_position():
     positions = exchange.fetch_positions([SYMBOL])
     for pos in positions:
-        # 🟢 จุดที่ 1: เปลี่ยนจาก 'long' เป็น 'short' เพื่อตรวจสอบสถานะ Short
         if pos['symbol'] == SYMBOL and pos['contracts'] > 0 and pos['side'] == 'short':
             return pos
     return None
@@ -79,7 +76,7 @@ def get_open_position():
 # ------------------------------------------------------------------------------
 # 📉 Open Short Market Order + TP/SL
 # ------------------------------------------------------------------------------
-def open_short_order(): # 🟢 เปลี่ยนชื่อฟังก์ชันให้สอดคล้อง
+def open_short_order():
     try:
         ticker = exchange.fetch_ticker(SYMBOL)
         current_price = ticker['last']
@@ -89,7 +86,6 @@ def open_short_order(): # 🟢 เปลี่ยนชื่อฟังก์�
         available_usdt = float(balance.get('total', {}).get('USDT', 0))
         print(f"💰 Available Margin (OKX): {available_usdt:.2f} USDT")
 
-        # 🟢 จุดที่ 2: ตรวจสอบสถานะ Short ที่เปิดอยู่แล้ว
         existing_position = get_open_position()
         if existing_position:
             print(f"⚠️ An open short position already exists for {SYMBOL} (size: {existing_position['contracts']}). Skipping new order.")
@@ -105,24 +101,26 @@ def open_short_order(): # 🟢 เปลี่ยนชื่อฟังก์�
         print(f"📈 Estimated Margin for Order: {estimated_used_margin:.2f} USDT")
         print(f"🔢 Opening quantity: {order_amount} contracts")
 
-        # 🟢 จุดที่ 3: คำนวณ TP/SL สำหรับ Short
-        # สำหรับ Short: TP จะต่ำกว่าราคาปัจจุบัน, SL จะสูงกว่าราคาปัจจุบัน
-        tp_price = round(current_price - TP_DISTANCE, 1) # TP_DISTANCE ลดจากราคาเข้า
-        sl_price = round(current_price + SL_DISTANCE, 1) # SL_DISTANCE เพิ่มจากราคาเข้า
+        tp_price = round(current_price - TP_DISTANCE, 1) # สำหรับ Short, TP ต่ำกว่าราคาเข้า
+        sl_price = round(current_price + SL_DISTANCE, 1) # สำหรับ Short, SL สูงกว่าราคาเข้า
         print(f"🎯 TP: {tp_price} | 🛑 SL: {sl_price}")
 
-        # 🟢 จุดที่ 4: ใช้ create_market_sell_order แทน create_market_buy_order
-        # และเปลี่ยน posSide เป็น 'short'
-        order = exchange.create_market_sell_order( # เปลี่ยนเป็น sell order
+        # ✅ สิ่งที่ต้องแก้: ย้าย TP/SL กลับไปใส่ใน 'params' dictionary
+        # ✅ ใช้ tpTriggerPx และ slTriggerPx เหมือนเดิม
+        # ✅ และสำคัญ: ใช้ "str(ราคา)" สำหรับ OKX เพื่อให้แน่ใจว่าเป็น string
+        order = exchange.create_market_sell_order(
             symbol=SYMBOL,
             amount=order_amount,
             params={
                 "tdMode": "cross",
-                "posSide": "short", # เปลี่ยนเป็น 'short'
+                "posSide": "short",
                 "reduceOnly": False,
-            },
-            takeProfit={'type': 'market', 'price': tp_price},
-            stopLoss={'type': 'market', 'price': sl_price},
+                # ✅ เพิ่ม TP/SL พารามิเตอร์ของ OKX กลับเข้าไปใน params
+                "tpTriggerPx": str(tp_price), # ราคา TP Trigger
+                "tpOrdPx": "-1",              # -1 หมายถึง Market order เมื่อถึง TP
+                "slTriggerPx": str(sl_price), # ราคา SL Trigger
+                "slOrdPx": "-1",              # -1 หมายถึง Market order เมื่อถึง SL
+            }
         )
         print(f"✅ Short order successfully placed: Order ID → {order['id']}")
 
@@ -130,6 +128,11 @@ def open_short_order(): # 🟢 เปลี่ยนชื่อฟังก์�
         print(f"❌ Network error during order placement: {e}")
     except ccxt.ExchangeError as e:
         print(f"❌ Exchange error during order placement: {e}")
+        # ตัวอย่างการ handle error จาก OKX:
+        # หากเห็น Error Code "51000", "Parameter ordType error" อีก
+        # อาจต้องลองลบ tpOrdPx, slOrdPx ออก หรือตรวจสอบเอกสาร OKX API อย่างละเอียด
+        if "51000" in str(e):
+            print("💡 OKX specific error: Parameter ordType error. Double check TP/SL parameters or remove tpOrdPx/slOrdPx if still problematic.")
     except Exception as e:
         print(f"❌ An unexpected error occurred: {e}")
 
@@ -138,4 +141,4 @@ def open_short_order(): # 🟢 เปลี่ยนชื่อฟังก์�
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
     print("\n🚀 Starting the trading bot...\n")
-    open_short_order() # 🟢 เรียกใช้ฟังก์ชัน open_short_order
+    open_short_order()
