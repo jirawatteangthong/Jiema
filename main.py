@@ -35,11 +35,12 @@ def get_cross_balance():
     return usdt_balance
 
 
-def calculate_order_amount(price: float, balance: float, leverage: float, percent: float = 0.8):
+def calculate_order_amount(balance: float, leverage: float, percent: float = 0.8):
     usdt_to_use = balance * percent
     position_value = usdt_to_use * leverage
-    amount = position_value / price
-    return round(amount, 3)
+    contract_value = 100  # BTC/USDT Futures ของ OKX
+    amount = position_value / contract_value
+    return round(amount, 2)
 
 
 def get_open_position():
@@ -75,20 +76,19 @@ def open_long_order():
 
     print(f"TP ตั้งที่: {tp_price} | SL ตั้งที่: {sl_price}")
 
-    # ตั้ง Take Profit (trigger order)
-    exchange.create_order(
+       exchange.create_order(
         symbol=symbol,
         type='take_profit_market',
         side='sell',
         amount=amount,
         params={
             'triggerPrice': tp_price,
+            'orderPx': '-1',
             'marginMode': 'cross',
             'reduceOnly': True
         }
     )
 
-    # ตั้ง Stop Loss (trigger order)
     exchange.create_order(
         symbol=symbol,
         type='stop_market',
@@ -96,6 +96,7 @@ def open_long_order():
         amount=amount,
         params={
             'triggerPrice': sl_price,
+            'orderPx': '-1',
             'marginMode': 'cross',
             'reduceOnly': True
         }
