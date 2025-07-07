@@ -17,9 +17,9 @@ if not all([API_KEY, SECRET, PASSWORD]):
 # ------------------------------------------------------------------------------
 # ⚙️ Config Settings
 # ------------------------------------------------------------------------------
-SYMBOL = 'ETH/USDT'
-TP_DISTANCE = 30
-SL_DISTANCE = 50
+SYMBOL = 'XRP/USDT'
+TP_DISTANCE = 0.02
+SL_DISTANCE = 0.05
 LEVERAGE = 30
 # ✅ สิ่งที่ต้องลองปรับ: MARGIN_BUFFER
 # ลองเพิ่มค่านี้ เพื่อลดขนาดออเดอร์ที่คำนวณได้ลง
