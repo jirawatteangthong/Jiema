@@ -585,7 +585,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         
         if initial_margin_rate_val is None:
             logger.warning(f"⚠️ ไม่สามารถดึง initialMarginRate ที่ตรงกับ Leverage {LEVERAGE}x ได้จาก Exchange. จะใช้ 1 / LEVERAGE แทน.")
-            initial_margin_rate_val = 1 / LEVERAGE # Fallback if tier not found
+            initial_margin_rate_val = 0.1 / LEVERAGE # Fallback if tier not found
 
         # 4. คำนวณขนาดโพซิชันที่ปลอดภัยและ Margin ที่ต้องการ
         num_of_slots, total_contracts, required_margin_with_buffer = calculate_safe_position_size(balance, initial_margin_rate_val)
