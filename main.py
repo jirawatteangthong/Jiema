@@ -1,253 +1,227 @@
 import ccxt
-import os
 import time
-import math
+import os
+from datetime import datetime
 
-# ------------------------------------------------------------------------------
-# 🔐 Load API Credentials from Environment
-# ------------------------------------------------------------------------------
-API_KEY = os.getenv("RAILWAY_API_KEY")
-SECRET = os.getenv("RAILWAY_SECRET")
-PASSWORD = os.getenv("RAILWAY_PASSWORD")
+class OKXTradingBot:
+def **init**(self):
+# OKX API credentials - ใส่ใน environment variables
+self.api_key = os.getenv(‘RAILWAY_API_KEY’)
+self.secret = os.getenv(‘RAILWAY_SECRET’)
+self.passphrase = os.getenv(‘RAILWAY_PASSPHRASE’)
 
-if not all([API_KEY, SECRET, PASSWORD]):
-    print("Error: Please set RAILWAY_API_KEY, RAILWAY_SECRET, and RAILWAY_PASSWORD environment variables.")
-    exit()
-
-# ------------------------------------------------------------------------------
-# ⚙️ Config Settings
-# ------------------------------------------------------------------------------
-SYMBOL = 'ETH/USDT'
-TP_DISTANCE = 30
-SL_DISTANCE = 50
-LEVERAGE = 30
-MARGIN_BUFFER = 15
-TARGET_NOTIONAL_USDT = 43.5
-FORCED_AMOUNT_STEP_SIZE = 0.01
-
-# ------------------------------------------------------------------------------
-# 🔌 Connect to OKX Exchange (Futures, Cross Margin)
-# ------------------------------------------------------------------------------
-def connect_exchange():
-    return ccxt.okx({
-        'apiKey': API_KEY,
-        'secret': SECRET,
-        'password': PASSWORD,
-        'enableRateLimit': True,
+```
+    # Initialize exchange
+    self.exchange = ccxt.okx({
+        'apiKey': self.api_key,
+        'secret': self.secret,
+        'password': self.passphrase,
+        'sandbox': False,  # Set to True for testnet
         'options': {
-            'defaultType': 'swap',
-            'defaultMarket': 'linear',
-            'marginMode': 'cross',
-        },
-        'urls': {
-            'api': {
-                'public': 'https://www.okx.com/api/v5/public',
-                'private': 'https://www.okx.com/api/v5/private',
-            }
+            'defaultType': 'future',  # สำหรับ futures trading
         }
     })
-
-exchange = connect_exchange()
-try:
-    exchange.load_markets()
-    print("✅ OKX markets loaded successfully.")
-except Exception as e:
-    print(f"❌ Failed to load OKX markets: {e}")
-    print("Please check your API keys, network connection, or OKX status.")
-    exit()
-
-# ------------------------------------------------------------------------------
-# 🔢 Calculate number of contracts based on TARGET_NOTIONAL_USDT
-# ✅ สิ่งที่ต้องแก้: ย้ายฟังก์ชันนี้ขึ้นมาไว้ตรงนี้
-# ------------------------------------------------------------------------------
-def calculate_amount_from_notional(available_usdt: float, price: float, leverage: int, target_notional: float) -> tuple[float, float]:
-    if price <= 0 or leverage <= 0 or target_notional <= 0:
-        print("Error: Price, leverage, and target_notional must be positive.")
-        return (0, 0)
-
-    market_info = exchange.market(SYMBOL)
-    if not market_info:
-        print(f"❌ Could not fetch market info for {SYMBOL} in calculate_amount_from_notional.")
-        return (0, 0)
-
-    print(f"💡 DEBUG: Market Info Precision (from CCXT): {market_info.get('precision', {}).get('amount')}")
-    print(f"💡 DEBUG: Market Info Limits Amount (from CCXT): {market_info.get('limits', {}).get('amount')}")
-    print(f"💡 DEBUG: Market Info Limits Cost (from CCXT): {market_info.get('limits', {}).get('cost')}")
-
-
-    desired_available_for_margin = available_usdt * 0.80 - MARGIN_BUFFER
-    if desired_available_for_margin <= 0:
-        print(f"❌ Desired available for margin is too low after buffer: {desired_available_for_margin:.2f} USDT.")
-        return (0, 0)
-
-    notional = desired_available_for_margin * leverage
-
-    min_notional_exchange = 0
-    max_notional_exchange = float('inf')
-
-    if 'limits' in market_info and 'cost' in market_info['limits']:
-        cost_limits = market_info['limits']['cost']
-        if 'min' in cost_limits and cost_limits['min'] is not None:
-            min_notional_exchange = cost_limits['min']
-        if 'max' in cost_limits and cost_limits['max'] is not None:
-            max_notional_exchange = cost_limits['max']
     
-    min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
-
-    actual_min_amount = max(min_exchange_amount, FORCED_AMOUNT_STEP_SIZE)
-
-    target_notional = max(notional, actual_min_amount * price)
-    target_notional = min(target_notional, max_notional_exchange)
-
-    contracts_raw = target_notional / price
-
-    contracts_to_open = round(contracts_raw / FORCED_AMOUNT_STEP_SIZE) * FORCED_AMOUNT_STEP_SIZE
-    contracts_to_open = float(f"{contracts_to_open:.10f}")
-
-    if contracts_to_open < actual_min_amount:
-        contracts_to_open = actual_min_amount
-        print(f"💡 DEBUG: Contracts too low after step size, adjusted to actual_min_amount: {contracts_to_open:.4f}")
-
-    actual_notional_after_precision = contracts_to_open * price
-    required_margin = actual_notional_after_precision / leverage
-
-    if available_usdt < required_margin + MARGIN_BUFFER:
-        print(f"❌ Margin not sufficient after precision adjustment. Available: {available_usdt:.2f}, Required: {required_margin:.2f} (Est Cost) + {MARGIN_BUFFER} (Buffer) = {required_margin + MARGIN_BUFFER:.2f} USDT.")
-        return (0, 0)
-        
-    print(f"💡 DEBUG: Available USDT: {available_usdt:.2f}")
-    print(f"💡 DEBUG: Desired Available for Margin (after buffer): {desired_available_for_margin:.2f}")
-    print(f"💡 DEBUG: Desired Notional from margin (after buffer): {notional:.2f}")
-    print(f"💡 DEBUG: Min Exchange Notional (limits.cost.min): {min_notional_exchange:.2f}")
-    print(f"💡 DEBUG: Max Exchange Notional (limits.cost.max): {max_notional_exchange:.2f}")
-    print(f"💡 DEBUG: Actual Minimum Amount (based on CCXT or FORCED_AMOUNT_STEP_SIZE): {actual_min_amount:.4f}")
-    print(f"💡 DEBUG: Target Notional (after limits): {target_notional:.2f}")
-    print(f"💡 DEBUG: Raw contracts: {contracts_raw:.4f}")
-    print(f"💡 DEBUG: Contracts after step size adjustment (FORCED): {contracts_to_open:.4f}")
-    print(f"💡 DEBUG: Actual Notional (after step size): {actual_notional_after_precision:.2f}")
-    print(f"💡 DEBUG: Calculated Required Margin (Estimated Cost): {required_margin:.2f} USDT")
-
-    return (contracts_to_open, required_margin)
-
-
-# ------------------------------------------------------------------------------
-# 🔍 Check if a Short position already exists
-# ------------------------------------------------------------------------------
-def get_open_position():
+    # Trading parameters
+    self.symbol = 'BTC/USDT:USDT'
+    self.initial_balance = 153  # USDT
+    self.position_size_percent = 0.8  # 80% ของทุน
+    self.leverage = 30
+    self.tp_points = 200  # Take profit +200 USDT
+    self.sl_points = 400  # Stop loss -400 USDT
+    
+def setup_leverage(self):
+    """ตั้งค่า leverage"""
     try:
-        positions = exchange.fetch_positions([SYMBOL])
-        for pos in positions:
-            if pos['symbol'] == SYMBOL and pos['contracts'] > 0 and pos['side'] == 'short':
-                return pos
-        return None
-    except ccxt.NetworkError as e:
-        print(f"Network error fetching positions: {e}")
-        return None
-    except ccxt.ExchangeError as e:
-        print(f"Exchange error fetching positions: {e}")
-        return None
+        result = self.exchange.set_leverage(self.leverage, self.symbol)
+        print(f"Leverage set to {self.leverage}x: {result}")
+        return True
     except Exception as e:
-        print(f"An unexpected error occurred while fetching positions: {e}")
+        print(f"Error setting leverage: {e}")
+        return False
+
+def get_current_price(self):
+    """ดึงราคาปัจจุบันของ BTC/USDT"""
+    try:
+        ticker = self.exchange.fetch_ticker(self.symbol)
+        return ticker['last']
+    except Exception as e:
+        print(f"Error fetching price: {e}")
         return None
 
-# ------------------------------------------------------------------------------
-# 📉 Open Short Market Order + Set TP then SL
-# ------------------------------------------------------------------------------
-def open_short_order():
+def calculate_position_size(self, price):
+    """คำนวณขนาดของ position"""
     try:
-        ticker = exchange.fetch_ticker(SYMBOL)
-        current_price = ticker['last']
-        print(f"\n📊 Current Price of {SYMBOL}: {current_price:.2f} USDT")
+        # ใช้ 80% ของทุนกับ leverage 30x
+        position_value = self.initial_balance * self.position_size_percent * self.leverage
+        quantity = position_value / price
+        return quantity
+    except Exception as e:
+        print(f"Error calculating position size: {e}")
+        return None
 
-        balance = exchange.fetch_balance({'type': 'swap'})
-        available_usdt = float(balance.get('total', {}).get('USDT', 0))
-        print(f"💰 Available Margin (OKX): {available_usdt:.2f} USDT")
-
-        existing_position = get_open_position()
-        if existing_position:
-            print(f"⚠️ An open short position already exists for {SYMBOL} (size: {existing_position['contracts']}). Skipping new order.")
-            return
-
-        order_amount, estimated_used_margin = calculate_amount_from_notional( # ✅ เรียกใช้ฟังก์ชันที่ย้ายมาด้านบน
-            available_usdt, current_price, LEVERAGE, TARGET_NOTIONAL_USDT
-        )
-
-        if float(order_amount) == 0:
-            print("❌ Cannot open order as calculated amount is zero or insufficient after all checks.")
-            return
-
-        print(f"📈 Estimated Margin for Order (Recalculated): {estimated_used_margin:.2f} USDT")
-        decimal_places = int(round(-math.log10(FORCED_AMOUNT_STEP_SIZE))) if FORCED_AMOUNT_STEP_SIZE < 1 else 0
-        print(f"🔢 Opening quantity: {order_amount:.{decimal_places}f} contracts") 
-
-        tp_price = round(current_price - TP_DISTANCE, 1)
-        sl_price = round(current_price + SL_DISTANCE, 1)
-        print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
-
-        # --- ขั้นตอนที่ 1: เปิด Market Short Order โดยไม่มี TP/SL ---
-        print(f"⏳ Placing market SELL order for {order_amount:.{decimal_places}f} contracts of {SYMBOL}...")
-        order = exchange.create_market_sell_order(
-            symbol=SYMBOL,
-            amount=float(order_amount),
+def open_long_position(self):
+    """เปิด Long position"""
+    try:
+        current_price = self.get_current_price()
+        if not current_price:
+            return False
+        
+        quantity = self.calculate_position_size(current_price)
+        if not quantity:
+            return False
+        
+        # เปิด Long position
+        order = self.exchange.create_market_buy_order(
+            symbol=self.symbol,
+            amount=quantity,
             params={
-                "tdMode": "cross",
-                "reduceOnly": False,
+                'tdMode': 'cross',  # Cross margin
+                'side': 'buy',
+                'posSide': 'long'
             }
         )
-        print(f"✅ Market SELL order placed: ID → {order['id']}")
-        time.sleep(2) # รอ 2 วินาที
-
-        # --- ขั้นตอนที่ 2: ตั้ง TP Order (Limit Order) ---
-        print(f"⏳ Setting Take Profit order at {tp_price}...")
-        try:
-            tp_order = exchange.create_order(
-                symbol=SYMBOL,
-                type='limit',
-                side='buy',
-                amount=float(order_amount),
-                price=tp_price,
-                params={
-                    "tdMode": "cross",
-                    "posSide": "short",
-                    "reduceOnly": True,
-                }
-            )
-            print(f"✅ Take Profit order placed: ID → {tp_order['id']}")
-        except ccxt.BaseError as e:
-            print(f"❌ Failed to set Take Profit order: {str(e)}")
-
-        # --- ขั้นตอนที่ 3: ตั้ง SL Order (Stop Market Order) ---
-        print(f"⏳ Setting Stop Loss order at {sl_price}...")
-        try:
-            sl_order = exchange.create_order(
-                symbol=SYMBOL,
-                type='stop_market',
-                side='buy',
-                amount=float(order_amount),
-                price=None,
-                params={
-                    "tdMode": "cross",
-                    "posSide": "short",
-                    "reduceOnly": True,
-                    "triggerPx": str(sl_price),
-                    "ordPx": "-1"
-                }
-            )
-            print(f"✅ Stop Loss order placed: ID → {sl_order['id']}")
-        except ccxt.BaseError as e:
-            print(f"❌ Failed to set Stop Loss order: {str(e)}")
-
-    except ccxt.NetworkError as e:
-        print(f"❌ Network error during order placement: {e}")
-    except ccxt.ExchangeError as e:
-        print(f"❌ Exchange error during order placement: {e}")
-        print(f"Error details: {e}")
+        
+        print(f"Long position opened: {order}")
+        print(f"Entry price: {current_price}")
+        print(f"Quantity: {quantity}")
+        
+        # ตั้ง TP/SL
+        self.set_tp_sl(current_price, quantity)
+        
+        return True
+        
     except Exception as e:
-        print(f"❌ An unexpected error occurred: {e}")
+        print(f"Error opening long position: {e}")
+        return False
 
-# ------------------------------------------------------------------------------
-# 🚀 Start Bot
-# ------------------------------------------------------------------------------
-if __name__ == "__main__":
-    print("\n🚀 Starting the trading bot...\n")
-    open_short_order()
+def set_tp_sl(self, entry_price, quantity):
+    """ตั้ง Take Profit และ Stop Loss"""
+    try:
+        # คำนวณราคา TP และ SL
+        tp_price = entry_price + self.tp_points
+        sl_price = entry_price - self.sl_points
+        
+        # Take Profit Order
+        tp_order = self.exchange.create_order(
+            symbol=self.symbol,
+            type='limit',
+            side='sell',
+            amount=quantity,
+            price=tp_price,
+            params={
+                'tdMode': 'cross',
+                'posSide': 'long',
+                'ordType': 'conditional',
+                'triggerPx': tp_price,
+                'orderPx': tp_price
+            }
+        )
+        
+        # Stop Loss Order
+        sl_order = self.exchange.create_order(
+            symbol=self.symbol,
+            type='market',
+            side='sell',
+            amount=quantity,
+            params={
+                'tdMode': 'cross',
+                'posSide': 'long',
+                'ordType': 'conditional',
+                'triggerPx': sl_price,
+                'orderPx': '-1'  # Market order
+            }
+        )
+        
+        print(f"TP set at: {tp_price}")
+        print(f"SL set at: {sl_price}")
+        print(f"TP Order: {tp_order}")
+        print(f"SL Order: {sl_order}")
+        
+    except Exception as e:
+        print(f"Error setting TP/SL: {e}")
+
+def get_account_balance(self):
+    """ดูยอดเงินในบัญชี"""
+    try:
+        balance = self.exchange.fetch_balance()
+        return balance['USDT']['free']
+    except Exception as e:
+        print(f"Error fetching balance: {e}")
+        return None
+
+def get_positions(self):
+    """ดูตำแหน่งปัจจุบัน"""
+    try:
+        positions = self.exchange.fetch_positions([self.symbol])
+        return positions
+    except Exception as e:
+        print(f"Error fetching positions: {e}")
+        return None
+
+def run_bot(self):
+    """เริ่มรันบอท"""
+    print("=" * 50)
+    print("OKX Trading Bot Starting...")
+    print(f"Time: {datetime.now()}")
+    print("=" * 50)
+    
+    # ตรวจสอบการเชื่อมต่อ
+    try:
+        markets = self.exchange.load_markets()
+        print("✓ Connected to OKX successfully")
+    except Exception as e:
+        print(f"✗ Connection failed: {e}")
+        return
+    
+    # ดูยอดเงินปัจจุบัน
+    balance = self.get_account_balance()
+    if balance:
+        print(f"Current balance: {balance} USDT")
+    
+    # ตั้งค่า leverage
+    if not self.setup_leverage():
+        print("Failed to set leverage")
+        return
+    
+    # ดูราคาปัจจุบัน
+    current_price = self.get_current_price()
+    if current_price:
+        print(f"Current BTC price: {current_price}")
+    
+    # เปิด Long position
+    if self.open_long_position():
+        print("✓ Long position opened successfully")
+    else:
+        print("✗ Failed to open long position")
+        return
+    
+    # Monitor position
+    print("\nBot is now monitoring the position...")
+    while True:
+        try:
+            positions = self.get_positions()
+            if positions:
+                for pos in positions:
+                    if pos['size'] > 0:
+                        print(f"Position: {pos['side']} {pos['size']} BTC")
+                        print(f"Entry Price: {pos['entryPrice']}")
+                        print(f"Mark Price: {pos['markPrice']}")
+                        print(f"PnL: {pos['unrealizedPnl']} USDT")
+                    else:
+                        print("No active positions")
+                        break
+            
+            time.sleep(60)  # Check every minute
+            
+        except KeyboardInterrupt:
+            print("\nBot stopped by user")
+            break
+        except Exception as e:
+            print(f"Error in monitoring: {e}")
+            time.sleep(60)
+```
+
+if **name** == “**main**”:
+bot = OKXTradingBot()
+bot.run_bot()
