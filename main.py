@@ -14,7 +14,7 @@ PASSWORD = os.getenv("RAILWAY_PASSWORD", "your_password_here")
 SYMBOL = 'BTC/USDT:USDT'
 TP_DISTANCE = 100
 SL_DISTANCE = 400
-LEVERAGE = 30
+LEVERAGE = 25
 MARGIN_BUFFER = 2  # เผื่อค่าธรรมเนียม
 
 # ------------------------------------------------------------------------------
