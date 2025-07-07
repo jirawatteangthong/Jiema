@@ -21,12 +21,12 @@ SYMBOL = 'ETH/USDT'
 TP_DISTANCE = 30
 SL_DISTANCE = 50
 LEVERAGE = 30
-MARGIN_BUFFER = 5 # กลับมาใช้ 5 USDT เพราะเราจะจำกัด Notional Value โดยตรง
-# ✅ สิ่งที่ต้องปรับ: กำหนด Notional Value เป้าหมายที่ OKX ยอมรับ
-# จากที่คุณทดลองเปิดได้ที่ 43.5 USDT (เมื่อลาก slider 1%)
-TARGET_NOTIONAL_USDT = 43.5 # ✅ กำหนด Notional Value ที่จะเปิด
-# FORCED_AMOUNT_PRECISION: เราจะให้ CCXT จัดการ precision ด้วยตัวเอง (amount_to_precision)
-# เนื่องจากเราจะกำหนด Notional Value โดยตรง
+MARGIN_BUFFER = 15
+TARGET_NOTIONAL_USDT = 43.5 # Notional value ที่ทดลองเปิดได้ด้วยมือ
+# ✅ สิ่งที่ต้องเพิ่ม: กำหนด Step Size ของ Amount ด้วยตัวเอง
+# เพราะ OKX UI บอกว่าพิมพ์ได้แค่ 0.01 (พหุคูณของ 0.01)
+FORCED_AMOUNT_STEP_SIZE = 0.01 # ✅ กำหนดให้ปัดเป็นพหุคูณของ 0.01
+
 
 # ------------------------------------------------------------------------------
 # 🔌 Connect to OKX Exchange (Futures, Cross Margin)
@@ -62,7 +62,6 @@ except Exception as e:
 # ------------------------------------------------------------------------------
 # 🔢 Calculate number of contracts based on TARGET_NOTIONAL_USDT
 # ------------------------------------------------------------------------------
-# ✅ ฟังก์ชันใหม่เพื่อคำนวณ Amount และ Margin จาก Notional Value ที่กำหนด
 def calculate_amount_from_notional(available_usdt: float, price: float, leverage: int, target_notional: float) -> tuple[float, float]:
     if price <= 0 or leverage <= 0 or target_notional <= 0:
         print("Error: Price, leverage, and target_notional must be positive.")
@@ -73,34 +72,69 @@ def calculate_amount_from_notional(available_usdt: float, price: float, leverage
         print(f"❌ Could not fetch market info for {SYMBOL} in calculate_amount_from_notional.")
         return (0, 0)
 
-    # 1. คำนวณ contracts จาก target_notional
+    print(f"💡 DEBUG: Market Info Precision (from CCXT): {market_info.get('precision', {}).get('amount')}")
+    print(f"💡 DEBUG: Market Info Limits Amount (from CCXT): {market_info.get('limits', {}).get('amount')}")
+    print(f"💡 DEBUG: Market Info Limits Cost (from CCXT): {market_info.get('limits', {}).get('cost')}")
+
+
+    desired_available_for_margin = available_usdt * 0.80 - MARGIN_BUFFER
+    if desired_available_for_margin <= 0:
+        print(f"❌ Desired available for margin is too low after buffer: {desired_available_for_margin:.2f} USDT.")
+        return (0, 0)
+
+    notional = desired_available_for_margin * leverage
+
+    min_notional_exchange = 0
+    max_notional_exchange = float('inf')
+
+    if 'limits' in market_info and 'cost' in market_info['limits']:
+        cost_limits = market_info['limits']['cost']
+        if 'min' in cost_limits and cost_limits['min'] is not None:
+            min_notional_exchange = cost_limits['min']
+        if 'max' in cost_limits and cost_limits['max'] is not None:
+            max_notional_exchange = cost_limits['max']
+    
+    # ดึงค่า min amount ที่ Exchange กำหนดจาก market_info
+    min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
+
+    # ✅ ใช้ FORCED_AMOUNT_STEP_SIZE เป็นขั้นต่ำของ amount แทน min_exchange_amount ที่ได้จาก market_info ถ้ามันใหญ่กว่า
+    # เพื่อให้แน่ใจว่าเราไม่ส่งจำนวนที่น้อยกว่า 0.01
+    actual_min_amount = max(min_exchange_amount, FORCED_AMOUNT_STEP_SIZE)
+
+    target_notional = max(notional, actual_min_amount * price) # ✅ target_notional ต้องไม่น้อยกว่ามูลค่า Notional ของ actual_min_amount
+    target_notional = min(target_notional, max_notional_exchange)
+
     contracts_raw = target_notional / price
 
-    # 2. ใช้ exchange.amount_to_precision เพื่อปัดเศษให้ถูกต้องตาม Exchange
-    # CCXT ควรจะใช้ precision.amount หรือ amount.step ที่ถูกต้องจาก market_info
-    contracts_to_open = exchange.amount_to_precision(SYMBOL, contracts_raw)
-    contracts_to_open = float(contracts_to_open) # Ensure it's float
+    # ✅ สิ่งที่ต้องแก้: ปัดเศษให้เป็นพหุคูณของ FORCED_AMOUNT_STEP_SIZE
+    # โดยการหารด้วย step size, ปัดขึ้น/ลง, แล้วคูณกลับ
+    contracts_to_open = round(contracts_raw / FORCED_AMOUNT_STEP_SIZE) * FORCED_AMOUNT_STEP_SIZE
+    contracts_to_open = float(f"{contracts_to_open:.10f}") # ปัดให้แม่นยำเพื่อเลี่ยง floating point issues
 
-    # 3. คำนวณ Margin ที่ต้องการจริงๆ จาก contracts_to_open ที่ปัดเศษแล้ว
+    # ตรวจสอบว่าจำนวนสัญญาที่ปัดแล้วยังถึงขั้นต่ำที่แท้จริงหรือไม่
+    if contracts_to_open < actual_min_amount:
+        # ถ้าคำนวณแล้วได้น้อยกว่า actual_min_amount ให้ใช้ actual_min_amount เลย
+        contracts_to_open = actual_min_amount
+        print(f"💡 DEBUG: Contracts too low after step size, adjusted to actual_min_amount: {contracts_to_open:.4f}")
+
     actual_notional_after_precision = contracts_to_open * price
     required_margin = actual_notional_after_precision / leverage
 
-    # 4. ตรวจสอบว่ามี Margin เพียงพอหรือไม่
     if available_usdt < required_margin + MARGIN_BUFFER:
-        print(f"❌ Margin not sufficient for target Notional. Available: {available_usdt:.2f}, Required: {required_margin:.2f} (Est Cost) + {MARGIN_BUFFER} (Buffer) = {required_margin + MARGIN_BUFFER:.2f} USDT.")
-        return (0, 0)
-
-    # 5. ตรวจสอบขั้นต่ำของ amount ที่ Exchange กำหนด
-    min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
-    if contracts_to_open < min_exchange_amount:
-        print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {min_exchange_amount:.4f}. Cannot open.")
+        print(f"❌ Margin not sufficient after precision adjustment. Available: {available_usdt:.2f}, Required: {required_margin:.2f} (Est Cost) + {MARGIN_BUFFER} (Buffer) = {required_margin + MARGIN_BUFFER:.2f} USDT.")
         return (0, 0)
         
-    print(f"💡 DEBUG (calculate_amount_from_notional): Target Notional: {target_notional:.2f}")
-    print(f"💡 DEBUG (calculate_amount_from_notional): Raw contracts: {contracts_raw:.4f}")
-    print(f"💡 DEBUG (calculate_amount_from_notional): Contracts after precision: {contracts_to_open:.4f}")
-    print(f"💡 DEBUG (calculate_amount_from_notional): Actual Notional after precision: {actual_notional_after_precision:.2f}")
-    print(f"💡 DEBUG (calculate_amount_from_notional): Required Margin: {required_margin:.2f} USDT")
+    print(f"💡 DEBUG: Available USDT: {available_usdt:.2f}")
+    print(f"💡 DEBUG: Desired Available for Margin (after buffer): {desired_available_for_margin:.2f}")
+    print(f"💡 DEBUG: Desired Notional from margin (after buffer): {notional:.2f}")
+    print(f"💡 DEBUG: Min Exchange Notional (limits.cost.min): {min_notional_exchange:.2f}")
+    print(f"💡 DEBUG: Max Exchange Notional (limits.cost.max): {max_notional_exchange:.2f}")
+    print(f"💡 DEBUG: Actual Minimum Amount (based on CCXT or FORCED_AMOUNT_STEP_SIZE): {actual_min_amount:.4f}")
+    print(f"💡 DEBUG: Target Notional (after limits): {target_notional:.2f}")
+    print(f"💡 DEBUG: Raw contracts: {contracts_raw:.4f}")
+    print(f"💡 DEBUG: Contracts after step size adjustment (FORCED): {contracts_to_open:.4f}") # ✅ แก้ print format
+    print(f"💡 DEBUG: Actual Notional (after step size): {actual_notional_after_precision:.2f}")
+    print(f"💡 DEBUG: Calculated Required Margin (Estimated Cost): {required_margin:.2f} USDT")
 
     return (contracts_to_open, required_margin)
 
@@ -143,26 +177,24 @@ def open_short_order():
             print(f"⚠️ An open short position already exists for {SYMBOL} (size: {existing_position['contracts']}). Skipping new order.")
             return
 
-        # ✅ เรียกใช้ฟังก์ชันใหม่ที่กำหนด Notional Value โดยตรง
-        order_amount, estimated_used_margin = calculate_amount_from_notional(
-            available_usdt, current_price, LEVERAGE, TARGET_NOTIONAL_USDT
-        )
+        order_amount, estimated_used_margin = calculate_order_amount_and_margin(available_usdt, current_price, LEVERAGE, TARGET_NOTIONAL_USDT)
 
         if float(order_amount) == 0:
             print("❌ Cannot open order as calculated amount is zero or insufficient after all checks.")
             return
 
         print(f"📈 Estimated Margin for Order (Recalculated): {estimated_used_margin:.2f} USDT")
-        # ✅ แสดงจำนวนสัญญาในรูปแบบที่เหมาะสม (ไม่ต้องบังคับทศนิยม 2 ตำแหน่งตายตัว)
-        # ให้ CCXT amount_to_precision จัดการเอง
-        print(f"🔢 Opening quantity: {order_amount} contracts") 
+        # ✅ แสดงจำนวนสัญญาในรูปแบบที่เหมาะสมตาม FORCED_AMOUNT_STEP_SIZE
+        # ต้องคำนวณจำนวนทศนิยมจาก FORCED_AMOUNT_STEP_SIZE
+        decimal_places = int(round(-math.log10(FORCED_AMOUNT_STEP_SIZE))) if FORCED_AMOUNT_STEP_SIZE < 1 else 0
+        print(f"🔢 Opening quantity: {order_amount:.{decimal_places}f} contracts") 
 
         tp_price = round(current_price - TP_DISTANCE, 1)
         sl_price = round(current_price + SL_DISTANCE, 1)
         print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
 
         # --- ขั้นตอนที่ 1: เปิด Market Short Order โดยไม่มี TP/SL ---
-        print(f"⏳ Placing market SELL order for {order_amount} contracts of {SYMBOL}...")
+        print(f"⏳ Placing market SELL order for {order_amount:.{decimal_places}f} contracts of {SYMBOL}...") # ✅ แก้ไข format string
         order = exchange.create_market_sell_order(
             symbol=SYMBOL,
             amount=float(order_amount),
