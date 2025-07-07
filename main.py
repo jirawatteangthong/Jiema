@@ -21,9 +21,9 @@ SYMBOL = 'ETH/USDT'
 TP_DISTANCE = 30
 SL_DISTANCE = 50
 LEVERAGE = 30
-MARGIN_BUFFER = 5 # เพิ่ม Margin Buffer เป็น 5 USDT เพื่อเผื่อมากขึ้น
-# MIN_NOTIONAL_VALUE_USDT = 20 # ไม่จำเป็นต้องใช้แล้ว เนื่องจากเราจะคำนวณจาก Max Notional ที่เราทำได้จริง
-CONTRACT_SIZE_UNIT = 0.001 # ETH contracts are usually in 0.001 or 0.01 units. Check OKX's minimum trade unit for ETH/USDT.
+MARGIN_BUFFER = 5
+MIN_NOTIONAL_VALUE_USDT = 20
+CONTRACT_SIZE_UNIT = 0.001
 
 # ------------------------------------------------------------------------------
 # 🔌 Connect to OKX Exchange (Futures, Cross Margin)
@@ -59,35 +59,42 @@ except Exception as e:
 # ------------------------------------------------------------------------------
 # 🔢 Calculate number of contracts based on 80% of balance
 # ------------------------------------------------------------------------------
-# ✅ เปลี่ยนชื่อฟังก์ชันให้สอดคล้องกับสิ่งที่มันคำนวณจริงๆ
 def calculate_order_amount_and_margin(available_usdt: float, price: float, leverage: int) -> tuple[float, float]:
     if price <= 0 or leverage <= 0:
         print("Error: Price and leverage must be positive.")
-        return (0, 0) # Return 0 amount and 0 required margin
+        return (0, 0)
 
     market_info = exchange.market(SYMBOL)
     if not market_info:
         print(f"❌ Could not fetch market info for {SYMBOL} in calculate_order_amount_and_margin.")
         return (0, 0)
 
-    # ✅ คำนวณ Notional Value สูงสุดที่เราสามารถเปิดได้
-    # จาก Max buy Cost 113.74 USDT ในรูป
-    # ซึ่งแสดงว่าไม่ใช่ 80% ของ Available Margin โดยตรง
-    # แต่เป็น Max Notional ที่คำนวณจาก Available Margin / Leverage
-    # และอาจถูกจำกัดด้วย max amount/notional ของ Exchange ด้วย
+    desired_margin = available_usdt * 0.80 - MARGIN_BUFFER
+    if desired_margin <= 0: # ตรวจสอบว่าหลังจากหัก buffer แล้วยังมี margin เหลือ
+        print(f"❌ Available margin too low after buffer: {available_usdt:.2f} - {MARGIN_BUFFER} = {desired_margin:.2f}")
+        return (0, 0)
+
+    notional = desired_margin * leverage
+
+    # ✅ สิ่งที่ต้องแก้: ปรับปรุงการเข้าถึง limits['cost']['min'] และ limits['cost']['max']
+    # ให้ปลอดภัยยิ่งขึ้นโดยใช้ .get() และตรวจสอบค่าก่อนใช้งาน
+    min_notional_exchange = 0
+    max_notional_exchange = float('inf')
+
+    # ตรวจสอบว่า 'limits' และ 'cost' มีอยู่จริงก่อนเข้าถึง
+    if 'limits' in market_info and 'cost' in market_info['limits']:
+        cost_limits = market_info['limits']['cost']
+        if 'min' in cost_limits and cost_limits['min'] is not None:
+            min_notional_exchange = cost_limits['min']
+        if 'max' in cost_limits and cost_limits['max'] is not None:
+            max_notional_exchange = cost_limits['max']
     
-    # 1. Notional value based on 80% of available margin and leverage
-    desired_notional_from_margin = (available_usdt * 0.80 - MARGIN_BUFFER) * leverage 
-    # หัก buffer ก่อนคูณ leverage เพื่อให้ margin ที่เหลือพอแน่ๆ
+    # ดึงค่า min amount ที่ Exchange กำหนด
+    min_exchange_amount = market_info['limits']['amount']['min'] if 'amount' in market_info['limits'] and 'min' in market_info['limits']['amount'] and market_info['limits']['amount']['min'] is not None else 0
 
-    # 2. Get min/max notional limits from exchange info (if available)
-    min_notional_exchange = market_info['limits']['cost']['min'] if 'cost' in market_info['limits'] and 'min' in market_info['limits']['cost'] else 0
-    max_notional_exchange = market_info['limits']['cost']['max'] if 'cost' in market_info['limits'] and 'max' in market_info['limits']['cost'] else float('inf')
-
-    # 3. Choose the final notional to target (max of min and limited by max)
-    #    We target the 'desired_notional_from_margin' but ensure it's at least min_notional_exchange
-    target_notional = max(desired_notional_from_margin, min_notional_exchange)
-    target_notional = min(target_notional, max_notional_exchange) # Ensure it doesn't exceed max
+    # เลือก Notional value เป้าหมาย
+    target_notional = max(notional, min_notional_exchange)
+    target_notional = min(target_notional, max_notional_exchange)
 
     # Convert notional to contracts (amount)
     contracts_raw = target_notional / price
@@ -96,24 +103,29 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
     contracts_precision = exchange.amount_to_precision(SYMBOL, contracts_raw)
     contracts_to_open = float(contracts_precision)
 
-    # Re-calculate required margin based on the final, precise contracts_to_open
-    # This is crucial for matching OKX's 'Cost'
+    # Recalculate required margin based on the final, precise contracts_to_open
     actual_notional_after_precision = contracts_to_open * price
     required_margin = actual_notional_after_precision / leverage
 
     # ✅ Final check against available margin
     if available_usdt < required_margin + MARGIN_BUFFER:
         print(f"❌ Margin not sufficient after precision adjustment. Available: {available_usdt:.2f}, Required: {required_margin:.2f} + {MARGIN_BUFFER} USDT. Final Contracts: {contracts_to_open:.4f}.")
-        return (0, 0) # Cannot open if insufficient after all checks
-
-    # ✅ ตรวจสอบขั้นต่ำของ amount ที่ Exchange กำหนดอีกครั้ง
-    if contracts_to_open < market_info['limits']['amount']['min']:
-        print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {market_info['limits']['amount']['min']}.")
         return (0, 0)
-
+    
+    # ✅ ตรวจสอบขั้นต่ำของ amount ที่ Exchange กำหนดอีกครั้ง
+    if contracts_to_open < min_exchange_amount:
+        print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {min_exchange_amount:.4f}.")
+        # ถ้าจำนวนสัญญาที่คำนวณได้ยังต่ำกว่าขั้นต่ำของ Exchange
+        # ลองใช้ขั้นต่ำของ Exchange ถ้าเงินพอ
+        min_amount_required_margin = (min_exchange_amount * price) / leverage
+        if available_usdt >= min_amount_required_margin + MARGIN_BUFFER:
+            print(f"✅ Sufficient funds to open minimum exchange amount: {min_exchange_amount} contracts.")
+            return (min_exchange_amount, min_amount_required_margin) # ใช้ขั้นต่ำของ Exchange
+        return (0, 0) # ไม่พอจริงๆ
+        
 
     print(f"💡 DEBUG: Available USDT: {available_usdt:.2f}")
-    print(f"💡 DEBUG: Desired Notional from margin (before buffer/limits): {desired_notional_from_margin:.2f}")
+    print(f"💡 DEBUG: Desired Notional from margin (after buffer): {notional:.2f}")
     print(f"💡 DEBUG: Min Exchange Notional (limits.cost.min): {min_notional_exchange:.2f}")
     print(f"💡 DEBUG: Max Exchange Notional (limits.cost.max): {max_notional_exchange:.2f}")
     print(f"💡 DEBUG: Target Notional (after limits): {target_notional:.2f}")
@@ -121,7 +133,7 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
     print(f"💡 DEBUG: Contracts after precision: {contracts_to_open:.4f}")
     print(f"💡 DEBUG: Actual Notional (after precision): {actual_notional_after_precision:.2f}")
     print(f"💡 DEBUG: Calculated Required Margin: {required_margin:.2f} USDT")
-
+    print(f"💡 DEBUG: Min Exchange Amount: {min_exchange_amount:.4f}")
 
     return (contracts_to_open, required_margin)
 
@@ -164,7 +176,6 @@ def open_short_order():
             print(f"⚠️ An open short position already exists for {SYMBOL} (size: {existing_position['contracts']}). Skipping new order.")
             return
 
-        # ✅ เรียกใช้ฟังก์ชันที่ส่งค่ากลับมา 2 ค่า
         order_amount, estimated_used_margin = calculate_order_amount_and_margin(available_usdt, current_price, LEVERAGE)
 
         if float(order_amount) == 0:
