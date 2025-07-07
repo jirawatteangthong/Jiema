@@ -21,8 +21,13 @@ SYMBOL = 'ETH/USDT'
 TP_DISTANCE = 30
 SL_DISTANCE = 50
 LEVERAGE = 30
-MARGIN_BUFFER = 15 # ลองเพิ่มเป็น 15 USDT
-MIN_NOTIONAL_VALUE_USDT = 20 # ยังคงไว้ที่ 20 USDT
+MARGIN_BUFFER = 15
+MIN_NOTIONAL_VALUE_USDT = 20
+
+# ✅ สิ่งที่ต้องเพิ่ม: กำหนด Precision ของ Amount ด้วยตัวเอง
+# เนื่องจาก OKX UI ให้พิมพ์ได้แค่ 0.71 (2 ตำแหน่ง)
+FORCED_AMOUNT_PRECISION = 2 # ✅ กำหนดให้ปัดเป็นทศนิยม 2 ตำแหน่ง
+
 
 # ------------------------------------------------------------------------------
 # 🔌 Connect to OKX Exchange (Futures, Cross Margin)
@@ -68,10 +73,9 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
         print(f"❌ Could not fetch market info for {SYMBOL} in calculate_order_amount_and_margin.")
         return (0, 0)
 
-    # ✅ เพิ่ม DEBUG print เพื่อดู Market Info (โดยเฉพาะ precision และ limits)
-    print(f"💡 DEBUG: Market Info Precision: {market_info.get('precision', {}).get('amount')}")
-    print(f"💡 DEBUG: Market Info Limits Amount: {market_info.get('limits', {}).get('amount')}")
-    print(f"💡 DEBUG: Market Info Limits Cost: {market_info.get('limits', {}).get('cost')}")
+    print(f"💡 DEBUG: Market Info Precision (from CCXT): {market_info.get('precision', {}).get('amount')}")
+    print(f"💡 DEBUG: Market Info Limits Amount (from CCXT): {market_info.get('limits', {}).get('amount')}")
+    print(f"💡 DEBUG: Market Info Limits Cost (from CCXT): {market_info.get('limits', {}).get('cost')}")
 
 
     desired_available_for_margin = available_usdt * 0.80 - MARGIN_BUFFER
@@ -98,24 +102,26 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
 
     contracts_raw = target_notional / price
 
-    # ✅ ใช้ amount_to_precision ที่ได้จาก market_info ที่โหลดมา
-    # ถ้าพิมพ์ได้แค่ 0.71 แสดงว่า precision.amount อาจจะเป็น 2
-    contracts_precision = exchange.amount_to_precision(SYMBOL, contracts_raw)
-    contracts_to_open = float(contracts_precision)
+    # ✅ ใช้ math.floor หรือ round เพื่อปัดเศษให้เป็นจำนวนทศนิยมที่เราต้องการ (จาก UI)
+    # เราจะใช้ round(x, FORCED_AMOUNT_PRECISION)
+    contracts_to_open = round(contracts_raw, FORCED_AMOUNT_PRECISION)
+
+    # ตรวจสอบว่าจำนวนสัญญาที่ปัดแล้วยังถึงขั้นต่ำของ Exchange หรือไม่
+    if contracts_to_open < min_exchange_amount:
+        print(f"❌ Calculated amount {contracts_to_open:.{FORCED_AMOUNT_PRECISION}f} (after forced precision) is less than exchange's minimum amount {min_exchange_amount:.4f}. Trying minimum allowed.")
+        # ลองใช้ min_exchange_amount แทน แต่ต้องปัดเศษ min_exchange_amount ให้ตรงกับ FORCED_AMOUNT_PRECISION ด้วย
+        min_exchange_amount_forced_precision = round(min_exchange_amount, FORCED_AMOUNT_PRECISION)
+        min_amount_required_margin = (min_exchange_amount_forced_precision * price) / leverage
+        if available_usdt >= min_amount_required_margin + MARGIN_BUFFER:
+            print(f"✅ Sufficient funds to open minimum exchange amount after forced precision: {min_exchange_amount_forced_precision} contracts. Using this amount.")
+            return (min_exchange_amount_forced_precision, min_amount_required_margin)
+        return (0, 0) # ไม่พอจริงๆ
 
     actual_notional_after_precision = contracts_to_open * price
     required_margin = actual_notional_after_precision / leverage
 
     if available_usdt < required_margin + MARGIN_BUFFER:
         print(f"❌ Margin not sufficient after precision adjustment. Available: {available_usdt:.2f}, Required: {required_margin:.2f} (Est Cost) + {MARGIN_BUFFER} (Buffer) = {required_margin + MARGIN_BUFFER:.2f} USDT.")
-        return (0, 0)
-    
-    if contracts_to_open < min_exchange_amount:
-        print(f"❌ Calculated amount {contracts_to_open:.4f} is less than exchange's minimum amount {min_exchange_amount:.4f}. Trying minimum allowed.")
-        min_amount_required_margin = (min_exchange_amount * price) / leverage
-        if available_usdt >= min_amount_required_margin + MARGIN_BUFFER:
-            print(f"✅ Sufficient funds to open minimum exchange amount: {min_exchange_amount} contracts. Using this amount.")
-            return (min_exchange_amount, min_amount_required_margin)
         return (0, 0)
         
 
@@ -126,10 +132,10 @@ def calculate_order_amount_and_margin(available_usdt: float, price: float, lever
     print(f"💡 DEBUG: Max Exchange Notional (limits.cost.max): {max_notional_exchange:.2f}")
     print(f"💡 DEBUG: Target Notional (after limits): {target_notional:.2f}")
     print(f"💡 DEBUG: Raw contracts: {contracts_raw:.4f}")
-    print(f"💡 DEBUG: Contracts after precision (from CCXT): {contracts_to_open:.4f}")
+    print(f"💡 DEBUG: Contracts after precision (FORCED to {FORCED_AMOUNT_PRECISION} decimal places): {contracts_to_open:.{FORCED_AMOUNT_PRECISION}f}") # ✅ แก้ print format
     print(f"💡 DEBUG: Actual Notional (after precision): {actual_notional_after_precision:.2f}")
     print(f"💡 DEBUG: Calculated Required Margin (Estimated Cost): {required_margin:.2f} USDT")
-    print(f"💡 DEBUG: Min Exchange Amount: {min_exchange_amount:.4f}")
+    print(f"💡 DEBUG: Min Exchange Amount (from CCXT): {min_exchange_amount:.4f}")
 
     return (contracts_to_open, required_margin)
 
@@ -179,14 +185,15 @@ def open_short_order():
             return
 
         print(f"📈 Estimated Margin for Order (Recalculated): {estimated_used_margin:.2f} USDT")
-        print(f"🔢 Opening quantity: {order_amount} contracts")
+        # ✅ แก้ไข format string เพื่อให้แสดงทศนิยมตาม FORCED_AMOUNT_PRECISION
+        print(f"🔢 Opening quantity: {order_amount:.{FORCED_AMOUNT_PRECISION}f} contracts") 
 
         tp_price = round(current_price - TP_DISTANCE, 1)
         sl_price = round(current_price + SL_DISTANCE, 1)
         print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
 
         # --- ขั้นตอนที่ 1: เปิด Market Short Order โดยไม่มี TP/SL ---
-        print(f"⏳ Placing market SELL order for {order_amount} contracts of {SYMBOL}...")
+        print(f"⏳ Placing market SELL order for {order_amount:.{FORCED_AMOUNT_PRECISION}f} contracts of {SYMBOL}...") # ✅ แก้ไข format string
         order = exchange.create_market_sell_order(
             symbol=SYMBOL,
             amount=float(order_amount),
