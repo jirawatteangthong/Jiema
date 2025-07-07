@@ -1,127 +1,110 @@
-# ==============================================================================
-# 1. IMPORTS & CONFIGURATION
-# ==============================================================================
 import ccxt
 import os
+import time
 
-API_KEY = os.getenv('RAILWAY_API_KEY', 'YOUR_API_KEY_HERE_FOR_LOCAL')
-SECRET = os.getenv('RAILWAY_SECRET', 'YOUR_SECRET_HERE_FOR_LOCAL')
-PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL')
+# ------------------------------------------------------------------------------
+# 🔐 โหลด API จาก Environment
+# ------------------------------------------------------------------------------
+API_KEY = os.getenv("RAILWAY_API_KEY", "put_your_api_key_here")
+SECRET = os.getenv("RAILWAY_SECRET", "put_your_secret_here")
+PASSWORD = os.getenv("RAILWAY_PASSWORD", "put_your_password_here")
 
-SYMBOL = "BTC/USDT:USDT"
+# ------------------------------------------------------------------------------
+# ⚙️ ตั้งค่าพื้นฐาน
+# ------------------------------------------------------------------------------
+SYMBOL = 'BTC/USDT:USDT'  # Futures
+TP_DISTANCE = 100          # TP +100$
+SL_DISTANCE = 400          # SL -400$
 LEVERAGE = 30
-TP_DISTANCE = 100
-SL_DISTANCE = 400
-SAFETY_BUFFER = 0.95  # ใช้ได้ 95% ของ available margin
-CONTRACT_VALUE = 100  # 1 contract = 100 USD
 
+# ------------------------------------------------------------------------------
+# 🔌 Connect OKX Futures
+# ------------------------------------------------------------------------------
 exchange = ccxt.okx({
     'apiKey': API_KEY,
     'secret': SECRET,
     'password': PASSWORD,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'swap',  # futures
-    }
+        'defaultType': 'swap',
+        'defaultMarket': 'linear',
+        'marginMode': 'cross',
+    },
 })
 
-# ==============================================================================
-# 2. FUNCTIONS
-# ==============================================================================
+# ------------------------------------------------------------------------------
+# 🔢 คำนวณจำนวนสัญญาแบบปลอดภัย (~90% ของ available margin)
+# ------------------------------------------------------------------------------
+def calculate_order_amount(available_usdt: float, btc_price: float, leverage: int) -> int:
+    safe_margin = available_usdt * 0.90
+    max_position_value = safe_margin * leverage
+    contracts = int(max_position_value / btc_price)
+    return contracts
 
-def set_leverage():
-    exchange.set_leverage(LEVERAGE, SYMBOL, params={'marginMode': 'cross'})
-
-def get_available_margin():
-    balance = exchange.fetch_balance({'type': 'swap'})
-    details = balance['info'].get('details', [])
-    for item in details:
-        if item['ccy'] == 'USDT':
-            return float(item.get('availBal', 0))
-    return 0
-
-def calculate_order_amount(avail_margin: float):
-    usable = avail_margin * SAFETY_BUFFER
-    max_position_value = usable * LEVERAGE
-    contracts = max_position_value / CONTRACT_VALUE
-    return round(contracts, 2)
-
-def check_existing_position():
-    positions = exchange.fetch_positions([SYMBOL], {'type': 'swap'})
-    for p in positions:
-        if p['symbol'] == SYMBOL and p['contracts'] > 0:
-            return p
+# ------------------------------------------------------------------------------
+# ✅ เช็กโพซิชันที่เปิดอยู่
+# ------------------------------------------------------------------------------
+def get_open_position():
+    positions = exchange.fetch_positions([SYMBOL])
+    for pos in positions:
+        if pos['symbol'] == SYMBOL and pos['contracts'] > 0 and pos['side'] == 'long':
+            return pos
     return None
 
+# ------------------------------------------------------------------------------
+# 🟩 เปิด Long Order + ตั้ง TP/SL
+# ------------------------------------------------------------------------------
 def open_long_order():
-    price = exchange.fetch_ticker(SYMBOL)['last']
-    avail_margin = get_available_margin()
-    amount = calculate_order_amount(avail_margin)
+    ticker = exchange.fetch_ticker(SYMBOL)
+    price = ticker['last']
+    balance = exchange.fetch_balance({'type': 'swap'})
+    available_usdt = float(balance['total']['USDT'])
 
     print(f"\n📊 ราคา BTC: {price:.2f} USDT")
-    print(f"💰 Available Margin (OKX): {avail_margin:.2f} USDT")
-    print(f"📈 ใช้หลัง buffer: {avail_margin * SAFETY_BUFFER:.2f} USDT")
-    print(f"🔢 เปิดจำนวน: {amount} สัญญา (ประมาณ {amount * CONTRACT_VALUE / LEVERAGE:.2f} USDT margin)")
+    print(f"💰 Available Margin (OKX): {available_usdt:.2f} USDT")
 
-    if amount < 1:
+    order_amount = calculate_order_amount(available_usdt, price, LEVERAGE)
+    if order_amount < 1:
         print("❌ Margin ไม่พอเปิดออเดอร์ขั้นต่ำ (ต้องได้อย่างน้อย 1 สัญญา)")
         return
 
-    # === Open Long Order ===
-    exchange.create_market_buy_order(
-        symbol=SYMBOL,
-        amount=amount,
-        params={
-            'marginMode': 'cross',
-            'reduceOnly': False
-        }
-    )
+    used_margin = order_amount * price / LEVERAGE
+    print(f"📈 ใช้หลัง buffer: {used_margin:.2f} USDT")
+    print(f"🔢 เปิดจำนวน: {order_amount} สัญญา")
 
-    tp_price = round(price + TP_DISTANCE, 2)
-    sl_price = round(price - SL_DISTANCE, 2)
+    # เช็กโพซิชันซ้ำ
+    if get_open_position():
+        print("⚠️ มีโพซิชันเปิดอยู่แล้ว (long) → ยกเลิกการเปิดซ้ำ")
+        return
+
+    # ตั้ง TP / SL
+    tp_price = round(price + TP_DISTANCE, 1)
+    sl_price = round(price - SL_DISTANCE, 1)
+
     print(f"🎯 TP: {tp_price} | 🛑 SL: {sl_price}")
 
-    # === Set TP ===
-    exchange.create_order(
-        symbol=SYMBOL,
-        type='take_profit_market',
-        side='sell',
-        amount=amount,
-        params={
-            'triggerPrice': tp_price,
-            'orderPx': '-1',
-            'marginMode': 'cross',
-            'reduceOnly': True
-        }
-    )
+    # เปิด Market Order พร้อม TP/SL
+    try:
+        order = exchange.create_market_buy_order(
+            symbol=SYMBOL,
+            amount=order_amount,
+            params={
+                "tdMode": "cross",
+                "posSide": "long",
+                "tpTriggerPx": str(tp_price),
+                "tpOrdPx": "-1",  # market
+                "slTriggerPx": str(sl_price),
+                "slOrdPx": "-1",  # market
+                "reduceOnly": False
+            }
+        )
+        print("✅ เปิด Long สำเร็จ:", order['id'])
 
-    # === Set SL ===
-    exchange.create_order(
-        symbol=SYMBOL,
-        type='stop_market',
-        side='sell',
-        amount=amount,
-        params={
-            'triggerPrice': sl_price,
-            'orderPx': '-1',
-            'marginMode': 'cross',
-            'reduceOnly': True
-        }
-    )
+    except ccxt.BaseError as e:
+        print("❌ เกิดข้อผิดพลาดตอนเปิดออเดอร์:", str(e))
 
-    print("✅ เปิดออเดอร์เรียบร้อย พร้อม TP/SL\n")
-
-# ==============================================================================
-# 3. MAIN
-# ==============================================================================
-
-if __name__ == '__main__':
-    print("🚀 เริ่มต้นการทำงาน...\n")
-    set_leverage()
-
-    position = check_existing_position()
-    if position:
-        print(f"⚠️ มีโพซิชันเปิดอยู่แล้ว ({position['side']}) จำนวน: {position['contracts']} สัญญา")
-        print("❌ ยกเลิกการเปิดออเดอร์ซ้ำ\n")
-    else:
-        open_long_order()
+# ------------------------------------------------------------------------------
+# 🚀 เริ่มทำงาน
+# ------------------------------------------------------------------------------
+print("\n🚀 เริ่มต้นการทำงาน...\n")
+open_long_order()
