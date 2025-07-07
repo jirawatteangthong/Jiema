@@ -111,8 +111,8 @@ def open_short_order():
         print(f"📈 Estimated Margin for Order: {estimated_used_margin:.2f} USDT")
         print(f"🔢 Opening quantity: {order_amount} contracts")
 
-        tp_price = round(current_price - TP_DISTANCE, 1) # สำหรับ Short, TP ต่ำกว่าราคาเข้า
-        sl_price = round(current_price + SL_DISTANCE, 1) # สำหรับ Short, SL สูงกว่าราคาเข้า
+        tp_price = round(current_price - TP_DISTANCE, 1)
+        sl_price = round(current_price + SL_DISTANCE, 1)
         print(f"🎯 Calculated TP: {tp_price} | 🛑 Calculated SL: {sl_price}")
 
         # --- ขั้นตอนที่ 1: เปิด Market Short Order โดยไม่มี TP/SL ---
@@ -122,51 +122,47 @@ def open_short_order():
             amount=order_amount,
             params={
                 "tdMode": "cross",
-                "posSide": "short",
+                # ✅ สำคัญ: ลบ "posSide": "short" ออกจากตรงนี้
                 "reduceOnly": False,
             }
         )
         print(f"✅ Market SELL order placed: ID → {order['id']}")
-        # IMPORTANT: Wait a bit for the order to be confirmed on the exchange
-        time.sleep(2) # รอ 2 วินาที เพื่อให้ OKX ประมวลผลคำสั่งแรก
+        time.sleep(2) # รอ 2 วินาที
 
         # --- ขั้นตอนที่ 2: ตั้ง TP Order (Limit Order) ---
         print(f"⏳ Setting Take Profit order at {tp_price}...")
         try:
             tp_order = exchange.create_order(
                 symbol=SYMBOL,
-                type='limit',      # TP เป็น Limit Order
-                side='buy',        # สำหรับ Short Position, ปิดด้วย Buy
-                amount=order_amount, # จำนวนเท่ากับขนาดโพซิชันที่เปิด
+                type='limit',
+                side='buy',
+                amount=order_amount,
                 price=tp_price,
                 params={
                     "tdMode": "cross",
-                    "posSide": "short",   # ระบุ posSide ของโพซิชันที่กำลังปิด
-                    "reduceOnly": True,   # สำคัญมาก: เพื่อให้คำสั่งนี้เป็นการปิดสถานะเท่านั้น
+                    "posSide": "short",   # คง posSide ไว้ที่นี่ (สำคัญสำหรับคำสั่งปิด)
+                    "reduceOnly": True,
                 }
             )
             print(f"✅ Take Profit order placed: ID → {tp_order['id']}")
         except ccxt.BaseError as e:
             print(f"❌ Failed to set Take Profit order: {str(e)}")
-            # If TP fails, you might want to cancel the main order or notify.
-            # For simplicity, we just print an error and continue to SL.
 
         # --- ขั้นตอนที่ 3: ตั้ง SL Order (Stop Market Order) ---
         print(f"⏳ Setting Stop Loss order at {sl_price}...")
         try:
-            # OKX specific parameters for Stop Market
             sl_order = exchange.create_order(
                 symbol=SYMBOL,
-                type='stop_market', # หรือ 'stop_loss_market' ถ้า 'stop_market' ไม่ทำงาน
-                side='buy',         # สำหรับ Short Position, ปิดด้วย Buy
+                type='stop_market',
+                side='buy',
                 amount=order_amount,
-                price=None,         # Market order ไม่ต้องระบุ price แต่ต้องมี trigger price
+                price=None,
                 params={
                     "tdMode": "cross",
-                    "posSide": "short",
+                    "posSide": "short",   # คง posSide ไว้ที่นี่ (สำคัญสำหรับคำสั่งปิด)
                     "reduceOnly": True,
-                    "triggerPx": str(sl_price), # ราคาที่จะ trigger stop loss
-                    "ordPx": "-1"               # -1 สำหรับ Market Order เมื่อ trigger
+                    "triggerPx": str(sl_price),
+                    "ordPx": "-1"
                 }
             )
             print(f"✅ Stop Loss order placed: ID → {sl_order['id']}")
@@ -178,6 +174,7 @@ def open_short_order():
     except ccxt.ExchangeError as e:
         print(f"❌ Exchange error during order placement: {e}")
         print("💡 General Exchange Error. Check OKX dashboard for more details or current market status.")
+        print("💡 The current error indicates 'Parameter posSide error' on the initial market order.")
     except Exception as e:
         print(f"❌ An unexpected error occurred: {e}")
 
