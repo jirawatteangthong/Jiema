@@ -4,85 +4,70 @@
 import ccxt
 import os
 
-# Load API key from environment variables
-API_KEY = os.getenv('RAILWAY_API_KEY', 'YOUR_API_KEY_HERE_FOR_LOCAL_TESTING')
-SECRET = os.getenv('RAILWAY_SECRET', 'YOUR_SECRET_HERE_FOR_LOCAL_TESTING')
-PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
+API_KEY = os.getenv('RAILWAY_API_KEY', 'YOUR_API_KEY_HERE_FOR_LOCAL')
+SECRET = os.getenv('RAILWAY_SECRET', 'YOUR_SECRET_HERE_FOR_LOCAL')
+PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL')
 
-# --- Settings ---
-SYMBOL = "BTC/USDT:USDT"        # OKX Futures symbol
-LEVERAGE = 30                   # Leverage used
-TP_DISTANCE = 100               # Take profit (+100 USD)
-SL_DISTANCE = 400               # Stop loss (-400 USD)
-TRADE_PERCENT = 0.8            # Use 80% of available balance
-SAFETY_BUFFER = 0.97           # Use only 97% of calculated funds to prevent margin error
+SYMBOL = "BTC/USDT:USDT"
+LEVERAGE = 30
+TP_DISTANCE = 100
+SL_DISTANCE = 400
+SAFETY_BUFFER = 0.95  # ใช้ได้ 95% ของ available margin
+CONTRACT_VALUE = 100  # 1 contract = 100 USD
 
-# --- Initialize OKX instance ---
 exchange = ccxt.okx({
     'apiKey': API_KEY,
     'secret': SECRET,
     'password': PASSWORD,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'swap',  # Futures/Perpetual
+        'defaultType': 'swap',  # futures
     }
 })
 
-
 # ==============================================================================
-# 2. UTILITY FUNCTIONS
+# 2. FUNCTIONS
 # ==============================================================================
 
 def set_leverage():
     exchange.set_leverage(LEVERAGE, SYMBOL, params={'marginMode': 'cross'})
 
+def get_available_margin():
+    balance = exchange.fetch_balance({'type': 'swap'})
+    details = balance['info'].get('details', [])
+    for item in details:
+        if item['ccy'] == 'USDT':
+            return float(item.get('availBal', 0))
+    return 0
 
-def get_cross_balance():
-    """ดึงยอด USDT ที่มีใน cross margin futures"""
-    balances = exchange.fetch_balance({'type': 'swap'})
-    return balances['total'].get('USDT', 0)
-
-
-def calculate_order_amount(balance: float) -> float:
-    available_margin = balance * 0.95  # กันไว้อีก 5% ป้องกัน margin error
-    contract_value = 100  # OKX BTC = 100 USD/contract
-    max_position_value = available_margin * LEVERAGE
-    amount = max_position_value / contract_value
-    return round(amount, 2)
-
+def calculate_order_amount(avail_margin: float):
+    usable = avail_margin * SAFETY_BUFFER
+    max_position_value = usable * LEVERAGE
+    contracts = max_position_value / CONTRACT_VALUE
+    return round(contracts, 2)
 
 def check_existing_position():
-    """เช็กว่ามีโพซิชันเปิดอยู่แล้วหรือไม่"""
     positions = exchange.fetch_positions([SYMBOL], {'type': 'swap'})
     for p in positions:
         if p['symbol'] == SYMBOL and p['contracts'] > 0:
             return p
     return None
 
-
-# ==============================================================================
-# 3. ORDER LOGIC
-# ==============================================================================
-
 def open_long_order():
-    # --- ข้อมูลพื้นฐาน ---
     price = exchange.fetch_ticker(SYMBOL)['last']
-    balance = get_cross_balance()
-    FIXED_CONTRACT_AMOUNT = 5  # หรือเริ่มที่ 5 ก็ได้
-    amount = FIXED_CONTRACT_AMOUNT
-    estimated_cost = amount * 100 / LEVERAGE
+    avail_margin = get_available_margin()
+    amount = calculate_order_amount(avail_margin)
 
-    print(f"\n📊 ราคา BTC ปัจจุบัน: {price:.2f} USDT")
-    print(f"💰 Balance: {balance:.2f} USDT")
-    print(f"📈 ใช้ทุนจริงหลัง buffer: {balance * TRADE_PERCENT * SAFETY_BUFFER:.2f} USDT")
-    print(f"🔢 เปิดจำนวน: {amount} สัญญา (ต้องใช้ margin ≈ {estimated_cost:.2f} USDT)")
+    print(f"\n📊 ราคา BTC: {price:.2f} USDT")
+    print(f"💰 Available Margin (OKX): {avail_margin:.2f} USDT")
+    print(f"📈 ใช้หลัง buffer: {avail_margin * SAFETY_BUFFER:.2f} USDT")
+    print(f"🔢 เปิดจำนวน: {amount} สัญญา (ประมาณ {amount * CONTRACT_VALUE / LEVERAGE:.2f} USDT margin)")
 
-    # --- เช็กว่า margin เพียงพอหรือไม่ ---
-    if balance < estimated_cost:
-        print(f"❌ Margin ไม่พอ! ต้องการอย่างน้อย {estimated_cost:.2f} USDT")
+    if amount < 1:
+        print("❌ Margin ไม่พอเปิดออเดอร์ขั้นต่ำ (ต้องได้อย่างน้อย 1 สัญญา)")
         return
 
-    # --- เปิด Long Market Order ---
+    # === Open Long Order ===
     exchange.create_market_buy_order(
         symbol=SYMBOL,
         amount=amount,
@@ -92,14 +77,11 @@ def open_long_order():
         }
     )
 
-    # --- ตั้ง TP/SL ---
-    entry_price = price
-    tp_price = round(entry_price + TP_DISTANCE, 2)
-    sl_price = round(entry_price - SL_DISTANCE, 2)
-
+    tp_price = round(price + TP_DISTANCE, 2)
+    sl_price = round(price - SL_DISTANCE, 2)
     print(f"🎯 TP: {tp_price} | 🛑 SL: {sl_price}")
 
-    # TP: Trigger Price + Market Execution
+    # === Set TP ===
     exchange.create_order(
         symbol=SYMBOL,
         type='take_profit_market',
@@ -107,13 +89,13 @@ def open_long_order():
         amount=amount,
         params={
             'triggerPrice': tp_price,
-            'orderPx': '-1',  # Market order
+            'orderPx': '-1',
             'marginMode': 'cross',
             'reduceOnly': True
         }
     )
 
-    # SL: Trigger Price + Market Execution
+    # === Set SL ===
     exchange.create_order(
         symbol=SYMBOL,
         type='stop_market',
@@ -121,22 +103,20 @@ def open_long_order():
         amount=amount,
         params={
             'triggerPrice': sl_price,
-            'orderPx': '-1',  # Market order
+            'orderPx': '-1',
             'marginMode': 'cross',
             'reduceOnly': True
         }
     )
 
-    print("✅ เปิดออเดอร์ Long + ตั้ง TP/SL เรียบร้อยแล้ว\n")
-
+    print("✅ เปิดออเดอร์เรียบร้อย พร้อม TP/SL\n")
 
 # ==============================================================================
-# 4. MAIN LOGIC
+# 3. MAIN
 # ==============================================================================
 
 if __name__ == '__main__':
     print("🚀 เริ่มต้นการทำงาน...\n")
-
     set_leverage()
 
     position = check_existing_position()
