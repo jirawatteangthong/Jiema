@@ -20,9 +20,9 @@ PASSWORD = os.getenv('RAILWAY_PASSWORD', 'YOUR_PASSWORD_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '1m'
+TIMEFRAME = '3m'
 LEVERAGE = 30
-TP_VALUE_POINTS = 120
+TP_VALUE_POINTS = 200
 SL_VALUE_POINTS = 999
 BE_PROFIT_TRIGGER_POINTS = 100
 BE_SL_BUFFER_POINTS = 10
@@ -32,6 +32,7 @@ CROSS_THRESHOLD_POINTS = 1 # จำนวนจุดที่ EMA ต้อง�
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
 MIN_BALANCE_SAFETY_MARGIN = 50  # ยอดคงเหลือขั้นต่ำที่ต้องเหลือไว้ (USDT)
 MAX_POSITION_SIZE_LIMIT = 1000  # จำกัดขนาดโพซิชันสูงสุด (contracts)
+REQUIRED_MARGIN_BUFFER_PERCENT = 0.10 # 10% ของ Margin ที่ต้องการ (เผื่อไว้สำหรับค่าธรรมเนียมและ Margin แฝง)
 
 # ค่าสำหรับยืนยันโพซิชันหลังเปิดออเดอร์ (ใช้ใน confirm_position_entry)
 CONFIRMATION_RETRIES = 15  # จำนวนครั้งที่ลองยืนยันโพซิชัน
@@ -459,7 +460,7 @@ def validate_trading_parameters(balance: float, contracts_per_slot: int) -> tupl
 
     return True, "OK"
 
-def calculate_safe_position_size(balance: float) -> tuple[int, int, float]:
+def calculate_safe_position_size(balance: float, initial_margin_rate: float) -> tuple[int, int, float]:
     """คำนวณขนาดโพซิชันที่ปลอดภัย"""
     available_balance = balance - MIN_BALANCE_SAFETY_MARGIN
     num_of_slots = max(0, int(available_balance / CONTRACTS_PER_SLOT))
@@ -469,9 +470,13 @@ def calculate_safe_position_size(balance: float) -> tuple[int, int, float]:
 
     total_contracts = min(total_contracts, MAX_POSITION_SIZE_LIMIT)
 
-    required_margin = total_contracts / LEVERAGE
+    # คำนวณ Margin ที่ต้องใช้ (ใช้ initial_margin_rate ที่ได้จาก Exchange)
+    required_margin = total_contracts * initial_margin_rate 
+    
+    # เพิ่ม Margin Buffer เพื่อเผื่อค่าธรรมเนียมและ Margin แฝง
+    required_margin_with_buffer = required_margin * (1 + REQUIRED_MARGIN_BUFFER_PERCENT) 
 
-    return num_of_slots, total_contracts, required_margin
+    return num_of_slots, total_contracts, required_margin_with_buffer
 
 def check_exchange_limits(market: dict, total_contracts: int) -> tuple[int, bool]:
     """ตรวจสอบและปรับจำนวนสัญญาตามขั้นต่ำของ Exchange"""
@@ -494,7 +499,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: int) -> 
     """ยืนยันการเปิดโพซิชัน"""
     global current_position_size
 
-    size_tolerance = max(1, expected_contracts * 0.005) 
+    size_tolerance = max(1, expected_contracts * 0.005) # tolerance อย่างน้อย 1 contract
 
     for attempt in range(CONFIRMATION_RETRIES):
         logger.info(f"⏳ ยืนยันโพซิชัน ({attempt + 1}/{CONFIRMATION_RETRIES})...")
@@ -531,8 +536,9 @@ def confirm_position_entry(expected_direction: str, expected_contracts: int) -> 
                 logger.warning(f"⚠️ ไม่พบโพซิชันที่ตรงกัน (คาดหวัง: {expected_direction})")
                 
         except Exception as e:
-            logger.warning(f"⚠️ Error ในการยืนยันโพซิชัน: {e}")
-
+            logger.warning(f"⚠️ Error ในการยืนยันโพซิชัน: {e}", exc_info=True) # เพิ่ม exc_info
+            # return False, None # ไม่ return ตรงนี้ ให้ลองต่อไป
+            
     # ล้มเหลวในการยืนยัน
     logger.error(f"❌ ไม่สามารถยืนยันโพซิชันได้หลังจาก {CONFIRMATION_RETRIES} ครั้ง")
     send_telegram(
@@ -563,8 +569,21 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             logger.error(f"❌ {error_msg}")
             return False, None
         
-        # 3. คำนวณขนาดโพซิชันที่ปลอดภัย
-        num_of_slots, total_contracts, required_margin = calculate_safe_position_size(balance)
+        # 3. คำนวณ Margin Rate จาก Exchange (ถ้าเป็นไปได้)
+        initial_margin_rate_val = None
+        if 'tiers' in market and market['tiers']: # ตรวจสอบว่ามี 'tiers' หรือไม่
+            for tier in market['tiers']:
+                # ค้นหา tier ที่ตรงกับ Leverage ที่ใช้
+                if LEVERAGE >= tier['minLeverage'] and LEVERAGE <= tier['maxLeverage']:
+                    initial_margin_rate_val = tier['initialMarginRate']
+                    break
+        
+        if initial_margin_rate_val is None:
+            logger.warning(f"⚠️ ไม่สามารถดึง initialMarginRate ที่ตรงกับ Leverage {LEVERAGE}x ได้จาก Exchange. จะใช้ 1 / LEVERAGE แทน.")
+            initial_margin_rate_val = 1 / LEVERAGE # Fallback if tier not found
+
+        # 4. คำนวณขนาดโพซิชันที่ปลอดภัยและ Margin ที่ต้องการ
+        num_of_slots, total_contracts, required_margin_with_buffer = calculate_safe_position_size(balance, initial_margin_rate_val)
         
         if num_of_slots <= 0:
             error_msg = f"ยอดคงเหลือไม่เพียงพอ ({balance:,.2f} USDT) ที่จะเปิดออเดอร์ขั้นต่ำ ({CONTRACTS_PER_SLOT} Contracts/ไม้)"
@@ -578,16 +597,18 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             logger.error(f"❌ {error_msg}")
             return False, None
         
-        # 4. ตรวจสอบ Margin ที่ต้องใช้
+        # 5. ตรวจสอบ Margin ที่ต้องใช้
         available_margin = balance - MIN_BALANCE_SAFETY_MARGIN
-        if available_margin < required_margin:
-            error_msg = f"Margin ไม่เพียงพอ (มี: {available_margin:,.2f}, ต้องการ: {required_margin:,.2f} USDT)"
+        if available_margin < required_margin_with_buffer:
+            error_msg = (f"Margin ไม่เพียงพอ (มี: {available_margin:,.2f} USDT, "
+                         f"ต้องการ: {required_margin_with_buffer:,.2f} USDT)")
             send_telegram(f"⛔️ Margin Error: {error_msg}")
             logger.error(f"❌ {error_msg}")
             return False, None
         
-        # 5. ตรวจสอบข้อจำกัดของ Exchange
-        market = exchange.market(SYMBOL)
+        # 6. ตรวจสอบข้อจำกัดของ Exchange
+        market = exchange.market(SYMBOL) # ดึง market info อีกครั้งเผื่อมีการเปลี่ยนแปลง (ควรดึงรอบเดียว)
+                                        # แต่เพื่อความปลอดภัยในการทำงานของ helper functions
         final_contracts, limit_applied = check_exchange_limits(market, total_contracts)
         
         if final_contracts <= 0:
@@ -596,15 +617,15 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             logger.error(f"❌ {error_msg}")
             return False, None
         
-        # 6. แสดงข้อมูลการเทรด
+        # 7. แสดงข้อมูลการเทรด
         logger.info(f"ℹ️ Trading Summary:")
         logger.info(f"   - Balance: {balance:,.2f} USDT")
         logger.info(f"   - Slots: {num_of_slots} ไม้")
         logger.info(f"   - Contracts: {final_contracts:,.0f}")
-        logger.info(f"   - Required Margin: {required_margin:,.2f} USDT")
+        logger.info(f"   - Required Margin (incl. buffer): {required_margin_with_buffer:,.2f} USDT")
         logger.info(f"   - Direction: {direction.upper()}")
         
-        # 7. ส่งออเดอร์
+        # 8. ส่งออเดอร์
         side = 'buy' if direction == 'long' else 'sell'
         params = {
             'tdMode': 'cross',
@@ -623,7 +644,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
                 
                 if order and order.get('id'):
                     logger.info(f"✅ Market Order ส่งสำเร็จ: {order.get('id')}")
-                    time.sleep(2) # ให้ Exchange มีเวลาประมวลผล
+                    time.sleep(2) 
                     break
                 else:
                     logger.warning(f"⚠️ Order response ไม่สมบูรณ์ (Attempt {attempt + 1}/3)")
@@ -650,7 +671,7 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             send_telegram("⛔️ Order Failed: ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
             return False, None
         
-        # 8. ยืนยันโพซิชัน
+        # 9. ยืนยันโพซิชัน
         return confirm_position_entry(direction, final_contracts)
         
     except Exception as e:
@@ -1099,5 +1120,4 @@ def main():
 # ==============================================================================
 if __name__ == '__main__':
     main()
-
 
