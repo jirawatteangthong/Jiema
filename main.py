@@ -5,9 +5,9 @@ import time
 # ------------------------------------------------------------------------------
 # 🔐 Load API Credentials from Environment
 # ------------------------------------------------------------------------------
-API_KEY = os.getenv("OKX_API_KEY")
-SECRET = os.getenv("OKX_SECRET")
-PASSWORD = os.getenv("OKX_PASSWORD")
+API_KEY = os.getenv("RAILWAY_API_KEY")
+SECRET = os.getenv("RAILWAY_SECRET")
+PASSWORD = os.getenv("RAILWAY_PASSWORD")
 
 if not all([API_KEY, SECRET, PASSWORD]):
     print("Error: Please set OKX_API_KEY, OKX_SECRET, and OKX_PASSWORD environment variables.")
