@@ -20,7 +20,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
 SYMBOL = 'BTC/USDT' 
-TIMEFRAME = '15m'  # เปลี่ยนเป็น 15 นาที
+TIMEFRAME = '30m'  # เปลี่ยนเป็น 15 นาที
 LEVERAGE = 30
 TP_DISTANCE_POINTS = 100  
 SL_DISTANCE_POINTS = 999  # เปลี่ยนเป็น 999
@@ -58,7 +58,7 @@ TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005
 # ==============================================================================
 logging.basicConfig(
     # เปลี่ยนเป็น logging.DEBUG ชั่วคราวเพื่อดูรายละเอียดการคำนวณ
-    level=logging.INFO, # สำหรับใช้งานจริงให้เป็น INFO
+    level=logging.DEBUG, # **เปลี่ยนเป็น DEBUG ชั่วคราวเพื่อดีบัก**
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
@@ -141,7 +141,6 @@ def setup_exchange():
             market_info['limits']['cost'] = {}
 
         # ดึงและแปลงค่า 'step', 'min', 'max' ให้เป็น float อย่างปลอดภัย
-        # ตรวจสอบว่าเป็น None ก่อนแปลง เพื่อป้องกัน TypeError
         
         # สำหรับ amount limits
         amount_step = market_info['limits']['amount'].get('step')
@@ -446,12 +445,13 @@ def check_ema_cross() -> str | None:
         elif ema50_current < ema200_current:
             current_ema_position = 'below'
         
+        # ตรวจสอบสถานะเริ่มต้นของบอท
         if last_ema_position_status is None:
             if current_ema_position:
                 last_ema_position_status = current_ema_position
                 save_monthly_stats()
                 logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
-            return None
+            return None # ไม่ส่งสัญญาณในรอบแรกของการรัน (เพื่อกำหนดสถานะเริ่มต้น)
 
         cross_signal = None
 
@@ -465,7 +465,10 @@ def check_ema_cross() -> str | None:
             cross_signal = 'short'
             logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
 
-        if current_ema_position and (cross_signal is not None or current_ema_position != last_ema_position_status):
+        # อัปเดตสถานะ EMA ล่าสุดเสมอหลังจากการประเมินสัญญาณ
+        # ถ้ามี cross_signal หรือสถานะ EMA เปลี่ยนแปลง ให้บันทึก
+        if current_ema_position != last_ema_position_status:
+            logger.info(f"ℹ️ EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()}. Updating last_ema_position_status.")
             last_ema_position_status = current_ema_position
             save_monthly_stats() 
 
@@ -1184,7 +1187,7 @@ def main():
             send_telegram(error_msg)
             time.sleep(ERROR_RETRY_SLEEP_SECONDS)
         except Exception as e:
-            error_msg = f"⛔️ Error: เกิดข้อผิดพลาดที่ไม่คาดคิดใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+            error_msg = f"⛔️ Error: เกิดข้อผิดพลาดที่ไม่คาดคิดใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLO_SECONDS} วินาที." # แก้ไขตรงนี้ด้วย
             logger.error(error_msg, exc_info=True)
             send_telegram(error_msg)
             time.sleep(ERROR_RETRY_SLEEP_SECONDS)
@@ -1194,6 +1197,3 @@ def main():
 # ==============================================================================
 if __name__ == '__main__':
     main()
-
-
-
