@@ -131,36 +131,41 @@ def setup_exchange():
         if not market_info:
             raise ValueError(f"ไม่พบข้อมูลตลาดสำหรับสัญลักษณ์ {SYMBOL}")
         
-        # ตรวจสอบและกำหนดค่าเริ่มต้นที่เหมาะสมหากไม่มี หรือแปลงเป็น float เพื่อความปลอดภัย
-        # Binance returns these as floats/decimals, but extra safety check
-        if 'limits' in market_info and 'amount' in market_info['limits']:
-            # Convert to float safely, provide default if key missing
-            market_info['limits']['amount']['step'] = float(market_info['limits']['amount'].get('step', '0.001'))
-            market_info['limits']['amount']['min'] = float(market_info['limits']['amount'].get('min', '0.001'))
-            market_info['limits']['amount']['max'] = float(market_info['limits']['amount'].get('max', str(sys.float_info.max)))
-        else: # Fallback if limits.amount structure is missing entirely
-            market_info['limits'] = {
-                'amount': {
-                    'step': 0.001, 
-                    'min': 0.001, 
-                    'max': sys.float_info.max
-                },
-                'cost': {
-                    'min': 5.0,
-                    'max': sys.float_info.max
-                }
-            }
-            logger.warning(f"⚠️ Missing or incomplete market limits for {SYMBOL}. Defaulting to safe values.")
+        # --- ตรวจสอบและกำหนดค่าเริ่มต้นที่เหมาะสมสำหรับ limits ---
+        # ต้องสร้างโครงสร้าง limits หากยังไม่มี
+        if 'limits' not in market_info:
+            market_info['limits'] = {}
+        if 'amount' not in market_info['limits']:
+            market_info['limits']['amount'] = {}
+        if 'cost' not in market_info['limits']:
+            market_info['limits']['cost'] = {}
 
-        if 'limits' in market_info and 'cost' in market_info['limits']:
-            market_info['limits']['cost']['min'] = float(market_info['limits']['cost'].get('min', '5.0')) 
-            market_info['limits']['cost']['max'] = float(market_info['limits']['cost'].get('max', str(sys.float_info.max)))
-        else: # Fallback if limits.cost structure is missing entirely
-             if 'limits' not in market_info: market_info['limits'] = {}
-             if 'cost' not in market_info['limits']: market_info['limits']['cost'] = {}
-             market_info['limits']['cost']['min'] = 5.0
-             market_info['limits']['cost']['max'] = sys.float_info.max
-             logger.warning(f"⚠️ Missing or incomplete market cost limits for {SYMBOL}. Defaulting to safe values.")
+        # ดึงและแปลงค่า 'step', 'min', 'max' ให้เป็น float อย่างปลอดภัย
+        # ตรวจสอบว่าเป็น None ก่อนแปลง เพื่อป้องกัน TypeError
+        
+        # สำหรับ amount limits
+        amount_step = market_info['limits']['amount'].get('step')
+        market_info['limits']['amount']['step'] = float(amount_step) if amount_step is not None else 0.001
+
+        amount_min = market_info['limits']['amount'].get('min')
+        market_info['limits']['amount']['min'] = float(amount_min) if amount_min is not None else 0.001
+        
+        amount_max = market_info['limits']['amount'].get('max')
+        market_info['limits']['amount']['max'] = float(amount_max) if amount_max is not None else sys.float_info.max # ใช้ sys.float_info.max
+
+        # สำหรับ cost limits (notional)
+        cost_min = market_info['limits']['cost'].get('min')
+        market_info['limits']['cost']['min'] = float(cost_min) if cost_min is not None else 5.0 # Default min notional for BTC/USDT is often 5 USDT
+
+        cost_max = market_info['limits']['cost'].get('max')
+        market_info['limits']['cost']['max'] = float(cost_max) if cost_max is not None else sys.float_info.max # ใช้ sys.float_info.max
+
+        # Log ค่า limits ที่ได้มา (สำหรับ Debug)
+        logger.debug(f"DEBUG: Market info limits for {SYMBOL}:")
+        logger.debug(f"  Amount: step={market_info['limits']['amount']['step']}, min={market_info['limits']['amount']['min']}, max={market_info['limits']['amount']['max']}")
+        logger.debug(f"  Cost: min={market_info['limits']['cost']['min']}, max={market_info['limits']['cost']['max']}")
+
+        # --- จบการตรวจสอบ limits ---
 
 
         try:
@@ -571,6 +576,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
     # ตรวจสอบว่า market_info และ limits.amount.step ถูกโหลดและมีค่าที่ถูกต้อง
     # เพิ่ม try-except เพื่อจัดการกรณีที่ market_info อาจยังไม่สมบูรณ์
     try:
+        # ใช้ .get() เพื่อป้องกัน KeyError และกำหนดค่า default ที่เหมาะสม
         step_size = float(market_info['limits']['amount'].get('step', '0.001'))
     except (TypeError, ValueError):
         logger.critical("❌ Critical Error: market_info['limits']['amount']['step'] is invalid. Cannot confirm position. Re-running setup_exchange might help.")
@@ -1188,5 +1194,6 @@ def main():
 # ==============================================================================
 if __name__ == '__main__':
     main()
+
 
 
