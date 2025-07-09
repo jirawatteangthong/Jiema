@@ -20,12 +20,12 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
 SYMBOL = 'BTC/USDT' 
-TIMEFRAME = '15m'  # เปลี่ยนเป็น 15 นาที
+TIMEFRAME = '1m'  # เปลี่ยนเป็น 15 นาที
 LEVERAGE = 30
 TP_DISTANCE_POINTS = 100  
 SL_DISTANCE_POINTS = 999  # เปลี่ยนเป็น 999
-BE_PROFIT_TRIGGER_POINTS = 350  # เปลี่ยนเป็น 350
-BE_SL_BUFFER_POINTS = 80   # เปลี่ยนเป็น 80
+BE_PROFIT_TRIGGER_POINTS = 80  # เปลี่ยนเป็น 350
+BE_SL_BUFFER_POINTS = 20   # เปลี่ยนเป็น 80
 CROSS_THRESHOLD_POINTS = 1 
 
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
