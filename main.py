@@ -44,7 +44,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json' # ควรเปลี่ยนเป็น '/data/trading_stats.json' หากใช้ Railway Volume
 
 # --- Bot Timing (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
-MAIN_LOOP_SLEEP_SECONDS = 300 # เปลี่ยนเป็น 300 วินาที (5 นาที)
+MAIN_LOOP_SLEEP_SECONDS = 120 # เปลี่ยนเป็น 300 วินาที (5 นาที)
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
