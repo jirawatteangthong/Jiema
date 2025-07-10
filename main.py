@@ -20,7 +20,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
 SYMBOL = 'BTC/USDT:USDT' 
-TIMEFRAME = '1m'  # เปลี่ยนเป็น 15 นาที
+TIMEFRAME = '3m'  # เปลี่ยนเป็น 15 นาที
 LEVERAGE = 30
 TP_DISTANCE_POINTS = 100  
 SL_DISTANCE_POINTS = 400  # เปลี่ยนเป็น 999
@@ -44,7 +44,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json' # ควรเปลี่ยนเป็น '/data/trading_stats.json' หากใช้ Railway Volume
 
 # --- Bot Timing (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
-MAIN_LOOP_SLEEP_SECONDS = 120 # เปลี่ยนเป็น 300 วินาที (5 นาที)
+MAIN_LOOP_SLEEP_SECONDS = 180 # เปลี่ยนเป็น 300 วินาที (5 นาที)
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
@@ -741,7 +741,7 @@ def cancel_all_open_tp_sl_orders():
         logger.error(f"❌ An unexpected error occurred while canceling orders: {e}", exc_info=True)
         send_telegram(f"⛔️ Unexpected Error: ไม่สามารถยกเลิก TP/SL เก่าได้\nรายละเอียด: {e}")
 
-
+# ในฟังก์ชัน set_tpsl_for_position
 def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
     global current_position_size
 
@@ -753,25 +753,31 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
     cancel_all_open_tp_sl_orders()
     time.sleep(1) 
 
-    tp_price = 0.0
-    sl_price = 0.0
+    tp_price_raw = 0.0 # ใช้ชื่อใหม่เพื่อความชัดเจน
+    sl_price_raw = 0.0 # ใช้ชื่อใหม่เพื่อความชัดเจน
 
     if direction == 'long':
-        tp_price = entry_price + TP_DISTANCE_POINTS
-        sl_price = entry_price - SL_DISTANCE_POINTS
+        tp_price_raw = entry_price + TP_DISTANCE_POINTS
+        sl_price_raw = entry_price - SL_DISTANCE_POINTS
     elif direction == 'short':
-        tp_price = entry_price - TP_DISTANCE_POINTS
-        sl_price = entry_price + SL_DISTANCE_POINTS
+        tp_price_raw = entry_price - TP_DISTANCE_POINTS
+        sl_price_raw = entry_price + SL_DISTANCE_POINTS
     
-    tp_price = exchange.price_to_precision(SYMBOL, tp_price)
-    sl_price = exchange.price_to_precision(SYMBOL, sl_price)
+    # แปลงเป็น precision string
+    tp_price_str = exchange.price_to_precision(SYMBOL, tp_price_raw)
+    sl_price_str = exchange.price_to_precision(SYMBOL, sl_price_raw)
+
+    # แปลงกลับเป็น float สำหรับการแสดงผลและการใช้งานต่อ
+    # สำคัญ: ต้องแปลงเป็น float เพื่อให้ .2f format code ทำงานได้ และเพื่อให้ CCXT รับค่า float ใน params
+    tp_price = float(tp_price_str)
+    sl_price = float(sl_price_str)
 
     logger.info(f"🎯 Calculated TP: {tp_price:.2f} | 🛑 Calculated SL: {sl_price:.2f}")
 
     try:
         tp_sl_side = 'sell' if direction == 'long' else 'buy'
         
-        logger.info(f"⏳ Setting Take Profit order at {tp_price}...")
+        logger.info(f"⏳ Setting Take Profit order at {tp_price:.2f}...") # เพิ่ม .2f
         tp_order = exchange.create_order(
             symbol=SYMBOL,
             type='TAKE_PROFIT_MARKET', 
@@ -779,13 +785,13 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
             amount=current_position_size, 
             price=None, 
             params={
-                'stopPrice': float(tp_price), 
+                'stopPrice': tp_price, # ใช้ tp_price (float)
                 'reduceOnly': True, 
             }
         )
         logger.info(f"✅ Take Profit order placed: ID → {tp_order.get('id', 'N/A')}")
 
-        logger.info(f"⏳ Setting Stop Loss order at {sl_price}...")
+        logger.info(f"⏳ Setting Stop Loss order at {sl_price:.2f}...") # เพิ่ม .2f
         sl_order = exchange.create_order(
             symbol=SYMBOL,
             type='STOP_MARKET', 
@@ -793,7 +799,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
             amount=current_position_size,         
             price=None,         
             params={
-                'stopPrice': float(sl_price), 
+                'stopPrice': sl_price, # ใช้ sl_price (float)
                 'reduceOnly': True,
             }
         )
@@ -810,10 +816,8 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
         send_telegram(f"⛔️ Unexpected Error (TP/SL): {e}")
         return False
 
-
+# ในฟังก์ชัน move_sl_to_breakeven
 def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
-    """เลื่อน Stop Loss ไปที่จุด Breakeven (หรือ +BE_SL_BUFFER_POINTS) บน Binance Futures.
-    พร้อมแจ้งเตือน Telegram."""
     global sl_moved, current_position_size
 
     if sl_moved:
@@ -824,13 +828,14 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
         logger.error("❌ ไม่สามารถเลื่อน SL ได้: ขนาดโพซิชันเป็น 0.")
         return False
 
-    breakeven_sl_price = 0.0
+    breakeven_sl_price_raw = 0.0
     if direction == 'long':
-        breakeven_sl_price = entry_price + BE_SL_BUFFER_POINTS
+        breakeven_sl_price_raw = entry_price + BE_SL_BUFFER_POINTS
     elif direction == 'short':
-        breakeven_sl_price = entry_price - BE_SL_BUFFER_POINTS
+        breakeven_sl_price_raw = entry_price - BE_SL_BUFFER_POINTS
     
-    breakeven_sl_price = exchange.price_to_precision(SYMBOL, breakeven_sl_price)
+    breakeven_sl_price_str = exchange.price_to_precision(SYMBOL, breakeven_sl_price_raw)
+    breakeven_sl_price = float(breakeven_sl_price_str) # แปลงเป็น float
 
     try:
         logger.info("⏳ กำลังยกเลิกคำสั่ง Stop Loss เก่า...")
@@ -858,7 +863,7 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
 
         new_sl_side = 'sell' if direction == 'long' else 'buy'
         
-        logger.info(f"⏳ Setting new Stop Loss (Breakeven) order at {breakeven_sl_price}...")
+        logger.info(f"⏳ Setting new Stop Loss (Breakeven) order at {breakeven_sl_price:.2f}...") # เพิ่ม .2f
         new_sl_order = exchange.create_order(
             symbol=SYMBOL,
             type='STOP_MARKET',
@@ -866,14 +871,13 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
             amount=current_position_size, 
             price=None,
             params={
-                'stopPrice': float(breakeven_sl_price),
+                'stopPrice': breakeven_sl_price, # ใช้ breakeven_sl_price (float)
                 'reduceOnly': True,
             }
         )
         logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
         sl_moved = True
 
-        # แจ้งเตือน Telegram ด้วย
         send_telegram(f"🛡️ <b>SL ถูกเลื่อนไปกันทุนแล้ว!</b>\nโพซิชัน {current_position_details['side'].upper()}\nราคาเข้า: {entry_price:.2f}\nSL ใหม่ที่: {breakeven_sl_price:.2f}")
 
         return True
@@ -886,7 +890,6 @@ def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
         logger.error(f"❌ Unexpected error moving SL to breakeven: {e}", exc_info=True)
         send_telegram(f"⛔️ Unexpected Error (Move SL): {e}")
         return False
-
 
 # ==============================================================================
 # 12. ฟังก์ชันตรวจสอบสถานะ (MONITORING FUNCTIONS)
