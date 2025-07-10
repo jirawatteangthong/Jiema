@@ -20,7 +20,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
 SYMBOL = 'BTC/USDT' 
-TIMEFRAME = '1m'  # เปลี่ยนเป็น 15 นาที
+TIMEFRAME = '3m'  # เปลี่ยนเป็น 15 นาที
 LEVERAGE = 30
 TP_DISTANCE_POINTS = 100  
 SL_DISTANCE_POINTS = 400  # เปลี่ยนเป็น 999
@@ -44,7 +44,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json' # ควรเปลี่ยนเป็น '/data/trading_stats.json' หากใช้ Railway Volume
 
 # --- Bot Timing (ปรับปรุงตามที่คุณให้มาในรูปภาพ) ---
-MAIN_LOOP_SLEEP_SECONDS = 120 # เปลี่ยนเป็น 300 วินาที (5 นาที)
+MAIN_LOOP_SLEEP_SECONDS = 180 # เปลี่ยนเป็น 300 วินาที (5 นาที)
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
