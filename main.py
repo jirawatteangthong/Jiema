@@ -26,7 +26,7 @@ TP_DISTANCE_POINTS = 100
 SL_DISTANCE_POINTS = 400  # เปลี่ยนเป็น 999
 BE_PROFIT_TRIGGER_POINTS = 50  # เปลี่ยนเป็น 350
 BE_SL_BUFFER_POINTS = 10   # เปลี่ยนเป็น 80
-CROSS_THRESHOLD_POINTS = 1 
+CROSS_THRESHOLD_POINTS = 20 
 
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
 MARGIN_BUFFER_USDT = 5 
