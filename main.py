@@ -57,7 +57,7 @@ TP_SL_BE_PRICE_TOLERANCE_PERCENT = 0.005
 # 2. การตั้งค่า Logging
 # ==============================================================================
 logging.basicConfig(
-    level=logging.INFO, # **ยังคงตั้งเป็น DEBUG เพื่อดีบักปัญหา EMA Cross**
+    level=logging.DEBUG, # **ยังคงตั้งเป็น DEBUG เพื่อดีบักปัญหา EMA Cross**
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
