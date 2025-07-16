@@ -45,6 +45,9 @@ TARGET_POSITION_SIZE_FACTOR = 0.8
 CONFIRMATION_RETRIES = 15
 CONFIRMATION_SLEEP = 5
 
+# --- Fee Settings (ใหม่) ---
+TAKER_FEE_RATE = 0.0004 # 0.04% สำหรับ Taker Fee. โปรดตรวจสอบอัตราค่าธรรมเนียมจริงของบัญชีคุณบน Binance
+
 # --- Telegram Notification Settings ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TESTING')
@@ -964,13 +967,26 @@ def monitor_position(pos_info: dict | None, current_price: float):
         logger.info(f"ℹ️ โพซิชัน {current_position_details['side'].upper()} ถูกปิดแล้วใน Exchange.")
 
         closed_price = current_price
-        pnl_usdt_actual = 0.0
+        pnl_usdt_gross = 0.0 # กำไร/ขาดทุนก่อนหักค่าธรรมเนียม
 
         if entry_price and current_position_size:
             if current_position_details['side'] == 'long':
-                pnl_usdt_actual = (closed_price - entry_price) * current_position_size
+                pnl_usdt_gross = (closed_price - entry_price) * current_position_size
             else:
-                pnl_usdt_actual = (entry_price - closed_price) * current_position_size
+                pnl_usdt_gross = (entry_price - closed_price) * current_position_size
+
+            # --- คำนวณค่าธรรมเนียมโดยประมาณ ---
+            # ค่าธรรมเนียมคิดจาก Notional Value (ขนาดสัญญา * ราคา) ทั้งตอนเปิดและปิด
+            notional_value_entry = entry_price * current_position_size
+            notional_value_close = closed_price * current_position_size
+            
+            # ค่าธรรมเนียมรวมสำหรับทั้งเปิดและปิดโพซิชัน
+            estimated_fees = (notional_value_entry + notional_value_close) * TAKER_FEE_RATE
+            
+            pnl_usdt_actual = pnl_usdt_gross - estimated_fees
+            logger.debug(f"DEBUG: Gross PnL: {pnl_usdt_gross:,.2f} USDT, Estimated Fees: {estimated_fees:,.2f} USDT")
+        else:
+            pnl_usdt_actual = 0.0 # ถ้าไม่มี entry_price หรือ size ก็ไม่มี PnL
 
         close_reason = "ปิดโดยไม่ทราบสาเหตุ"
         emoji = "❓"
@@ -1027,14 +1043,14 @@ def monitor_position(pos_info: dict | None, current_price: float):
     if pos_info:
         current_position_details = pos_info
         entry_price = pos_info['entry_price']
-        unrealized_pnl = pos_info['unrealized_pnl'] # Ensure using unrealizedPnl from fetched info
+        unrealized_pnl = pos_info['unrealizedPnl'] # Ensure using unrealizedPnl from fetched info
         current_position_size = pos_info['size']
 
         logger.info(f"📊 สถานะปัจจุบัน: {current_position_details['side'].upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {entry_price:,.1f}, Size: {current_position_size:,.8f} Contracts")
 
         # Call the new multi-step SL management function
         manage_stop_loss(current_position_details['side'], entry_price, current_price)
-
+        
 # ==============================================================================
 # 13. ฟังก์ชันรายงานประจำเดือน (MONTHLY REPORT FUNCTIONS)
 # ==============================================================================
