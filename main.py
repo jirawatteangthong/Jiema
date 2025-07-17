@@ -35,7 +35,7 @@ SL_MOVE_STEP1_SL_POINTS = 400            # SL ใหม่ที่ - 400 จุ
 SL_MOVE_STEP2_PROFIT_TRIGGER_POINTS = 400  # เมื่อราคา + 400 จุดจากทุน
 SL_MOVE_STEP2_SL_POINTS = -100            # SL ใหม่ที่ + 100 จุดจากทุน (ระยะจาก entry_price, คือกำไร 100 จุด)
 
-CROSS_THRESHOLD_POINTS = 1 # ปรับเป็น 1 จุด
+CROSS_THRESHOLD_POINTS = 100# ปรับเป็น 1 จุด
 
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
 MARGIN_BUFFER_USDT = 5
@@ -412,43 +412,27 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
     return ema
 
 def check_ema_cross() -> str | None:
-    global last_ema_position_status
+    global last_ema_position_status, monthly_stats # เพิ่ม monthly_stats เข้ามาเพื่อใช้ last_ema_cross_signal
 
     try:
-        retries = 3
-        ohlcv = None
-        for i in range(retries):
-            logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...")
-            try:
-                ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=500)
-                time.sleep(1)
-                break
-            except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-                logger.warning(f"⚠️ Error fetching OHLCV (Attempt {i+1}/{retries}): {e}. Retrying in 15 seconds...")
-                if i == retries - 1:
-                    send_telegram(f"⛔️ API Error: ไม่สามารถดึง OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
-                time.sleep(15)
-            except Exception as e:
-                logger.error(f"❌ Unexpected error fetching OHLCV: {e}", exc_info=True)
-                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึง OHLCV ได้\nรายละเอียด: {e}")
-                return None
-
-        if not ohlcv:
-            logger.error(f"❌ Failed to fetch OHLCV after {retries} attempts.")
-            send_telegram(f"⛔️ API Error: ล้มเหลวในการดึง OHLCV หลังจาก {retries} ครั้ง.")
+        # ดึงข้อมูล OHLCV
+        ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=200) # ต้องการ 200 แท่งสำหรับ EMA200
+        if len(ohlcv) < 200:
+            logger.warning(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง) สำหรับคำนวณ EMA200")
             return None
 
-        if len(ohlcv) < 201: # Still need 200 candles for EMA200 calculation
-            logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย 201 แท่ง ได้ {len(ohlcv)}")
-            send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง).")
-            return None
+        # แปลงข้อมูลเป็น DataFrame
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['close'] = pd.to_numeric(df['close'])
 
-        closes = [candle[4] for candle in ohlcv]
+        # คำนวณ EMA
+        ema50 = df['close'].ewm(span=50, adjust=False).mean()
+        ema200 = df['close'].ewm(span=200, adjust=False).mean()
 
-        ema50_current = calculate_ema(closes, 50)
-        ema200_current = calculate_ema(closes, 200)
+        ema50_current = ema50.iloc[-1]
+        ema200_current = ema200.iloc[-1]
 
-        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f}")
+        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:,.2f}, EMA200={ema200_current:,.2f}")
 
         if None in [ema50_current, ema200_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
@@ -460,39 +444,54 @@ def check_ema_cross() -> str | None:
         elif ema50_current < ema200_current:
             current_ema_position = 'below'
 
-        # ตรวจสอบสถานะเริ่มต้นของบอท
+        # ตรวจสอบสถานะเริ่มต้นของบอท หรือเมื่อมีการรีเซ็ตสถิติ
         if last_ema_position_status is None:
             if current_ema_position:
                 last_ema_position_status = current_ema_position
+                monthly_stats['last_ema_cross_signal'] = None # Reset previous cross signal
                 save_monthly_stats()
-                logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
-            return None # ไม่ส่งสัญญาณในรอบแรกของการรัน (เพื่อกำหนดสถานะเริ่มต้น)
+                logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน/รีเซ็ต. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
+            return None # ไม่ส่งสัญญาณในรอบแรกของการรัน/รีเซ็ต (เพื่อกำหนดสถานะเริ่มต้น)
 
         cross_signal = None
 
-        if last_ema_position_status == 'below' and current_ema_position == 'above' and \
+        # Logic ใหม่: ตรวจสอบว่าปัจจุบัน EMA อยู่ในสถานะที่ควรจะเป็นสำหรับสัญญาณนั้นๆ และห่างพอ
+        # และยังไม่เคยส่งสัญญาณนี้ไปแล้วตั้งแต่ครั้งล่าสุด (หรือสถานะ EMA เพิ่งเปลี่ยน)
+        
+        # ตรวจสอบ Golden Cross (Long Signal)
+        # EMA50 ต้องอยู่เหนือ EMA200 และห่างกันเกิน CROSS_THRESHOLD_POINTS
+        # และ (สถานะเดิมต้องเป็น 'below' หรือยังไม่เคยส่งสัญญาณ 'long' ตั้งแต่ปิดโพซิชันล่าสุด)
+        if current_ema_position == 'above' and \
            ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
-            cross_signal = 'long'
-            logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
-
-        elif last_ema_position_status == 'above' and current_ema_position == 'below' and \
+            if last_ema_position_status == 'below' or monthly_stats.get('last_ema_cross_signal') != 'long':
+                cross_signal = 'long'
+                logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:,.2f})")
+                
+        # ตรวจสอบ Death Cross (Short Signal)
+        # EMA50 ต้องอยู่ใต้ EMA200 และห่างกันเกิน CROSS_THRESHOLD_POINTS
+        # และ (สถานะเดิมต้องเป็น 'above' หรือยังไม่เคยส่งสัญญาณ 'short' ตั้งแต่ปิดโพซิชันล่าสุด)
+        elif current_ema_position == 'below' and \
              ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
-            cross_signal = 'short'
-            logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
+            if last_ema_position_status == 'above' or monthly_stats.get('last_ema_cross_signal') != 'short':
+                cross_signal = 'short'
+                logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:,.2f})")
+
 
         # อัปเดตสถานะ EMA ล่าสุดเสมอหลังจากการประเมินสัญญาณ
         # มีการปรับปรุง Log เพื่อให้เห็นชัดเจนขึ้น
         if cross_signal is not None:
             logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
             # อัปเดตสถานะ EMA ล่าสุดเมื่อมีสัญญาณ
-            if current_ema_position != last_ema_position_status:
-                logger.info(f"ℹ️ EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()} during a cross signal. Updating last_ema_position_status.")
-                last_ema_position_status = current_ema_position
-                save_monthly_stats()
+            last_ema_position_status = current_ema_position
+            monthly_stats['last_ema_cross_signal'] = cross_signal # บันทึกสัญญาณที่เพิ่งเกิดไป
+            save_monthly_stats()
+            
         elif current_ema_position != last_ema_position_status: # ถ้าไม่มี cross_signal แต่สถานะ EMA เปลี่ยนแปลง
             logger.info(f"ℹ️ EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()}. Updating last_ema_position_status (no cross signal detected).")
             last_ema_position_status = current_ema_position
+            monthly_stats['last_ema_cross_signal'] = None # Clear previous signal if position just changed
             save_monthly_stats()
+            
         else: # ไม่มีสัญญาณ และสถานะไม่เปลี่ยนแปลง
             logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.")
 
@@ -502,6 +501,8 @@ def check_ema_cross() -> str | None:
         logger.error(f"❌ เกิดข้อผิดพลาดในการคำนวณ EMA: {e}", exc_info=True)
         send_telegram(f"⛔️ Error: ไม่สามารถคำนวณ EMA ได้\nรายละเอียด: {e}")
         return None
+
+
 
 # ==============================================================================
 # 10. ฟังก์ชันช่วยสำหรับการคำนวณและตรวจสอบออเดอร์ (ปรับปรุงแก้ไข KeyError และ Contracts=0)
