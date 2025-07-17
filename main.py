@@ -9,7 +9,7 @@ import os
 import calendar
 import sys
 import math
-import pandas as pd # <-- เพิ่ม import pandas ตรงนี้
+# Removed: import pandas as pd (reverted to manual EMA calculation)
 
 # ==============================================================================
 # 1. ตั้งค่าพื้นฐาน (CONFIGURATION)
@@ -21,14 +21,14 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT'
-TIMEFRAME = '15m'  # ปรับเป็น 15 นาที
+TIMEFRAME = '15m'
 LEVERAGE = 34
-TP_DISTANCE_POINTS = 501  # ปรับเป็น 501 จุด
+TP_DISTANCE_POINTS = 501
 SL_DISTANCE_POINTS = 999
 
 # Breakeven & Multi-Step SL Settings (BE_PROFIT_TRIGGER_POINTS และ BE_SL_BUFFER_POINTS จะไม่ถูกใช้โดยตรงแล้ว)
 BE_PROFIT_TRIGGER_POINTS = 350 # ยังคงไว้แต่ไม่ได้ถูกเรียกใช้โดยตรงใน manage_stop_loss
-BE_SL_BUFFER_POINTS = 130     # ยังคงไว้แต่ไม่ได้ถูกเรียกใช้โดยตรงใน manage_stop_loss
+BE_SL_BUFFER_POINTS = 100    # ยังคงไว้แต่ไม่ได้ถูกเรียกใช้โดยตรงใน manage_stop_loss
 
 # New: Multi-step SL settings
 SL_MOVE_STEP1_PROFIT_TRIGGER_POINTS = 300  # เมื่อราคา + 300 จุดจากทุน
@@ -36,7 +36,7 @@ SL_MOVE_STEP1_SL_POINTS = 400            # SL ใหม่ที่ - 400 จุ
 SL_MOVE_STEP2_PROFIT_TRIGGER_POINTS = 400  # เมื่อราคา + 400 จุดจากทุน
 SL_MOVE_STEP2_SL_POINTS = -100            # SL ใหม่ที่ + 100 จุดจากทุน (ระยะจาก entry_price, คือกำไร 100 จุด)
 
-CROSS_THRESHOLD_POINTS = 1 # ปรับเป็น 1 จุด (หมายถึงห่างกัน 1 จุดเป็นอย่างน้อย)
+CROSS_THRESHOLD_POINTS = 100 # หมายถึง EMA ต้องห่างกันอย่างน้อย 1 จุดเพื่อเป็นสัญญาณที่ชัดเจน
 
 # เพิ่มค่าตั้งค่าใหม่สำหรับการบริหารความเสี่ยงและออเดอร์
 MARGIN_BUFFER_USDT = 5
@@ -46,7 +46,7 @@ TARGET_POSITION_SIZE_FACTOR = 0.8
 CONFIRMATION_RETRIES = 15
 CONFIRMATION_SLEEP = 5
 
-# --- Fee Settings (ใหม่) ---
+# --- Fee Settings ---
 TAKER_FEE_RATE = 0.0004 # 0.04% สำหรับ Taker Fee. โปรดตรวจสอบอัตราค่าธรรมเนียมจริงของบัญชีคุณบน Binance
 
 # --- Telegram Notification Settings ---
@@ -109,7 +109,7 @@ monthly_stats = {
     'total_pnl': 0.0,
     'trades': [],
     'last_report_month_year': None,
-    'last_ema_cross_signal': None,
+    'last_ema_cross_signal': None, # Keep this for signal tracking logic
     'last_ema_position_status': None,
     'sl_moved_to_step1_status': False, # New: บันทึกสถานะ SL Step 1
     'sl_moved_to_step2_status': False  # New: บันทึกสถานะ SL Step 2
@@ -399,23 +399,25 @@ def get_current_position() -> dict | None:
 # 9. ฟังก์ชันคำนวณ Indicators (INDICATOR CALCULATION FUNCTIONS)
 # ==============================================================================
 
-# Note: The original calculate_ema function (manual calculation) is now potentially redundant
-# as check_ema_cross directly uses pandas' ewm. Keeping it for completeness but it's not actively called.
+# This is the manual EMA calculation function that you preferred.
 def calculate_ema(prices: list[float], period: int) -> float | None:
     if len(prices) < period:
         return None
 
+    # Calculate initial SMA for the first 'period' values
     sma = sum(prices[:period]) / period
-    ema = sma
+    ema = sma # Initialize EMA with SMA
+
     multiplier = 2 / (period + 1)
 
+    # Calculate EMA for the rest of the prices
     for price in prices[period:]:
         ema = (price * multiplier) + (ema * (1 - multiplier))
 
     return ema
 
 def check_ema_cross() -> str | None:
-    global last_ema_position_status, monthly_stats
+    global last_ema_position_status, monthly_stats # Added monthly_stats for last_ema_cross_signal tracking
 
     try:
         retries = 3
@@ -423,7 +425,7 @@ def check_ema_cross() -> str | None:
         for i in range(retries):
             logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...")
             try:
-                # Ensure enough data for EMA200 (200 for calculation + 1 for current)
+                # Ensure enough data for EMA200 (need at least 200 candles + 1 for current price = 201)
                 ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=201)
                 time.sleep(1)
                 break
@@ -447,20 +449,15 @@ def check_ema_cross() -> str | None:
             send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง).")
             return None
 
-        # Using pandas for EMA calculation (more robust and standard)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['close'] = pd.to_numeric(df['close']) # Ensure 'close' column is numeric
+        closes = [candle[4] for candle in ohlcv]
 
-        ema50_series = df['close'].ewm(span=50, adjust=False).mean()
-        ema200_series = df['close'].ewm(span=200, adjust=False).mean()
-
-        ema50_current = ema50_series.iloc[-1]
-        ema200_current = ema200_series.iloc[-1]
+        ema50_current = calculate_ema(closes, 50)
+        ema200_current = calculate_ema(closes, 200)
 
         logger.info(f"💡 EMA Values: Current EMA50={ema50_current:,.2f}, EMA200={ema200_current:,.2f}")
 
-        if pd.isna(ema50_current) or pd.isna(ema200_current): # Check for NaN from pandas
-            logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น NaN).")
+        if ema50_current is None or ema200_current is None: # Check for None from manual calculate_ema
+            logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
             return None
 
         current_ema_position = None
@@ -488,10 +485,6 @@ def check_ema_cross() -> str | None:
         # และ (สถานะเดิมต้องเป็น 'below' หรือยังไม่เคยส่งสัญญาณ 'long' ตั้งแต่ปิดโพซิชันล่าสุด)
         if current_ema_position == 'above' and \
            ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
-            # The condition `last_ema_position_status == 'below'` checks if it's a fresh cross.
-            # `monthly_stats.get('last_ema_cross_signal') != 'long'` checks if a 'long' signal
-            # for this position has *not* been triggered since the last position closure or bot restart.
-            # This handles cases where the cross happened previously but the threshold was met later.
             if last_ema_position_status == 'below' or monthly_stats.get('last_ema_cross_signal') != 'long':
                 cross_signal = 'long'
                 logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:,.2f})")
@@ -532,7 +525,7 @@ def check_ema_cross() -> str | None:
         return None
 
 # ==============================================================================
-# 10. ฟังก์ชันช่วยสำหรับการคำนวณและตรวจสอบออเดอร์
+# 10. ฟังก์ชันช่วยสำหรับการคำนวณและตรวจสอบออเดอร์ (ปรับปรุงแก้ไข KeyError และ Contracts=0)
 # ==============================================================================
 
 def calculate_order_details(available_usdt: float, price: float) -> tuple[float, float]:
@@ -656,7 +649,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
 
                     return True, confirmed_entry_price
                 else:
-                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.8f}, ได้: {actual_size:,.8f}). Tolerance: {size_tolerance:.8f}")
+                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.8f}, ได้: {actual_size:,.8f}). Tolerance: {size_tolerance:,.8f}")
             else:
                 logger.warning(f"⚠️ ไม่พบโพซิชันที่ตรงกัน (คาดหวัง: {expected_direction}) หรือไม่พบโพซิชันเลย.")
 
@@ -815,8 +808,8 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
     cancel_all_open_tp_sl_orders()
     time.sleep(1)
 
-    tp_price_raw = 0.0
-    sl_price_raw = 0.0
+    tp_price_raw = 0.0 # ใช้ชื่อใหม่เพื่อความชัดเจน
+    sl_price_raw = 0.0 # ใช้ชื่อใหม่เพื่อความชัดเจน
 
     if direction == 'long':
         tp_price_raw = entry_price + TP_DISTANCE_POINTS
@@ -830,6 +823,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
     sl_price_str = exchange.price_to_precision(SYMBOL, sl_price_raw)
 
     # แปลงกลับเป็น float สำหรับการแสดงผลและการใช้งานต่อ
+    # สำคัญ: ต้องแปลงเป็น float เพื่อให้ .2f format code ทำงานได้ และเพื่อให้ CCXT รับค่า float ใน params
     tp_price = float(tp_price_str)
     sl_price = float(sl_price_str)
 
@@ -838,7 +832,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
     try:
         tp_sl_side = 'sell' if direction == 'long' else 'buy'
 
-        logger.info(f"⏳ Setting Take Profit order at {tp_price:.2f}...")
+        logger.info(f"⏳ Setting Take Profit order at {tp_price:.2f}...") # เพิ่ม .2f
         tp_order = exchange.create_order(
             symbol=SYMBOL,
             type='TAKE_PROFIT_MARKET',
@@ -852,7 +846,7 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
         )
         logger.info(f"✅ Take Profit order placed: ID → {tp_order.get('id', 'N/A')}")
 
-        logger.info(f"⏳ Setting Stop Loss order at {sl_price:.2f}...")
+        logger.info(f"⏳ Setting Stop Loss order at {sl_price:.2f}...") # เพิ่ม .2f
         sl_order = exchange.create_order(
             symbol=SYMBOL,
             type='STOP_MARKET',
@@ -877,109 +871,80 @@ def set_tpsl_for_position(direction: str, entry_price: float) -> bool:
         send_telegram(f"⛔️ Unexpected Error (TP/SL): {e}")
         return False
 
-# New function for multi-step SL management
-def manage_stop_loss(direction: str, entry_price: float, current_price: float) -> bool:
-    global sl_moved_to_step1, sl_moved_to_step2, current_position_size
+# ในฟังก์ชัน move_sl_to_breakeven
+def move_sl_to_breakeven(direction: str, entry_price: float) -> bool:
+    global sl_moved, current_position_size
 
-    if not current_position_size or not entry_price:
-        logger.error("❌ ไม่สามารถจัดการ SL ได้: ขนาดโพซิชันหรือราคาเข้าเป็น 0.")
+    if sl_moved:
+        logger.info("ℹ️ SL ถูกเลื่อนไปที่กันทุนแล้ว ไม่จำเป็นต้องเลื่อนอีก.")
+        return True
+
+    if not current_position_size:
+        logger.error("❌ ไม่สามารถเลื่อน SL ได้: ขนาดโพซิชันเป็น 0.")
         return False
 
-    pnl_in_points = 0
+    breakeven_sl_price_raw = 0.0
     if direction == 'long':
-        pnl_in_points = current_price - entry_price
+        breakeven_sl_price_raw = entry_price + BE_SL_BUFFER_POINTS
     elif direction == 'short':
-        pnl_in_points = entry_price - current_price
+        breakeven_sl_price_raw = entry_price - BE_SL_BUFFER_POINTS
 
-    sl_updated = False
+    breakeven_sl_price_str = exchange.price_to_precision(SYMBOL, breakeven_sl_price_raw)
+    breakeven_sl_price = float(breakeven_sl_price_str) # แปลงเป็น float
 
-    # Step 2: Move SL to +100 points (Breakeven + buffer)
-    # Check if we haven't moved to step 2 AND profit is enough for step 2
-    if not sl_moved_to_step2 and pnl_in_points >= SL_MOVE_STEP2_PROFIT_TRIGGER_POINTS:
-        breakeven_sl_price_raw = 0.0
-        if direction == 'long':
-            breakeven_sl_price_raw = entry_price + SL_MOVE_STEP2_SL_POINTS
-        elif direction == 'short':
-            breakeven_sl_price_raw = entry_price - SL_MOVE_STEP2_SL_POINTS
+    try:
+        logger.info("⏳ กำลังยกเลิกคำสั่ง Stop Loss เก่า...")
+        open_orders = exchange.fetch_open_orders(SYMBOL)
 
-        breakeven_sl_price = float(exchange.price_to_precision(SYMBOL, breakeven_sl_price_raw))
+        sl_order_ids_to_cancel = []
+        for order in open_orders:
+            if order['type'] == 'STOP_MARKET' and order.get('reduceOnly', False) and \
+               (order['status'] == 'open' or order['status'] == 'pending'):
+                sl_order_ids_to_cancel.append(order['id'])
 
-        logger.info(f"ℹ️ กำไรถึงจุดเลื่อน SL Step 2: {pnl_in_points:,.0f} จุด. กำลังเลื่อน SL ไปที่ {breakeven_sl_price:,.2f}.")
-        try:
-            # Cancel all current open orders (including TP and old SL)
-            cancel_all_open_tp_sl_orders()
-            time.sleep(1)
+        if sl_order_ids_to_cancel:
+            for sl_id in sl_order_ids_to_cancel:
+                try:
+                    exchange.cancel_order(sl_id, SYMBOL)
+                    logger.info(f"✅ ยกเลิก SL Order ID {sl_id} สำเร็จ.")
+                except ccxt.OrderNotFound:
+                    logger.info(f"💡 Order {sl_id} not found or already canceled/filled. No action needed.")
+                except Exception as cancel_e:
+                    logger.warning(f"⚠️ ไม่สามารถยกเลิก SL Order ID {sl_id} ได้: {cancel_e}")
+        else:
+            logger.info("ℹ️ ไม่พบคำสั่ง Stop Loss เก่าที่ต้องยกเลิก.")
 
-            new_sl_side = 'sell' if direction == 'long' else 'buy'
+        time.sleep(1)
 
-            logger.info(f"⏳ Setting new Stop Loss (Step 2: +{abs(SL_MOVE_STEP2_SL_POINTS)} points) order at {breakeven_sl_price:,.2f}...")
-            new_sl_order = exchange.create_order(
-                symbol=SYMBOL,
-                type='STOP_MARKET',
-                side=new_sl_side,
-                amount=current_position_size,
-                price=None, # For MARKET type, price is not needed, but for STOP_MARKET stopPrice is needed
-                params={
-                    'stopPrice': breakeven_sl_price,
-                    'reduceOnly': True,
-                }
-            )
-            logger.info(f"✅ เลื่อน SL ไปที่ Step 2 สำเร็จ: Trigger Price: {breakeven_sl_price:,.2f}, ID: {new_sl_order.get('id', 'N/A')}")
-            sl_moved_to_step2 = True
-            send_telegram(f"🚀 <b>SL ถูกเลื่อนไป Step 2 แล้ว!</b>\nโพซิชัน {direction.upper()}\nราคาเข้า: {entry_price:,.2f}\nSL ใหม่ที่: {breakeven_sl_price:,.2f} (กำไร {SL_MOVE_STEP2_SL_POINTS} จุด)")
-            sl_updated = True
-            save_monthly_stats()
-        except ccxt.BaseError as e:
-            logger.error(f"❌ Error moving SL to Step 2: {str(e)}", exc_info=True)
-            send_telegram(f"⛔️ API Error (Move SL Step 2): {e.args[0] if e.args else str(e)}")
-        except Exception as e:
-            logger.error(f"❌ Unexpected error moving SL to Step 2: {e}", exc_info=True)
-            send_telegram(f"⛔️ Unexpected Error (Move SL Step 2): {e}")
+        new_sl_side = 'sell' if direction == 'long' else 'buy'
 
-    # Step 1: Move SL from initial to -400 points
-    # Check if we haven't moved to step 1 (and implicitly not step 2 yet) AND profit is enough for step 1
-    elif not sl_moved_to_step1 and pnl_in_points >= SL_MOVE_STEP1_PROFIT_TRIGGER_POINTS:
-        new_sl_price_raw = 0.0
-        if direction == 'long':
-            new_sl_price_raw = entry_price - SL_MOVE_STEP1_SL_POINTS
-        elif direction == 'short':
-            new_sl_price_raw = entry_price + SL_MOVE_STEP1_SL_POINTS
+        logger.info(f"⏳ Setting new Stop Loss (Breakeven) order at {breakeven_sl_price:.2f}...") # เพิ่ม .2f
+        new_sl_order = exchange.create_order(
+            symbol=SYMBOL,
+            type='STOP_MARKET',
+            side=new_sl_side,
+            amount=current_position_size,
+            price=None,
+            params={
+                'stopPrice': breakeven_sl_price,
+                'reduceOnly': True,
+            }
+        )
+        logger.info(f"✅ เลื่อน SL ไปที่กันทุนสำเร็จ: Trigger Price: {breakeven_sl_price:.2f}, ID: {new_sl_order.get('id', 'N/A')}")
+        sl_moved = True
 
-        new_sl_price = float(exchange.price_to_precision(SYMBOL, new_sl_price_raw))
+        send_telegram(f"🛡️ <b>SL ถูกเลื่อนไปกันทุนแล้ว!</b>\nโพซิชัน {current_position_details['side'].upper()}\nราคาเข้า: {entry_price:.2f}\nSL ใหม่ที่: {breakeven_sl_price:.2f}")
 
-        logger.info(f"ℹ️ กำไรถึงจุดเลื่อน SL Step 1: {pnl_in_points:,.0f} จุด. กำลังเลื่อน SL ไปที่ {new_sl_price:,.2f}.")
-        try:
-            # Cancel all current open orders (including TP and old SL)
-            cancel_all_open_tp_sl_orders()
-            time.sleep(1)
+        return True
 
-            new_sl_side = 'sell' if direction == 'long' else 'buy'
-
-            logger.info(f"⏳ Setting new Stop Loss (Step 1: -{abs(SL_MOVE_STEP1_SL_POINTS)} points) order at {new_sl_price:,.2f}...")
-            new_sl_order = exchange.create_order(
-                symbol=SYMBOL,
-                type='STOP_MARKET',
-                side=new_sl_side,
-                amount=current_position_size,
-                price=None, # For MARKET type, price is not needed, but for STOP_MARKET stopPrice is needed
-                params={
-                    'stopPrice': new_sl_price,
-                    'reduceOnly': True,
-                }
-            )
-            logger.info(f"✅ เลื่อน SL ไปที่ Step 1 สำเร็จ: Trigger Price: {new_sl_price:,.2f}, ID: {new_sl_order.get('id', 'N/A')}")
-            sl_moved_to_step1 = True
-            send_telegram(f"⚠️ <b>SL ถูกเลื่อนไป Step 1 แล้ว!</b>\nโพซิชัน {direction.upper()}\nราคาเข้า: {entry_price:,.2f}\nSL ใหม่ที่: {new_sl_price:,.2f} (ขาดทุน {SL_MOVE_STEP1_SL_POINTS} จุด)")
-            sl_updated = True
-            save_monthly_stats()
-        except ccxt.BaseError as e:
-            logger.error(f"❌ Error moving SL to Step 1: {str(e)}", exc_info=True)
-            send_telegram(f"⛔️ API Error (Move SL Step 1): {e.args[0] if e.args else str(e)}")
-        except Exception as e:
-            logger.error(f"❌ Unexpected error moving SL to Step 1: {e}", exc_info=True)
-            send_telegram(f"⛔️ Unexpected Error (Move SL Step 1): {e}")
-
-    return sl_updated
+    except ccxt.BaseError as e:
+        logger.error(f"❌ Error moving SL to breakeven: {str(e)}", exc_info=True)
+        send_telegram(f"⛔️ API Error (Move SL): {e.args[0] if e.args else str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Unexpected error moving SL to breakeven: {e}", exc_info=True)
+        send_telegram(f"⛔️ Unexpected Error (Move SL): {e}")
+        return False
 
 # ==============================================================================
 # 12. ฟังก์ชันตรวจสอบสถานะ (MONITORING FUNCTIONS)
@@ -1071,7 +1036,7 @@ def monitor_position(pos_info: dict | None, current_price: float):
     if pos_info:
         current_position_details = pos_info
         entry_price = pos_info['entry_price']
-        unrealized_pnl = pos_info['unrealizedPnl'] # Ensure using unrealizedPnl from fetched info
+        unrealized_pnl = pos_info['unrealizedPnl']
         current_position_size = pos_info['size']
 
         logger.info(f"📊 สถานะปัจจุบัน: {current_position_details['side'].upper()}, PnL: {unrealized_pnl:,.2f} USDT, ราคา: {current_price:,.1f}, เข้า: {entry_price:,.1f}, Size: {current_position_size:,.8f} Contracts")
@@ -1191,7 +1156,7 @@ def send_startup_message():
 # 15. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
 # ==============================================================================
 def main():
-    global current_position_details, last_ema_position_status, sl_moved_to_step1, sl_moved_to_step2
+    global current_position_details, last_ema_position_status
 
     try:
         setup_exchange()
