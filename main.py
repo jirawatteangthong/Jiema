@@ -122,65 +122,82 @@ market_info = None
 def setup_exchange():
     global exchange, market_info
     try:
+        # ตรวจสอบ API Key และ Secret
         if not API_KEY or API_KEY == 'YOUR_BINANCE_API_KEY_HERE_FOR_LOCAL_TESTING' or \
            not SECRET or SECRET == 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING':
             raise ValueError("API_KEY หรือ SECRET ไม่ถูกตั้งค่าใน Environment Variables. โปรดแก้ไข.")
 
+        # ตั้งค่า Exchange instance
         exchange = ccxt.binance({
             'apiKey': API_KEY,
             'secret': SECRET,
-            'sandbox': False, # ตั้งเป็น True หากใช้ Testnet
-            'enableRateLimit': True,
+            'sandbox': False, # ตั้งเป็น True หากใช้ Testnet ของ Binance
+            'enableRateLimit': True, # เปิดใช้งาน Rate Limit ของ CCXT เพื่อป้องกันการส่งคำขอเร็วเกินไป
             'options': {
-                'defaultType': 'future', # สำคัญมากสำหรับ Binance Futures
-                'marginMode': 'cross',   # ใช้ Cross Margin
+                'defaultType': 'future', # สำคัญมาก: กำหนดให้เป็น Futures
+                'marginMode': 'cross',   # ใช้ Cross Margin (หรือ 'isolated' ถ้าต้องการ)
             },
-            'verbose': False, # ตั้งเป็น True หากต้องการเห็น Raw HTTP requests/responses
-            'timeout': 30000, # 30 วินาที
+            'verbose': False, # ตั้งเป็น True หากต้องการเห็น Raw HTTP requests/responses (สำหรับ Debugging ขั้นสูง)
+            'timeout': 30000, # กำหนด Timeout 30 วินาทีสำหรับการเชื่อมต่อ
         })
 
+        # โหลดข้อมูลตลาด (Symbols, Precision, Limits)
         exchange.load_markets()
         logger.info("✅ เชื่อมต่อกับ Binance Futures Exchange สำเร็จ และโหลด Markets แล้ว.")
 
+        # ดึงข้อมูลตลาดสำหรับคู่เทรดที่กำหนด (SYMBOL)
         market_info = exchange.market(SYMBOL)
         if not market_info:
             raise ValueError(f"ไม่พบข้อมูลตลาดสำหรับสัญลักษณ์ {SYMBOL}")
 
-        # --- ตรวจสอบและกำหนดค่าเริ่มต้นที่เหมาะสมสำหรับ limits (ป้องกัน KeyError) ---
-        if 'limits' not in market_info: market_info['limits'] = {}
-        if 'amount' not in market_info['limits']: market_info['limits']['amount'] = {}
-        if 'cost' not in market_info['limits']: market_info['limits']['cost'] = {}
+        # --- ตรวจสอบและกำหนดค่าเริ่มต้นที่เหมาะสมสำหรับ limits ---
+        # เพื่อป้องกัน KeyError หรือ TypeError หาก API response ไม่สมบูรณ์
+        if 'limits' not in market_info:
+            market_info['limits'] = {}
+        if 'amount' not in market_info['limits']:
+            market_info['limits']['amount'] = {}
+        if 'cost' not in market_info['limits']:
+            market_info['limits']['cost'] = {}
 
-        # ตั้งค่า default ถ้า key ไม่พร้อมใช้งาน
-        market_info['limits']['amount']['step'] = float(market_info['limits']['amount'].get('step', 0.001))
-        market_info['limits']['amount']['min'] = float(market_info['limits']['amount'].get('min', 0.001))
-        market_info['limits']['amount']['max'] = float(market_info['limits']['amount'].get('max', sys.float_info.max))
-        market_info['limits']['cost']['min'] = float(market_info['limits']['cost'].get('min', 5.0))
-        market_info['limits']['cost']['max'] = float(market_info['limits']['cost'].get('max', sys.float_info.max))
+        # ดึงค่า limits ออกมาตรวจสอบก่อนแปลงเป็น float
+        # การใช้ .get() และตรวจสอบ `is not None` จะช่วยให้โค้ดแข็งแกร่งขึ้น
+        amount_step_val = market_info['limits']['amount'].get('step')
+        amount_min_val = market_info['limits']['amount'].get('min')
+        amount_max_val = market_info['limits']['amount'].get('max')
+        cost_min_val = market_info['limits']['cost'].get('min')
+        cost_max_val = market_info['limits']['cost'].get('max')
+
+        market_info['limits']['amount']['step'] = float(amount_step_val) if amount_step_val is not None else 0.001
+        market_info['limits']['amount']['min'] = float(amount_min_val) if amount_min_val is not None else 0.001
+        market_info['limits']['amount']['max'] = float(amount_max_val) if amount_max_val is not None else sys.float_info.max
+        market_info['limits']['cost']['min'] = float(cost_min_val) if cost_min_val is not None else 5.0
+        market_info['limits']['cost']['max'] = float(cost_max_val) if cost_max_val is not None else sys.float_info.max # แก้ไขตรงนี้
 
         logger.debug(f"DEBUG: Market info limits for {SYMBOL}:")
         logger.debug(f"  Amount: step={market_info['limits']['amount']['step']}, min={market_info['limits']['amount']['min']}, max={market_info['limits']['amount']['max']}")
         logger.debug(f"  Cost: min={market_info['limits']['cost']['min']}, max={market_info['limits']['cost']['max']}")
 
+        # ตั้งค่า Leverage
         try:
             result = exchange.set_leverage(LEVERAGE, SYMBOL)
             logger.info(f"✅ ตั้งค่า Leverage เป็น {LEVERAGE}x สำหรับ {SYMBOL}: {result}")
         except ccxt.ExchangeError as e:
+            # ดักจับ Error เฉพาะที่เกี่ยวกับ Leverage ไม่ถูกต้อง
             if "leverage is not valid" in str(e) or "not valid for this symbol" in str(e):
                 logger.critical(f"❌ Error: Leverage {LEVERAGE}x ไม่ถูกต้องสำหรับ {SYMBOL} บน Binance. โปรดตรวจสอบ Max Allowed Leverage.")
             else:
                 logger.critical(f"❌ Error ในการตั้งค่า Leverage: {e}", exc_info=True)
             send_telegram(f"⛔️ Critical Error: ไม่สามารถตั้งค่า Leverage ได้.\nรายละเอียด: {e}")
-            exit()
+            exit() # ออกจากโปรแกรมทันทีหากตั้ง Leverage ไม่ได้
 
     except ValueError as ve:
         logger.critical(f"❌ Configuration Error: {ve}", exc_info=True)
         send_telegram(f"⛔️ Critical Error: การตั้งค่าเริ่มต้นผิดพลาด.\nรายละเอียด: {ve}")
-        exit()
+        exit() # ออกจากโปรแกรมหากมีปัญหาจากการตั้งค่าพื้นฐาน
     except Exception as e:
         logger.critical(f"❌ ไม่สามารถเชื่อมต่อหรือโหลดข้อมูล Exchange เบื้องต้นได้: {e}", exc_info=True)
         send_telegram(f"⛔️ Critical Error: ไม่สามารถเชื่อมต่อ Exchange ได้\nรายละเอียด: {e}")
-        exit()
+        exit() # ออกจากโปรแกรมหากการเชื่อมต่อ Exchange ล้มเหลว
 
 # ==============================================================================
 # 6. ฟังก์ชันจัดการสถิติ (STATISTICS MANAGEMENT FUNCTIONS)
