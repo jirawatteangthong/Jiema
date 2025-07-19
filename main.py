@@ -22,8 +22,8 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT' # ใช้ 'BTC/USDT' สำหรับ Binance Futures
-TIMEFRAME = '15m'
-LEVERAGE = 34
+TIMEFRAME = '1m'
+LEVERAGE = 14
 TP_DISTANCE_POINTS = 501 # Take Profit ระยะ 501 จุด
 SL_DISTANCE_POINTS = 999 # Stop Loss เริ่มต้น ระยะ 999 จุด
 
@@ -49,7 +49,7 @@ CROSS_THRESHOLD_POINTS = 1 # EMA Cross Threshold
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5 # เงินสำรองใน USDT
-TARGET_POSITION_SIZE_FACTOR = 0.8 # ขนาดโพซิชัน (80% ของ Equity ที่ใช้ได้)
+TARGET_POSITION_SIZE_FACTOR = 0.5 # ขนาดโพซิชัน (80% ของ Equity ที่ใช้ได้)
 
 # --- Order Confirmation & Stability ---
 CONFIRMATION_RETRIES = 15 # จำนวนครั้งที่พยายามยืนยันโพซิชัน
