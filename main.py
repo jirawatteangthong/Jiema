@@ -15,33 +15,31 @@ import math
 # ==============================================================================
 
 # --- API Keys & Credentials (ดึงจาก Environment Variables เพื่อความปลอดภัย) ---
-# **สำคัญมาก: หากใช้ Railway หรือ Production ควรตั้งค่าเหล่านี้ใน Environment Variables**
-# **ไม่ควรใส่ API Key/Secret ตรงๆ ในโค้ดเมื่อ Deploy จริง**
 API_KEY = os.getenv('BINANCE_API_KEY', 'YOUR_BINANCE_API_KEY_HERE_FOR_LOCAL_TESTING')
 SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
-SYMBOL = 'BTC/USDT' # ใช้ 'BTC/USDT' สำหรับ Binance Futures
+SYMBOL = 'BTC/USDT' # *** แก้ไขเป็น 'BTC/USDT' (ไม่มี :USDT) ***
 TIMEFRAME = '15m'
 LEVERAGE = 15 # *** ตั้งเป็น 15x ตามที่ต้องการ ***
 TP_DISTANCE_POINTS = 501 # Take Profit ระยะ 501 จุด
-SL_DISTANCE_POINTS = 999 # Stop Loss เริ่มต้น ระยะ 999 จุด
+SL_DISTANCE_POINTS = 999 # Stop Loss เริ่มต้น ระยะ 999 จุด (จากราคาเข้า)
 
 # --- Trailing Stop Loss Parameters (2 Steps) ---
-# สำหรับ Long Position:
-# Trigger 1: เมื่อราคาขึ้นไปถึง (ราคาเข้า + TRAIL_SL_STEP1_TRIGGER_LONG_POINTS)
+# สำหรับ Long Position: (ราคาวิ่งขึ้น)
+# Trigger 1: เมื่อราคากำไรถึง X จุด (จากราคาเข้า)
 # SL ใหม่ 1: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 200 # ราคากำไร 300 จุด จากราคาเข้า
-TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -200 # SL ใหม่ที่ ราคาเข้า - 400 จุด
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 150 # ราคากำไร 300 จุด จากราคาเข้า
+TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -400 # SL ใหม่ที่ ราคาเข้า - 400 จุด
 
-# Trigger 2: เมื่อราคาขึ้นไปถึง (ราคาเข้า + TRAIL_SL_STEP2_TRIGGER_LONG_POINTS)
+# Trigger 2: เมื่อราคากำไรถึง Y จุด (จากราคาเข้า)
 # SL ใหม่ 2: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG)
-TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 300 # ราคากำไร 400 จุด จากราคาเข้า
+TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 200 # ราคากำไร 400 จุด จากราคาเข้า
 TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100 # SL ใหม่ที่ ราคาเข้า + 100 จุด (กันทุน+กำไร)
 
-# สำหรับ Short Position: (ยังไม่ได้กำหนดในโค้ด ต้องกลับด้าน logic และค่า)
+# สำหรับ Short Position: (ราคาวิ่งลง) - **ต้องเพิ่ม Logic ใน monitor_position() หากต้องการเทรด Short**
 # TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300 # ราคากำไร 300 จุด (ราคาลง 300)
-# TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 400  # SL ใหม่ที่ ราคาเข้า + 400 จุด
+# TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 400  # SL ใหม่ที่ ราคาเข้า + 400 จุด (SL อยู่เหนือราคาเข้า)
 
 # TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 400 # ราคากำไร 400 จุด (ราคาลง 400)
 # TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100 # SL ใหม่ที่ ราคาเข้า - 100 จุด (กันทุน+กำไร)
@@ -62,7 +60,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TESTING')
 
 # --- Files & Paths ---
-STATS_FILE = 'trading_stats.json' # หากใช้ Railway Volume ให้เปลี่ยนเป็น '/data/trading_stats.json'
+STATS_FILE = 'trading_stats.json' # ควรเปลี่ยนเป็น '/data/trading_stats.json' หากใช้ Railway Volume
 
 # --- Bot Timing ---
 MAIN_LOOP_SLEEP_SECONDS = 30 # ลดเวลา Main Loop เพื่อให้เห็นผลเร็วขึ้นในการทดสอบ
@@ -75,7 +73,7 @@ MONTHLY_REPORT_MINUTE = 5
 # 2. การตั้งค่า Logging
 # ==============================================================================
 logging.basicConfig(
-    level=logging.DEBUG, # *** ตั้งค่าเป็น INFO สำหรับการใช้งานปกติ เพื่อลด Log ***
+    level=logging.DEBUG, # *** ตั้งค่าเป็น INFO สำหรับการใช้งานปกติ ***
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
@@ -141,7 +139,7 @@ def setup_exchange():
         exchange.load_markets()
         logger.info("✅ เชื่อมต่อกับ Binance Futures Exchange สำเร็จ และโหลด Markets แล้ว.")
 
-        market_info = exchange.market(SYMBOL)
+        market_info = exchange.market(SYMBOL) # *** ใช้ SYMBOL ที่แก้ไขแล้ว ('BTC/USDT') ***
         if not market_info:
             raise ValueError(f"ไม่พบข้อมูลตลาดสำหรับสัญลักษณ์ {SYMBOL}")
 
@@ -343,27 +341,37 @@ def get_portfolio_balance() -> float:
     return 0.0
 
 def get_current_position() -> dict | None:
-    retries = 3
+    retries = 5 # เพิ่มจำนวน Retries เป็น 5
     for i in range(retries):
         try:
             logger.info(f"🔍 กำลังดึงโพซิชันปัจจุบันจาก Exchange (Attempt {i+1}/{retries})...")
+            time.sleep(1) # เพิ่ม delay ตรงนี้อีก 1 วินาที เพื่อให้ Exchange มีเวลาอัปเดตสถานะ
             positions = exchange.fetch_positions([SYMBOL])
-            logger.info(f"INFO: Raw positions fetched from Exchange: {positions}")
+            logger.info(f"INFO: Raw positions fetched from Exchange (Attempt {i+1}): {positions}")
             time.sleep(0.5)
 
             for pos in positions:
-                if pos['symbol'] == SYMBOL and float(pos['contracts']) != 0:
-                    pos_amount = float(pos['contracts'])
-                    return {
-                        'symbol': pos['symbol'],
-                        'side': 'long' if pos_amount > 0 else 'short',
-                        'contracts': abs(pos_amount),
-                        'entryPrice': float(pos['entryPrice']),
-                        'unrealizedPnl': float(pos['unrealizedPnl']),
-                        'liquidationPrice': float(pos['liquidationPrice']) if pos['liquidationPrice'] else None,
-                        'info': pos
-                    }
-            logger.info("ℹ️ ไม่พบโพซิชันที่เปิดอยู่บน Exchange สำหรับ SYMBOL นี้.")
+                if 'symbol' in pos and 'contracts' in pos:
+                    pos_amount = float(pos.get('contracts', 0) or pos.get('positionAmt', 0))
+                    entry_price_val = float(pos.get('entryPrice', 0))
+                    unrealized_pnl_val = float(pos.get('unrealizedPnl', 0))
+                    liquidation_price_val = float(pos.get('liquidationPrice', 0)) if pos.get('liquidationPrice') else None
+
+                    if pos['symbol'] == SYMBOL and pos_amount != 0:
+                        logger.info(f"✅ พบโพซิชัน {pos['symbol']}: Side={pos_amount > 0 and 'long' or 'short'}, Contracts={abs(pos_amount):,.8f}, Entry={entry_price_val:,.2f}")
+                        return {
+                            'symbol': pos['symbol'],
+                            'side': 'long' if pos_amount > 0 else 'short',
+                            'contracts': abs(pos_amount),
+                            'entryPrice': entry_price_val,
+                            'unrealizedPnl': unrealized_pnl_val,
+                            'liquidationPrice': liquidation_price_val,
+                            'info': pos # เก็บ info ไว้เผื่อใช้
+                        }
+                else:
+                    logger.debug(f"DEBUG: Skipping position entry due to missing 'symbol' or 'contracts': {pos}")
+
+            logger.info(f"ℹ️ ไม่พบโพซิชันที่เปิดอยู่บน Exchange สำหรับ SYMBOL นี้หลังจากตรวจสอบ {len(positions)} รายการ.")
             return None
         except (ccxt.NetworkError, ccxt.ExchangeError) as e:
             logger.warning(f"⚠️ Error fetching positions (Attempt {i+1}/{retries}): {e}. Retrying in 15 seconds...")
@@ -427,7 +435,7 @@ def check_ema_cross() -> str | None:
         ema50_current = calculate_ema(closes, 50)
         ema200_current = calculate_ema(closes, 200)
 
-        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:.2f}, EMA200={ema200_current:.2f}")
+        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:,.2f}, EMA200={ema200_current:,.2f}")
 
         if None in [ema50_current, ema200_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
@@ -451,12 +459,12 @@ def check_ema_cross() -> str | None:
         if last_ema_position_status == 'below' and current_ema_position == 'above' and \
            ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
-            logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:.2f})")
+            logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:,.2f})")
 
         elif last_ema_position_status == 'above' and current_ema_position == 'below' and \
              ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
-            logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:.2f})")
+            logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:,.2f})")
 
         if cross_signal is not None:
             logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
@@ -538,7 +546,6 @@ def calculate_order_details(available_usdt: float, price: float) -> tuple[float,
     # ให้ใช้ Minimum Notional ของ Exchange แทน และแจ้งเตือน
     if target_notional_for_order_raw < min_notional_exchange:
         logger.info(f"ℹ️ Calculated notional from percentage ({target_notional_for_order_raw:,.2f}) is below exchange minimum ({min_notional_exchange:,.2f}). Will attempt to open at exchange minimum ({target_notional_for_order:,.2f}).")
-        # target_notional_for_order ก็จะถูกกำหนดด้วย max() ข้างบนแล้ว
 
     # *** สิ้นสุดส่วนแก้ไข ***
 
@@ -555,7 +562,7 @@ def calculate_order_details(available_usdt: float, price: float) -> tuple[float,
         logger.warning(f"⚠️ Calculated contracts to open is 0 after all adjustments. (Target notional: {target_notional_for_order:,.2f} USDT, Current price: {price:,.2f}, Min exchange amount: {min_exchange_amount:.8f}). This means calculated size is too small or rounded to zero.")
         return (0, 0)
 
-    if available_usdt < required_margin + MARGIN_BUFFER_USDT: # ตรวจสอบ Margin สุดท้าย (รวม Buffer)
+    if available_usdt < required_margin + MARGIN_BUFFER_USDT:
         logger.error(f"❌ Margin not sufficient. Available: {available_usdt:,.2f}, Required: {required_margin:,.2f} (for trade) + {MARGIN_BUFFER_USDT} (Buffer) = {required_margin + MARGIN_BUFFER_USDT:,.2f} USDT.")
         return (0, 0)
 
@@ -625,7 +632,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
                     )
                     return True, confirmed_entry_price
                 else:
-                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.8f}, ได้: {actual_size:,.8f}). Tolerance: {size_tolerance:.8f}. Retrying...")
+                    logger.warning(f"⚠️ ขนาดโพซิชันไม่ตรงกัน (คาดหวัง: {expected_contracts:,.8f}, ได้: {actual_size:,.8f}). Tolerance: {size_tolerance:,.8f}. Retrying...")
             else:
                 logger.warning(f"⚠️ ไม่พบโพซิชันที่ตรงกัน (คาดหวัง: {expected_direction.upper()}) หรือไม่พบโพซิชันเลย. Retrying...")
 
@@ -777,7 +784,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
     cancel_all_open_tp_sl_orders()
     time.sleep(1)
 
-    market_info_precision_price = 'price'
+    market_info_precision_price = 'price' # market_info['precision']['price']
 
     tp_price_formatted = round_to_precision(current_tp_price, market_info_precision_price)
     sl_price_formatted = round_to_precision(current_sl_price, market_info_precision_price)
@@ -859,11 +866,13 @@ def monitor_position(current_market_price: float):
                 close_reason = "TP"
                 emoji = "✅"
             elif current_position_details['sl_step'] >= 2 and \
-                 abs(closed_price - (current_position_details['entry_price'] + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG)) <= tolerance_points:
+                 current_position_details['sl_price'] and \
+                 abs(closed_price - (current_position_details['sl_price'])) <= tolerance_points:
                 close_reason = "SL (กันทุน Step 2)"
                 emoji = "🛡️"
             elif current_position_details['sl_step'] >= 1 and \
-                 abs(closed_price - (current_position_details['entry_price'] + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG)) <= tolerance_points:
+                 current_position_details['sl_price'] and \
+                 abs(closed_price - (current_position_details['sl_price'])) <= tolerance_points:
                 close_reason = "SL (กันทุน Step 1)"
                 emoji = "🛡️"
             elif current_position_details['initial_sl_price'] and \
@@ -876,11 +885,13 @@ def monitor_position(current_market_price: float):
                 emoji = "✅"
             # TODO: เพิ่ม Logic สำหรับ Short Trailing SL
             # elif current_position_details['sl_step'] >= 2 and \
-            #      abs(closed_price - (current_position_details['entry_price'] + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT)) <= tolerance_points:
+            #      current_position_details['sl_price'] and \
+            #      abs(closed_price - (current_position_details['sl_price'])) <= tolerance_points:
             #     close_reason = "SL (กันทุน Step 2)"
             #     emoji = "🛡️"
             # elif current_position_details['sl_step'] >= 1 and \
-            #      abs(closed_price - (current_position_details['entry_price'] + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT)) <= tolerance_points:
+            #      current_position_details['sl_price'] and \
+            #      abs(closed_price - (current_position_details['sl_price'])) <= tolerance_points:
             #     close_reason = "SL (กันทุน Step 1)"
             #     emoji = "🛡️"
             elif current_position_details['initial_sl_price'] and \
@@ -1100,7 +1111,7 @@ def monthly_report_scheduler():
             time.sleep(60)
 
 # ==============================================================================
-# 15. ฟังก์ชันเริ่มต้นบอท (BOT STARTUP FUNCTIONS)
+# 14. ฟังก์ชันเริ่มต้นบอท (BOT STARTUP FUNCTIONS)
 # ==============================================================================
 def send_startup_message():
     global initial_balance
@@ -1127,7 +1138,7 @@ def send_startup_message():
         logger.error(f"❌ เกิดข้อผิดพลาดในการส่งข้อความเริ่มต้น: {e}", exc_info=True)
 
 # ==============================================================================
-# 16. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
+# 15. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
 # ==============================================================================
 def main():
     global current_position_details, last_ema_position_status
@@ -1150,9 +1161,7 @@ def main():
 
     logger.info("🚀 บอทเข้าสู่ Main Loop แล้วและพร้อมทำงาน...")
 
-    # *** ตั้งค่านี้เพื่อบังคับเปิด Long ออเดอร์ในรอบแรกของการรันเท่านั้น! ***
-    # เปลี่ยนเป็น False เมื่อทดสอบเสร็จแล้ว เพื่อกลับไปใช้ Logic EMA Cross
-    force_open_initial_order = True
+    force_open_initial_order = True # *** ตั้งค่านี้เพื่อบังคับเปิด Long ออเดอร์ในรอบแรกของการรันเท่านั้น! ***
 
     while True:
         try:
