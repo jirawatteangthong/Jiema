@@ -19,7 +19,7 @@ API_KEY = os.getenv('BINANCE_API_KEY', 'YOUR_BINANCE_API_KEY_HERE_FOR_LOCAL_TEST
 SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING')
 
 # --- Trade Parameters ---
-SYMBOL = 'BTC/USDT' # *** แก้ไขเป็น 'BTC/USDT' (ไม่มี :USDT) ***
+SYMBOL = 'BTC/USDT:USDT' # *** แก้ไขเป็น 'BTC/USDT' (ไม่มี :USDT) ***
 TIMEFRAME = '15m'
 LEVERAGE = 34 # *** ใช้ Leverage 34x ตามโค้ดที่คุณบอกว่าทำงานได้ดี ***
 TP_DISTANCE_POINTS = 501 # Take Profit ระยะ 501 จุด
