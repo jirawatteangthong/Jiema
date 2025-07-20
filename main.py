@@ -1136,7 +1136,7 @@ def send_startup_message():
         initial_balance = get_portfolio_balance()
         startup_time = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
-        message = f"""🔄 <b>บอทเริ่มทำงาน (โหมดทดลองเปิด Long ทันที)</b>
+        message = f"""🔄 <b>บอทเริ่มทำงาน เฮงๆเด้อ🎉</b>
 <b>🤖 EMA Cross Trading Bot</b>
 <b>💰 ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
 <b>⏰ เวลาเริ่ม:</b> <code>{startup_time}</code>
