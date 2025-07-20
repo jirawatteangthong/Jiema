@@ -44,6 +44,17 @@ TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100 # SL ใหม่ที่ ราคา�
 # TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 400 # ราคากำไร 400 จุด (ราคาลง 400)
 # TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100 # SL ใหม่ที่ ราคาเข้า - 100 จุด (กันทุน+กำไร)
 
+# สำหรับ Short Position: (ราคาวิ่งลง)
+# Trigger 1: เมื่อราคากำไรถึง X จุด (จากราคาเข้า)
+# SL ใหม่ 1: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT)
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300 # ราคากำไร 300 จุด (ราคาลง 300 จุดจากราคาเข้า)
+TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 400  # SL ใหม่ที่ ราคาเข้า + 400 จุด (SL อยู่เหนือราคาเข้า, เป็น Stop Loss ที่ลดลง)
+
+# Trigger 2: เมื่อราคากำไรถึง Y จุด (จากราคาเข้า)
+# SL ใหม่ 2: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT)
+TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 400 # ราคากำไร 400 จุด (ราคาลง 400 จุดจากราคาเข้า)
+TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100 # SL ใหม่ที่ ราคาเข้า - 100 จุด (SL อยู่ต่ำกว่าราคาเข้า, กันทุน+กำไร)
+
 CROSS_THRESHOLD_POINTS = 1 # EMA Cross Threshold (ไม่ได้ใช้ในการทดลองนี้)
 
 # --- Risk Management ---
@@ -836,7 +847,6 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
         send_telegram(f"⛔️ Unexpected Error (TP/SL): {e}")
         return False
 
-
 # ==============================================================================
 # 13. ฟังก์ชันตรวจสอบสถานะและบริหารโพซิชัน (MONITORING FUNCTIONS)
 # ==============================================================================
@@ -866,7 +876,7 @@ def monitor_position(current_market_price: float):
 
         tolerance_points = current_position_details['entry_price'] * TP_SL_BE_PRICE_TOLERANCE_PERCENT
 
-        # *** ปรับปรุง Logic การระบุสาเหตุการปิด (เพื่อให้รองรับ Trailing SL) ***
+        # *** ปรับปรุง Logic การระบุสาเหตุการปิด (เพื่อให้รองรับ Trailing SL ทั้ง Long/Short) ***
         if current_position_details['side'] == 'long':
             if closed_price >= (current_position_details['entry_price'] + TP_DISTANCE_POINTS) - tolerance_points:
                 close_reason = "TP"
@@ -890,17 +900,17 @@ def monitor_position(current_market_price: float):
             if closed_price <= (current_position_details['entry_price'] - TP_DISTANCE_POINTS) + tolerance_points:
                 close_reason = "TP"
                 emoji = "✅"
-            # TODO: เพิ่ม Logic สำหรับ Short Trailing SL ในการระบุสาเหตุปิด
-            # elif current_position_details['sl_step'] >= 2 and \
-            #      current_position_details['sl_price'] and \
-            #      abs(closed_price - current_position_details['sl_price']) <= tolerance_points:
-            #     close_reason = "SL (กันทุน Step 2)"
-            #     emoji = "🛡️"
-            # elif current_position_details['sl_step'] >= 1 and \
-            #      current_position_details['sl_price'] and \
-            #      abs(closed_price - current_position_details['sl_price']) <= tolerance_points:
-            #     close_reason = "SL (กันทุน Step 1)"
-            #     emoji = "🛡️"
+            # Logic การระบุสาเหตุปิดสำหรับ Short Trailing SL
+            elif current_position_details['sl_step'] >= 2 and \
+                 current_position_details['sl_price'] and \
+                 abs(closed_price - current_position_details['sl_price']) <= tolerance_points:
+                close_reason = "SL (กันทุน Step 2)"
+                emoji = "🛡️"
+            elif current_position_details['sl_step'] >= 1 and \
+                 current_position_details['sl_price'] and \
+                 abs(closed_price - current_position_details['sl_price']) <= tolerance_points:
+                close_reason = "SL (กันทุน Step 1)"
+                emoji = "🛡️"
             elif current_position_details['initial_sl_price'] and \
                  closed_price >= (current_position_details['initial_sl_price']) - tolerance_points:
                 close_reason = "SL (เริ่มต้น)"
@@ -949,15 +959,16 @@ def monitor_position(current_market_price: float):
             current_position_details['sl_price'] = sl_price_calc
 
 
-        # --- Logic สำหรับ SL กันทุน 2 Step ---
+        # --- Logic สำหรับ SL กันทุน 2 Step (สำหรับทั้ง Long และ Short) ---
         pnl_in_points = 0 # กำไร/ขาดทุนในหน่วยจุด
         if side == 'long':
             pnl_in_points = current_market_price - entry_price
         elif side == 'short':
-            pnl_in_points = entry_price - current_market_price
+            pnl_in_points = entry_price - current_market_price # สำหรับ Short, pnl_in_points จะเป็นบวกเมื่อราคาลดลง (กำไร)
 
         current_sl_to_use = current_position_details['sl_price'] # ราคา SL ที่ตั้งอยู่ปัจจุบัน
 
+        # --- Long Position Trailing SL ---
         if side == 'long':
             # Step 1: ราคากำไรถึงจุด Trigger (TRAIL_SL_STEP1_TRIGGER_LONG_POINTS)
             if current_sl_step == 0 and pnl_in_points >= TRAIL_SL_STEP1_TRIGGER_LONG_POINTS:
@@ -993,43 +1004,50 @@ def monitor_position(current_market_price: float):
                 )
                 current_position_details['sl_price'] = new_sl_price
 
+        # --- Short Position Trailing SL ---
         elif side == 'short':
-            # --- TODO: เพิ่ม Logic สำหรับ Short Position ที่นี่ พร้อมแจ้งเตือน Telegram ---
-            # ต้องกำหนดค่าคงที่ TRAIL_SL_STEPX_TRIGGER_SHORT_POINTS และ TRAIL_SL_STEPX_NEW_SL_POINTS_SHORT ในส่วน Configuration ก่อน
-            # และปรับ Logic ให้เหมาะสมกับทิศทาง Short
-            # ตัวอย่าง:
-            # if current_sl_step == 0 and pnl_in_points >= TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS:
-            #     new_sl_price = entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT # SL อยู่เหนือราคาเข้า
-            #     current_position_details['sl_step'] = 1
-            #     logger.info(f"⬇️ Short: ราคาถึง Step 1 ({pnl_in_points:,.0f} จุดกำไร). เลื่อน SL จาก {current_sl_to_use:,.2f} ไปที่ {new_sl_price:,.2f}")
-            #     send_telegram(f"⬇️ <b>Short Position - SL เลื่อน! (Step 1)</b>\n"
-            #                   f"ราคาเข้า: {entry_price:,.2f}\n"
-            #                   f"ราคาปัจจุบัน: {current_market_price:,.2f}\n"
-            #                   f"SL ใหม่: <code>{new_sl_price:,.2f}</code> ({TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT:+,} จุดจากราคาเข้า)")
-            #     set_tpsl_for_position(side, current_contracts, new_sl_price, current_position_details['tp_price'])
-            #     current_position_details['sl_price'] = new_sl_price
-            # elif current_sl_step == 1 and pnl_in_points >= TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS:
-            #     new_sl_price = entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT # SL อยู่ต่ำกว่าราคาเข้า (กันทุน+กำไร)
-            #     current_position_details['sl_step'] = 2
-            #     logger.info(f"💰 Short: ราคาถึง Step 2 ({pnl_in_points:,.0f} จุดกำไร). เลื่อน SL จาก {current_sl_to_use:,.2f} ไปที่ {new_sl_price:,.2f} (กันทุน+กำไร)")
-            #     send_telegram(f"💰 <b>Short Position - SL เลื่อน! (Step 2)</b>\n"
-            #                   f"ราคาเข้า: {entry_price:,.2f}\n"
-            #                   f"ราคาปัจจุบัน: {current_market_price:,.2f}\n"
-            #                   f"SL ใหม่: <code>{new_sl_price:,.2f}</code> ({TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT:+,} จุดจากราคาเข้า - กันทุน)")
-            #     set_tpsl_for_position(side, current_contracts, new_sl_price, current_position_details['tp_price'])
-            #     current_position_details['sl_price'] = new_sl_price
-            pass
+            # Step 1: ราคากำไรถึงจุด Trigger (TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS)
+            if current_sl_step == 0 and pnl_in_points >= TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS:
+                new_sl_price = entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT
+                current_position_details['sl_step'] = 1
+                logger.info(f"⬇️ Short: ราคาถึง Step 1 ({pnl_in_points:,.0f} จุดกำไร). เลื่อน SL จาก {current_sl_to_use:,.2f} ไปที่ {new_sl_price:,.2f}")
+                send_telegram(f"⬇️ <b>Short Position - SL เลื่อน! (Step 1)</b>\n"
+                              f"ราคาเข้า: {entry_price:,.2f}\n"
+                              f"ราคาปัจจุบัน: {current_market_price:,.2f}\n"
+                              f"SL ใหม่: <code>{new_sl_price:,.2f}</code> ({TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT:+,} จุดจากราคาเข้า)")
+                set_tpsl_for_position(
+                    side,
+                    current_contracts,
+                    new_sl_price,
+                    current_position_details['tp_price']
+                )
+                current_position_details['sl_price'] = new_sl_price
+
+            # Step 2: ราคากำไรถึงจุด Trigger (TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS)
+            elif current_sl_step == 1 and pnl_in_points >= TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS:
+                new_sl_price = entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT
+                current_position_details['sl_step'] = 2
+                logger.info(f"💰 Short: ราคาถึง Step 2 ({pnl_in_points:,.0f} จุดกำไร). เลื่อน SL จาก {current_sl_to_use:,.2f} ไปที่ {new_sl_price:,.2f} (กันทุน+กำไร)")
+                send_telegram(f"💰 <b>Short Position - SL เลื่อน! (Step 2)</b>\n"
+                              f"ราคาเข้า: {entry_price:,.2f}\n"
+                              f"ราคาปัจจุบัน: {current_market_price:,.2f}\n"
+                              f"SL ใหม่: <code>{new_sl_price:,.2f}</code> ({TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT:+,} จุดจากราคาเข้า - กันทุน)")
+                set_tpsl_for_position(
+                    side,
+                    current_contracts,
+                    new_sl_price,
+                    current_position_details['tp_price']
+                )
+                current_position_details['sl_price'] = new_sl_price
 
 
     # 3. ถ้าไม่มีโพซิชันเปิดอยู่ (ทั้งใน Exchange และในบอท)
     else:
-        # หากบอทคิดว่ามีโพซิชัน แต่ Exchange บอกว่าไม่มี (อาจเกิดจากบอท restart หรือ sync หลุด)
-        # ให้เคลียร์สถานะในบอท และยกเลิกคำสั่งที่อาจค้างอยู่
-        if current_position_details:
+        if current_position_details: # บอทมีข้อมูล แต่ Exchange บอกว่าไม่มี => สถานะหลุด sync
             logger.warning("⚠️ พบว่าบอทมีข้อมูลโพซิชันเก่า แต่ Exchange แจ้งว่าไม่มีโพซิชันเปิดอยู่. กำลังเคลียร์สถานะบอท...")
             send_telegram(f"⚠️ คำเตือน: สถานะโพซิชันในบอทไม่ตรงกับ Exchange. กำลังรีเซ็ตและยกเลิกคำสั่งที่ค้างอยู่.")
             try:
-                exchange.cancel_all_orders(SYMBOL) # ยกเลิกคำสั่งทั้งหมดสำหรับ SYMBOL นี้
+                exchange.cancel_all_orders(SYMBOL)
                 logger.info(f"✅ ยกเลิกคำสั่งที่ค้างอยู่ทั้งหมดสำหรับ {SYMBOL} เรียบร้อยแล้ว.")
             except Exception as e:
                 logger.warning(f"❌ ไม่สามารถยกเลิกคำสั่งทั้งหมดสำหรับ {SYMBOL} ได้: {e}")
@@ -1037,8 +1055,7 @@ def monitor_position(current_market_price: float):
             save_monthly_stats()
         else:
             logger.info("🔎 ไม่มีโพซิชันเปิดอยู่.")
-
-
+            
 # ==============================================================================
 # 14. ฟังก์ชันรายงานประจำเดือน (MONTHLY REPORT FUNCTIONS)
 # ==============================================================================
