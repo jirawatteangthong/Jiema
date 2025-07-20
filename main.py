@@ -495,7 +495,8 @@ def check_ema_cross() -> str | None:
 def round_to_precision(value: float, precision_type: str) -> float:
     """ปัดค่าให้เป็นไปตาม Precision ที่ Exchange กำหนด"""
     if market_info and 'precision' in market_info and precision_type in market_info['precision']:
-        return float(exchange.decimal_to_precision(value, exchange.ROUND, market_info['precision'][precision_type]))
+        # *** แก้ไขบรรทัดนี้: เปลี่ยน exchange.ROUND เป็น ccxt.ROUND ***
+        return float(exchange.decimal_to_precision(value, ccxt.ROUND, market_info['precision'][precision_type]))
     else:
         logger.warning(f"⚠️ ไม่พบ Precision สำหรับ '{precision_type}'. ใช้ round() ปกติ.")
         return round(value, 8)
