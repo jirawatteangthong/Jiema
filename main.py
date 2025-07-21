@@ -29,7 +29,7 @@ SL_DISTANCE_POINTS = 999 # Stop Loss เริ่มต้น ระยะ 999 �
 # สำหรับ Long Position: (ราคาวิ่งขึ้น)
 # Trigger 1: เมื่อราคากำไรถึง X จุด (จากราคาเข้า)
 # SL ใหม่ 1: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300 # ราคากำไร 300 จุด จากราคาเข้า
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 250 # ราคากำไร 300 จุด จากราคาเข้า
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -400 # SL ใหม่ที่ ราคาเข้า - 400 จุด
 
 # Trigger 2: เมื่อราคากำไรถึง Y จุด (จากราคาเข้า)
@@ -47,7 +47,7 @@ TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100 # SL ใหม่ที่ ราคา�
 # สำหรับ Short Position: (ราคาวิ่งลง)
 # Trigger 1: เมื่อราคากำไรถึง X จุด (จากราคาเข้า)
 # SL ใหม่ 1: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300 # ราคากำไร 300 จุด (ราคาลง 300 จุดจากราคาเข้า)
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 250 # ราคากำไร 300 จุด (ราคาลง 300 จุดจากราคาเข้า)
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 400  # SL ใหม่ที่ ราคาเข้า + 400 จุด (SL อยู่เหนือราคาเข้า, เป็น Stop Loss ที่ลดลง)
 
 # Trigger 2: เมื่อราคากำไรถึง Y จุด (จากราคาเข้า)
@@ -354,11 +354,11 @@ def get_portfolio_balance() -> float:
     return 0.0
 
 def get_current_position() -> dict | None:
-    retries = 5 # เพิ่มจำนวน Retries เป็น 5
+    retries = 5
     for i in range(retries):
         try:
             logger.info(f"🔍 กำลังดึงโพซิชันปัจจุบันจาก Exchange (Attempt {i+1}/{retries})...")
-            time.sleep(1) # เพิ่ม delay ตรงนี้อีก 1 วินาที เพื่อให้ Exchange มีเวลาอัปเดตสถานะ
+            time.sleep(1)
             positions = exchange.fetch_positions([SYMBOL])
             logger.info(f"INFO: Raw positions fetched from Exchange (Attempt {i+1}): {positions}")
             time.sleep(0.5)
@@ -366,20 +366,23 @@ def get_current_position() -> dict | None:
             for pos in positions:
                 if 'symbol' in pos and 'contracts' in pos:
                     pos_amount = float(pos.get('contracts', 0) or pos.get('positionAmt', 0))
+                    # ใช้ side ที่ CCXT normalize มาให้แล้วโดยตรงจะถูกต้องที่สุด
+                    pos_side = pos.get('side') # 'long' or 'short'
+                    
                     entry_price_val = float(pos.get('entryPrice', 0))
                     unrealized_pnl_val = float(pos.get('unrealizedPnl', 0))
                     liquidation_price_val = float(pos.get('liquidationPrice', 0)) if pos.get('liquidationPrice') else None
 
-                    if pos['symbol'] == SYMBOL and pos_amount != 0:
-                        logger.info(f"✅ พบโพซิชัน {pos['symbol']}: Side={pos_amount > 0 and 'long' or 'short'}, Contracts={abs(pos_amount):,.8f}, Entry={entry_price_val:,.2f}")
+                    if pos['symbol'] == SYMBOL and pos_amount != 0 and pos_side: # ต้องมี side ด้วย
+                        logger.info(f"✅ พบโพซิชัน {pos['symbol']}: Side={pos_side}, Contracts={abs(pos_amount):,.8f}, Entry={entry_price_val:,.2f}")
                         return {
                             'symbol': pos['symbol'],
-                            'side': 'long' if pos_amount > 0 else 'short',
+                            'side': pos_side, # *** ใช้ pos_side ที่ CCXT จัดการให้แล้ว ***
                             'contracts': abs(pos_amount),
                             'entryPrice': entry_price_val,
                             'unrealizedPnl': unrealized_pnl_val,
                             'liquidationPrice': liquidation_price_val,
-                            'info': pos # เก็บ info ไว้เผื่อใช้
+                            'info': pos
                         }
                 else:
                     logger.debug(f"DEBUG: Skipping position entry due to missing 'symbol' or 'contracts': {pos}")
@@ -398,7 +401,7 @@ def get_current_position() -> dict | None:
     logger.error(f"❌ Failed to fetch positions after {retries} attempts.")
     send_telegram(f"⛔️ API Error: ล้มเหลวในการดึงโพซิชันหลังจาก {retries} ครั้ง.")
     return None
-
+    
 # ==============================================================================
 # 9. ฟังก์ชันคำนวณ Indicators (INDICATOR CALCULATION FUNCTIONS)
 # ==============================================================================
