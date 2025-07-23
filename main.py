@@ -27,26 +27,18 @@ SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (2 Steps) ---
 # สำหรับ Long Position: (ราคาวิ่งขึ้น)
-# Trigger 1: เมื่อราคากำไรถึง X จุด (จากราคาเข้า)
-# SL ใหม่ 1: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 250 # ราคากำไร 300 จุด จากราคาเข้า
-TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -450 # SL ใหม่ที่ ราคาเข้า - 400 จุด
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 350
+TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
-# Trigger 2: เมื่อราคากำไรถึง Y จุด (จากราคาเข้า)
-# SL ใหม่ 2: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG)
-TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 400 # ราคากำไร 400 จุด จากราคาเข้า
-TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100 # SL ใหม่ที่ ราคาเข้า + 100 จุด (กันทุน+กำไร)
+TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 460
+TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100
 
 # สำหรับ Short Position: (ราคาวิ่งลง)
-# Trigger 1: เมื่อราคากำไรถึง X จุด (จากราคาเข้า)
-# SL ใหม่ 1: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 250 # ราคากำไร 300 จุด (ราคาลง 300 จุดจากราคาเข้า)
-TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 450  # SL ใหม่ที่ ราคาเข้า + 400 จุด (SL อยู่เหนือราคาเข้า, เป็น Stop Loss ที่ลดลง)
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 350
+TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
-# Trigger 2: เมื่อราคากำไรถึง Y จุด (จากราคาเข้า)
-# SL ใหม่ 2: SL จะไปอยู่ที่ (ราคาเข้า + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT)
-TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 400 # ราคากำไร 400 จุด (ราคาลง 400 จุดจากราคาเข้า)
-TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100 # SL ใหม่ที่ ราคาเข้า - 100 จุด (SL อยู่ต่ำกว่าราคาเข้า, กันทุน+กำไร)
+TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 460
+TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100
 
 CROSS_THRESHOLD_POINTS = 1
 
@@ -64,11 +56,12 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TESTING')
 
 # --- Files & Paths ---
-STATS_FILE = 'trading_stats.json' # ควรเปลี่ยนเป็น '/data/trading_stats.json' หากใช้ Railway Volume
+STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
-FAST_LOOP_INTERVAL_SECONDS = 10  # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
+FAST_LOOP_INTERVAL_SECONDS = 10 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
 EMA_CALC_INTERVAL_SECONDS = 180 # สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
+TRADE_COOLDOWN_SECONDS = 900 # *** เพิ่ม: ระยะเวลา Cooldown หลังปิดเทรด (15 นาที) ***
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20
 MONTHLY_REPORT_HOUR = 0
@@ -78,7 +71,7 @@ MONTHLY_REPORT_MINUTE = 5
 # 2. การตั้งค่า Logging
 # ==============================================================================
 logging.basicConfig(
-    level=logging.INFO, # ตั้งค่าเป็น INFO สำหรับการใช้งานปกติ
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log', encoding='utf-8'),
@@ -100,7 +93,8 @@ portfolio_balance = 0.0
 last_monthly_report_date = None
 initial_balance = 0.0
 last_ema_position_status = None
-last_ema_calc_time = datetime.min # ตัวแปรสำหรับเวลาคำนวณ EMA ครั้งสุดท้าย
+last_ema_calc_time = datetime.min
+last_trade_closed_time = datetime.min # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด ***
 
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
@@ -132,7 +126,7 @@ def setup_exchange():
         exchange = ccxt.binance({
             'apiKey': API_KEY,
             'secret': SECRET,
-            'sandbox': False, # ตั้งเป็น False สำหรับบัญชีจริง, True สำหรับ Testnet
+            'sandbox': False,
             'enableRateLimit': True,
             'options': {
                 'defaultType': 'future',
@@ -838,7 +832,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
 # ==============================================================================
 
 def monitor_position(current_market_price: float):
-    global current_position_details, last_ema_position_status, monthly_stats
+    global current_position_details, last_ema_position_status, monthly_stats, last_trade_closed_time
 
     logger.info(f"🔄 กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
 
@@ -910,7 +904,9 @@ def monitor_position(current_market_price: float):
             logger.warning(f"⚠️ ไม่สามารถยกเลิกคำสั่งทั้งหมดสำหรับ {SYMBOL} ได้หลังปิดโพซิชัน: {e}")
             send_telegram(f"⚠️ คำเตือน: ไม่สามารถยกเลิกคำสั่งทั้งหมดสำหรับ {SYMBOL} ได้หลังปิดโพซิชัน\nรายละเอียด: {e}")
 
-        current_position_details = None
+        current_position_details = None # รีเซ็ตสถานะโพซิชันในบอท
+        last_ema_position_status = None # *** แก้ไข: รีเซ็ตสถานะ EMA ด้วย เมื่อโพซิชันปิด ***
+        last_trade_closed_time = datetime.now() # *** เพิ่ม: บันทึกเวลาที่ปิดเทรดล่าสุด ***
         save_monthly_stats()
         return
 
@@ -1130,7 +1126,7 @@ def send_startup_message():
         initial_balance = get_portfolio_balance()
         startup_time = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
-        message = f"""🔄 <b>บอทเริ่มทำงาน🤑</b>
+        message = f"""🔄 <b>บอทเริ่มทำงาน💰💸</b>
 <b>🤖 EMA Cross Trading Bot</b>
 <b>💰 ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
 <b>⏰ เวลาเริ่ม:</b> <code>{startup_time}</code>
@@ -1152,7 +1148,7 @@ def send_startup_message():
 # 16. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
 # ==============================================================================
 def main():
-    global current_position_details, last_ema_position_status, last_ema_calc_time
+    global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time
 
     try:
         setup_exchange()
@@ -1172,12 +1168,10 @@ def main():
 
     logger.info("🚀 บอทเข้าสู่ Main Loop แล้วและพร้อมทำงาน...")
 
-    # *** ตั้งค่านี้เพื่อบังคับเปิด Long ออเดอร์ในรอบแรกของการรันเท่านั้น! ***
-    force_open_initial_order = False # ตั้งเป็น True สำหรับการทดสอบเปิด Long ทันที
-    # เปลี่ยนเป็น False เมื่อทดสอบเสร็จแล้ว เพื่อกลับไปใช้ Logic EMA Cross
+    force_open_initial_order = False # ตั้งเป็น True สำหรับการทดสอบเปิด Long ทันที/False เพื่อ ใช้emaคำนวณ
     
-    # กำหนดเวลาเริ่มต้นสำหรับ EMA Calculation เพื่อให้รันในรอบแรก หรือในรอบที่ต้องการ
-    last_ema_calc_time = datetime.min # หรือ datetime.now() - timedelta(seconds=EMA_CALC_INTERVAL_SECONDS + 1)
+    last_ema_calc_time = datetime.min # กำหนดเวลาเริ่มต้นสำหรับ EMA Calculation
+    last_trade_closed_time = datetime.min # กำหนดเวลาเริ่มต้นสำหรับ Cooldown
 
     while True:
         try:
@@ -1211,24 +1205,28 @@ def main():
 
             # --- 3. ตรวจสอบสัญญาณและเปิดโพซิชันใหม่ (ถ้าไม่มีโพซิชันเปิดอยู่) ---
             if current_position_details is None:
-                # โหมดบังคับเปิดออเดอร์ครั้งแรก (สำหรับการทดสอบ)
-                if force_open_initial_order:
+                # ตรวจสอบ Cooldown ก่อน
+                if (current_time - last_trade_closed_time).total_seconds() < TRADE_COOLDOWN_SECONDS:
+                    time_left_cooldown = TRADE_COOLDOWN_SECONDS - (current_time - last_trade_closed_time).total_seconds()
+                    logger.info(f"⏳ อยู่ในช่วง Cooldown หลังปิดเทรด. จะเปิดเทรดใหม่ได้ในอีก {time_left_cooldown:,.0f} วินาที.")
+                # โหมดบังคับเปิดออเดอร์ครั้งแรก (สำหรับการทดสอบ) - จะทำงานถ้าไม่มีโพซิชันและไม่อยู่ในช่วง Cooldown
+                elif force_open_initial_order:
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่ และตั้งค่าให้บังคับเปิด Long ออเดอร์ครั้งแรก.")
                     send_telegram("✨ <b>ทดสอบ:</b> กำลังบังคับเปิด Long ออเดอร์เพื่อทดสอบ TP/SL.")
 
-                    market_order_success, confirmed_entry_price = open_market_order('long', current_price) # บังคับเปิด 'long'
+                    market_order_success, confirmed_entry_price = open_market_order('long', current_price)
 
                     if market_order_success and confirmed_entry_price:
                         logger.info(f"✅ บังคับเปิด Long ออเดอร์สำเร็จ. บอทจะดูแล TP/SL ในรอบถัดไป.")
-                        force_open_initial_order = False # ตั้งเป็น False เพื่อไม่ให้เปิดซ้ำ
+                        force_open_initial_order = False
                     else:
                         logger.warning(f"⚠️ ไม่สามารถบังคับเปิด Long ออเดอร์ได้. โปรดตรวจสอบ Log.")
-                # โหมด EMA Cross ปกติ (เมื่อ force_open_initial_order เป็น False)
+                # โหมด EMA Cross ปกติ (เมื่อ force_open_initial_order เป็น False และไม่อยู่ในช่วง Cooldown)
                 else:
                     # ตรวจสอบว่าถึงเวลาคำนวณ EMA หรือยัง
                     if (current_time - last_ema_calc_time).total_seconds() >= EMA_CALC_INTERVAL_SECONDS:
                         logger.info("🔍 ไม่มีโพซิชันเปิดอยู่. ถึงเวลาตรวจสอบสัญญาณ EMA Cross เพื่อเปิดโพซิชัน...")
-                        signal = check_ema_cross() # <<< บอทจะคำนวณ EMA Cross ตรงนี้
+                        signal = check_ema_cross()
                         last_ema_calc_time = current_time # อัปเดตเวลาที่คำนวณ EMA ล่าสุด
 
                         if signal:
