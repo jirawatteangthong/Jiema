@@ -27,14 +27,14 @@ SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (2 Steps) ---
 # สำหรับ Long Position: (ราคาวิ่งขึ้น)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 350
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
 TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 460
 TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100
 
 # สำหรับ Short Position: (ราคาวิ่งลง)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 350
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 460
@@ -59,7 +59,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
-FAST_LOOP_INTERVAL_SECONDS = 10 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
+FAST_LOOP_INTERVAL_SECONDS = 3 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
 EMA_CALC_INTERVAL_SECONDS = 180 # สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
 TRADE_COOLDOWN_SECONDS = 900 # *** เพิ่ม: ระยะเวลา Cooldown หลังปิดเทรด (15 นาที) ***
 ERROR_RETRY_SLEEP_SECONDS = 60
