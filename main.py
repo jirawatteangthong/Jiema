@@ -59,7 +59,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
-FAST_LOOP_INTERVAL_SECONDS = 3 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
+FAST_LOOP_INTERVAL_SECONDS = 2 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
 EMA_CALC_INTERVAL_SECONDS = 180 # สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
 TRADE_COOLDOWN_SECONDS = 900 # *** เพิ่ม: ระยะเวลา Cooldown หลังปิดเทรด (15 นาที) ***
 ERROR_RETRY_SLEEP_SECONDS = 60
@@ -777,7 +777,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
         return False
 
     cancel_all_open_tp_sl_orders()
-    time.sleep(1)
+    time.sleep(3)
 
     market_info_precision_price = 'price'
 
@@ -1136,7 +1136,7 @@ def send_startup_message():
 <b>📈 Trailing SL (Short):</b> Step1:{TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS}pts->SL({TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT:+,}pts), Step2:{TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS}pts->SL({TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT:+,}pts)
 <b>🔧 Margin Buffer:</b> <code>{MARGIN_BUFFER_USDT:,.0f} USDT</code>
 <b>🌐 Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
-<b>🔍 กำลังรอเปิด Long ออเดอร์แรก...</b>"""
+<b>🔍 กำลังรอเปิดออเดอร์แรก...</b>"""
 
         send_telegram(message)
         logger.info("✅ ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
