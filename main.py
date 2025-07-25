@@ -647,12 +647,16 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
 # 11. ฟังก์ชันจัดการคำสั่งซื้อขาย
 # ==============================================================================
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float | None]:
-    global current_position_details
+    global current_position_details, last_trade_closed_time
 
-    if (datetime.now() - last_trade_closed_time).total_seconds() < TRADE_COOLDOWN_SECONDS:
-    logger.warning("❌ ยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน → ไม่อนุญาตให้เปิด order")
-    send_telegram("⚠️ ยังไม่พ้นช่วง cooldown 15 นาทีหลังปิดโพซิชัน บอทจะไม่เปิดออเดอร์")
-    return False, None
+    # ✅ [1] ตรวจสอบ cooldown 15 นาที
+    if last_trade_closed_time:
+        seconds_since_close = (datetime.now() - last_trade_closed_time).total_seconds()
+        if seconds_since_close < TRADE_COOLDOWN_SECONDS:
+            time_left = TRADE_COOLDOWN_SECONDS - seconds_since_close
+            logger.warning(f"❌ ยังไม่พ้นช่วง cooldown → เหลืออีก {time_left:.0f} วินาที")
+            send_telegram(f"⚠️ บอทยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน\nจะไม่เปิดออเดอร์ใหม่จนกว่าจะครบ {TRADE_COOLDOWN_SECONDS // 60} นาที")
+            return False, None
 
     try:
         balance = get_portfolio_balance()
