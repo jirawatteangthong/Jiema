@@ -59,7 +59,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
-FAST_LOOP_INTERVAL_SECONDS = 2 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
+FAST_LOOP_INTERVAL_SECONDS = 3 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
 EMA_CALC_INTERVAL_SECONDS = 180 # สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
 TRADE_COOLDOWN_SECONDS = 900 # *** เพิ่ม: ระยะเวลา Cooldown หลังปิดเทรด (15 นาที) ***
 ERROR_RETRY_SLEEP_SECONDS = 60
@@ -649,6 +649,11 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float | None]:
     global current_position_details
 
+    if (datetime.now() - last_trade_closed_time).total_seconds() < TRADE_COOLDOWN_SECONDS:
+    logger.warning("❌ ยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน → ไม่อนุญาตให้เปิด order")
+    send_telegram("⚠️ ยังไม่พ้นช่วง cooldown 15 นาทีหลังปิดโพซิชัน บอทจะไม่เปิดออเดอร์")
+    return False, None
+
     try:
         balance = get_portfolio_balance()
         if balance <= MARGIN_BUFFER_USDT:
@@ -777,7 +782,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
         return False
 
     cancel_all_open_tp_sl_orders()
-    time.sleep(3)
+    time.sleep(1)
 
     market_info_precision_price = 'price'
 
@@ -1126,7 +1131,7 @@ def send_startup_message():
         initial_balance = get_portfolio_balance()
         startup_time = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
 
-        message = f"""🔄 <b>บอทเริ่มทำงาน💰💸</b>
+        message = f"""🔄 <b>บอทเริ่มทำงาน💰</b>
 <b>🤖 EMA Cross Trading Bot</b>
 <b>💰 ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
 <b>⏰ เวลาเริ่ม:</b> <code>{startup_time}</code>
@@ -1136,7 +1141,7 @@ def send_startup_message():
 <b>📈 Trailing SL (Short):</b> Step1:{TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS}pts->SL({TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT:+,}pts), Step2:{TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS}pts->SL({TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT:+,}pts)
 <b>🔧 Margin Buffer:</b> <code>{MARGIN_BUFFER_USDT:,.0f} USDT</code>
 <b>🌐 Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
-<b>🔍 กำลังรอเปิดออเดอร์แรก...</b>"""
+<b>🔍 กำลังรอเปิดออเดอร์...</b>"""
 
         send_telegram(message)
         logger.info("✅ ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
@@ -1209,7 +1214,8 @@ def main():
                 if (current_time - last_trade_closed_time).total_seconds() < TRADE_COOLDOWN_SECONDS:
                     time_left_cooldown = TRADE_COOLDOWN_SECONDS - (current_time - last_trade_closed_time).total_seconds()
                     logger.info(f"⏳ อยู่ในช่วง Cooldown หลังปิดเทรด. จะเปิดเทรดใหม่ได้ในอีก {time_left_cooldown:,.0f} วินาที.")
-                # โหมดบังคับเปิดออเดอร์ครั้งแรก (สำหรับการทดสอบ) - จะทำงานถ้าไม่มีโพซิชันและไม่อยู่ในช่วง Cooldown
+                    continue #🔥เทสบอทให้ลบส่วนนี้ออก
+                    
                 elif force_open_initial_order:
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่ และตั้งค่าให้บังคับเปิด Long ออเดอร์ครั้งแรก.")
                     send_telegram("✨ <b>ทดสอบ:</b> กำลังบังคับเปิด Long ออเดอร์เพื่อทดสอบ TP/SL.")
