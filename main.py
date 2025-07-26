@@ -40,7 +40,7 @@ TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 460
 TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100
 
-CROSS_THRESHOLD_POINTS = 1
+CROSS_THRESHOLD_POINTS = 15
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -493,7 +493,8 @@ def check_ema_cross() -> str | None:
 # ==============================================================================
 
 def check_ema_signal_and_trade(current_price: float):
-    global last_trade_closed_time, current_position_details
+    global last_trade_side
+    global current_position_details, last_trade_closed_time
 
     # ✅ 1. เช็ก cooldown ก่อนเปิด order
     cooldown_remaining = TRADE_COOLDOWN_SECONDS - (datetime.now() - last_trade_closed_time).total_seconds()
@@ -512,12 +513,12 @@ def check_ema_signal_and_trade(current_price: float):
         logger.info("🔍 ไม่พบสัญญาณ EMA Cross.")
         return
 
-    # ✅ ไม่ให้เปิดฝั่งเดิมซ้ำ
+    # ✅ 4. ไม่ให้เปิดฝั่งเดิมซ้ำ (กันเปิดซ้ำจากการ TP/SL แล้วเปิดฝั่งเดิมทันที)
     if signal == last_trade_side:
         logger.info(f"🔁 ข้ามการเปิดออเดอร์: สัญญาณ {signal.upper()} ซ้ำกับฝั่งล่าสุดที่เพิ่งเปิด")
         return
 
-    # ✅ 4. สั่งเปิดออเดอร์ตามสัญญาณ
+    # ✅ 5. เปิดออเดอร์ใหม่ตามสัญญาณ
     logger.info(f"📈 พบสัญญาณ EMA Cross: {signal.upper()} → สั่งเปิดออเดอร์")
     open_market_order(signal, current_price)
     
