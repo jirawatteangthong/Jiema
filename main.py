@@ -493,22 +493,27 @@ def check_ema_cross() -> str | None:
 # ==============================================================================
 
 def check_ema_signal_and_trade(current_price: float):
-    global last_trade_closed_time
+    global last_trade_closed_time, current_position_details
 
-    # 1. เช็ก cooldown ก่อนเปิด order
-    if last_trade_closed_time:
-        seconds_since = (datetime.now() - last_trade_closed_time).total_seconds()
-        if seconds_since < 900:  # 15 นาที
-            logger.info(f"⏳ ยังไม่ครบ cooldown 15 นาที (เหลือ {900 - seconds_since:.0f} วินาที)")
-            return
-
-    # 2. ตรวจสัญญาณ EMA cross
-    signal = check_ema_cross()
-    if not signal:
+    # ✅ 1. เช็ก cooldown ก่อนเปิด order
+    cooldown_remaining = TRADE_COOLDOWN_SECONDS - (datetime.now() - last_trade_closed_time).total_seconds()
+    if cooldown_remaining > 0:
+        logger.info(f"⏳ ยังอยู่ในช่วง Cooldown อีก {cooldown_remaining:.0f} วินาที")
         return
 
-    # 3. สั่งเปิดออเดอร์ตามสัญญาณ
-    logger.info(f"📈 พบสัญญาณ: {signal.upper()} → สั่งเปิดออเดอร์")
+    # ✅ 2. ห้ามเปิดถ้ามีโพซิชันอยู่
+    if current_position_details is not None:
+        logger.info("📌 มีโพซิชันเปิดอยู่แล้ว บอทจะไม่เปิดโพซิชันใหม่.")
+        return
+
+    # ✅ 3. ตรวจสัญญาณ EMA cross
+    signal = check_ema_cross()
+    if not signal:
+        logger.info("🔍 ไม่พบสัญญาณ EMA Cross.")
+        return
+
+    # ✅ 4. สั่งเปิดออเดอร์ตามสัญญาณ
+    logger.info(f"📈 พบสัญญาณ EMA Cross: {signal.upper()} → สั่งเปิดออเดอร์")
     open_market_order(signal, current_price)
     
 # ==============================================================================
@@ -1168,17 +1173,6 @@ def main():
                     logger.info(f"⏳ อยู่ในช่วง Cooldown หลังปิดเทรด. จะเปิดเทรดใหม่ได้ในอีก {time_left_cooldown:,.0f} วินาที.")
                     continue #🔥เทสบอทให้ลบส่วนนี้ออก
                     
-                elif force_open_initial_order:
-                    logger.info("🔍 ไม่มีโพซิชันเปิดอยู่ และตั้งค่าให้บังคับเปิด Long ออเดอร์ครั้งแรก.")
-                    send_telegram("✨ <b>ทดสอบ:</b> กำลังบังคับเปิด Long ออเดอร์เพื่อทดสอบ TP/SL.")
-
-                    market_order_success, confirmed_entry_price = open_market_order('long', current_price)
-
-                    if market_order_success and confirmed_entry_price:
-                        logger.info(f"✅ บังคับเปิด Long ออเดอร์สำเร็จ. บอทจะดูแล TP/SL ในรอบถัดไป.")
-                        force_open_initial_order = False
-                    else:
-                        logger.warning(f"⚠️ ไม่สามารถบังคับเปิด Long ออเดอร์ได้. โปรดตรวจสอบ Log.")
                 # โหมด EMA Cross ปกติ (เมื่อ force_open_initial_order เป็น False และไม่อยู่ในช่วง Cooldown)
                 else:
                     # ตรวจสอบว่าถึงเวลาคำนวณ EMA หรือยัง
