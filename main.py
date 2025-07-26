@@ -1,4 +1,3 @@
-import ccxt
 import time
 import requests
 from datetime import datetime, timedelta
@@ -20,7 +19,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '15m'
+TIMEFRAME = '30m'
 LEVERAGE = 35
 TP_DISTANCE_POINTS = 501
 SL_DISTANCE_POINTS = 1111
@@ -512,6 +511,11 @@ def check_ema_signal_and_trade(current_price: float):
         logger.info("🔍 ไม่พบสัญญาณ EMA Cross.")
         return
 
+    # ✅ ไม่ให้เปิดฝั่งเดิมซ้ำ
+    if signal == last_trade_side:
+        logger.info(f"🔁 ข้ามการเปิดออเดอร์: สัญญาณ {signal.upper()} ซ้ำกับฝั่งล่าสุดที่เพิ่งเปิด")
+        return
+
     # ✅ 4. สั่งเปิดออเดอร์ตามสัญญาณ
     logger.info(f"📈 พบสัญญาณ EMA Cross: {signal.upper()} → สั่งเปิดออเดอร์")
     open_market_order(signal, current_price)
@@ -757,8 +761,10 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             return False, None
 
         logger.info(f"INFO: Calling confirm_position_entry for direction: {direction}")
+        global last_trade_side
+        last_trade_side = direction  # ✅ จดจำฝั่งล่าสุด
         return confirm_position_entry(direction, order_amount)
-
+        
     except Exception as e:
         logger.error(f"❌ Critical Error in open_market_order: {e}", exc_info=True)
         send_telegram(f"⛔️ Critical Error: ไม่สามารถเปิดออเดอร์ได้\n{str(e)[:200]}...")
@@ -923,6 +929,7 @@ def monitor_position(current_market_price: float):
             send_telegram(f"⚠️ ยกเลิกคำสั่งไม่สำเร็จหลังปิดโพซิชัน: {e}")
 
         current_position_details = None
+        last_trade_side = None
         last_ema_position_status = None
         last_trade_closed_time = datetime.now()
         save_monthly_stats()
