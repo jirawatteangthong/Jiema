@@ -20,9 +20,9 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '3m'
+TIMEFRAME = '15m'
 LEVERAGE = 35
-TP_DISTANCE_POINTS = 201
+TP_DISTANCE_POINTS = 501
 SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (2 Steps) ---
@@ -34,7 +34,7 @@ TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 460
 TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100
 
 # สำหรับ Short Position: (ราคาวิ่งลง)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 150
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 460
@@ -495,6 +495,11 @@ def check_ema_cross() -> str | None:
 def check_ema_signal_and_trade(current_price: float):
     global last_trade_side
     global current_position_details, last_trade_closed_time
+
+    # ไม่ให้เปิดฝั่งเดิมซ้ำ
+    if signal == last_trade_side:
+        logger.info(f"🔁 ข้ามการเปิดออเดอร์: สัญญาณ {signal.upper()} ซ้ำกับฝั่งล่าสุดที่เพิ่งเปิด")
+        return
 
     # ✅ 1. เช็ก cooldown ก่อนเปิด order
     cooldown_remaining = TRADE_COOLDOWN_SECONDS - (datetime.now() - last_trade_closed_time).total_seconds()
@@ -1117,7 +1122,8 @@ def send_startup_message():
 # 16. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
 # ==============================================================================
 def main():
-    global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time
+    global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time, last_trade_side
+    last_trade_side = None
 
     try:
         setup_exchange()
