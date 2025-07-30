@@ -91,6 +91,9 @@ last_monthly_report_date = None
 initial_balance = 0.0
 last_ema_position_status = None
 last_ema_calc_time = datetime.min
+just_closed_by_tp_sl = False
+just_closed_by_tp_sl_lock = threading.Lock()
+just_closed_by_tp_sl_time = datetime.min # เก็บเวลาที่ปิดล่าสุดเพื่อใช้ cooldown เสริม
 last_trade_closed_time = datetime.min  # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด ***
 last_trade_side = None  # ตัวแปรสำหรับจดจำฝั่งล่าสุดที่เทรด
 
@@ -497,19 +500,37 @@ def check_ema_cross() -> str | None:
 # 9.1 ฟังก์ชันวิเคราะห์สัญญาณ EMA และเปิดออเดอร์ (พร้อม Cooldown)
 # ==============================================================================
 def check_ema_signal_and_trade(current_price: float):
-    global last_trade_closed_time, current_position_details, last_trade_side
-    # 1. เช็ก cooldown ก่อนเปิด order
+    global last_trade_closed_time, current_position_details, last_trade_side # เพิ่ม global ที่จำเป็น
+    # เพิ่ม global สำหรับ Flag ใหม่
+    global just_closed_by_tp_sl, just_closed_by_tp_sl_lock, just_closed_by_tp_sl_time
+
+    # 1. เช็ก cooldown ก่อนเปิด order (cooldown หลังปิดด้วย TP/SL หรือด้วยตนเอง)
     cooldown_remaining = TRADE_COOLDOWN_SECONDS - (datetime.now() - last_trade_closed_time).total_seconds()
     if cooldown_remaining > 0:
         logger.info(f" ยังอยู่ในช่วง Cooldown อีก {cooldown_remaining:.0f} วินาที")
         return
 
-    # 2. ห้ามเปิดถ้ามีโพซิชันอยู่
+    # *** 2. เช็ก Flag just_closed_by_tp_sl และเวลาเพิ่มเติม ***
+    # เพิ่ม Cooldown เล็กน้อย (เช่น 10 วินาที) หลังจากปิดด้วย TP/SL เพื่อป้องกันการเปิดสวนทันที
+    with just_closed_by_tp_sl_lock:
+        if just_closed_by_tp_sl:
+             # Cooldown 10 วินาทีหลังจากปิดด้วย TP/SL
+             tp_sl_cooldown_remaining = 10 - (datetime.now() - just_closed_by_tp_sl_time).total_seconds()
+             if tp_sl_cooldown_remaining > 0:
+                 logger.info(f" *** ข้ามการตรวจ EMA: เพิ่งปิดด้วย TP/SL (Flag ยังเป็น True) รออีก {tp_sl_cooldown_remaining:.1f} วินาที *** ")
+                 return # ข้ามการตรวจ EMA ไปก่อน
+             else:
+                 # ถ้าเกิน 10 วินาทีแล้ว ให้รีเซ็ต Flag เพื่อความปลอดภัย
+                 logger.debug(" *** เกิน Cooldown 10 วินาที รีเซ็ต Flag just_closed_by_tp_sl = False (Auto-reset) *** ")
+                 just_closed_by_tp_sl = False
+    # *** สิ้นสุดการเช็ก Flag ***
+
+    # 3. ห้ามเปิดถ้ามีโพซิชันอยู่
     if current_position_details is not None:
         logger.info(" มีโพซิชันเปิดอยู่แล้ว บอทจะไม่เปิดโพซิชันใหม่.")
         return
 
-    # 3. ตรวจสัญญาณ EMA cross
+    # 4. ตรวจสัญญาณ EMA cross
     signal = check_ema_cross()
     if not signal:
         logger.info(" ไม่พบสัญญาณ EMA Cross.")
@@ -520,7 +541,7 @@ def check_ema_signal_and_trade(current_price: float):
         logger.info(f" ข้ามการเปิดออเดอร์: สัญญาณ {signal.upper()} ซ้ำกับฝั่งล่าสุดที่เพิ่งเปิด")
         return
 
-    # 4. สั่งเปิดออเดอร์ตามสัญญาณ
+    # 5. สั่งเปิดออเดอร์ตามสัญญาณ
     logger.info(f" พบสัญญาณ EMA Cross: {signal.upper()} → สั่งเปิดออเดอร์")
     open_market_order(signal, current_price)
 
@@ -880,46 +901,86 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
 # 13. ฟังก์ชันตรวจสอบสถานะและบริหารโพซิชัน (MONITORING FUNCTIONS)
 # ==============================================================================
 def monitor_position(current_market_price: float):
+    """
+    ตรวจสอบสถานะโพซิชันปัจจุบันจาก Exchange และจัดการ TP/SL, Trailing SL
+    รวมถึงการตรวจจับการปิดโพซิชันด้วย TP/SL และ Reversal
+    """
     global current_position_details, last_ema_position_status, monthly_stats, last_trade_closed_time, last_trade_side
+    global just_closed_by_tp_sl, just_closed_by_tp_sl_lock, just_closed_by_tp_sl_time
+    global just_reversed_position, just_reversed_position_time, just_reversed_position_lock
+
     logger.info(f" กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
     pos_info_from_exchange = get_current_position()
 
-    # A. ตรวจสอบว่า "โพซิชันใหม่เข้ามาแทน" (entry/ side เปลี่ยน)
+    # A. ตรวจสอบว่า "โพซิชันใหม่เข้ามาแทน" (Reversal: entry/ side เปลี่ยน)
     if pos_info_from_exchange and current_position_details:
         new_entry = pos_info_from_exchange['entryPrice']
         new_side = pos_info_from_exchange['side']
         old_entry = current_position_details['entry_price']
         old_side = current_position_details['side']
 
+        # *** เพิ่มเงื่อนไขตรวจสอบว่าเป็นการเปลี่ยนฝั่ง (Reversal) หรือไม่ ***
         if abs(new_entry - old_entry) > 1e-6 or new_side != old_side:
-            logger.warning(" ตรวจพบโพซิชันใหม่เข้ามา (entry หรือ side เปลี่ยน)")
+            logger.warning(" ตรวจพบโพซิชันใหม่เข้ามาแทน (Reversal หรือ entry/ side เปลี่ยน)")
             send_telegram(
-                f" <b>ตรวจพบโพซิชันใหม่</b> โดยยังมีสถานะโพซิชันเดิมอยู่\n"
+                f" <b>ตรวจพบโพซิชันใหม่ (Reversal)</b>\n"
                 f" Side เดิม: {old_side.upper()}, Entry: {old_entry:.2f}\n"
                 f" Side ใหม่: {new_side.upper()}, Entry: {new_entry:.2f}\n"
                 f"ระบบจะรีเซ็ตสถานะและยกเลิก TP/SL เดิม")
+
+            # ยกเลิกออเดอร์ที่ค้างอยู่
             try:
                 exchange.cancel_all_orders(SYMBOL)
             except Exception as e:
                 logger.warning(f" ไม่สามารถยกเลิกคำสั่งค้าง: {e}")
-            current_position_details = None
-            last_ema_position_status = None
-            time.sleep(5)
-            return
 
-    # B. โพซิชันปิด (ไม่มีใน exchange แล้ว แต่บอทยังมีข้อมูล)
-    # หรือ ตรวจพบว่า TP/SL ถูก execute แล้ว (โดยการดูว่า open_orders ไม่มี TP/SL แล้ว)
-    if not pos_info_from_exchange and current_position_details:
+            # อัปเดตสถานะใหม่
+            new_position_details = {
+                'symbol': pos_info_from_exchange['symbol'],
+                'side': new_side,
+                'contracts': pos_info_from_exchange['contracts'],
+                'entry_price': new_entry,
+                'unrealized_pnl': pos_info_from_exchange['unrealizedPnl'],
+                'liquidation_price': pos_info_from_exchange['liquidationPrice'],
+                'sl_step': 0,
+                'sl_price': None,
+                'tp_price': None,
+                'initial_sl_price': None
+            }
+            current_position_details = new_position_details
+
+            # รีเซ็ตสถานะเก่า
+            last_ema_position_status = None
+            last_trade_side = None # รีเซ็ตเพื่อป้องกันการเปิดซ้ำ
+
+            # *** อัปเดต Flag สำหรับ Reversal และเวลา ***
+            with just_reversed_position_lock:
+                just_reversed_position = True
+                just_reversed_position_time = datetime.now()
+
+            # รีเซ็ต Flag just_closed_by_tp_sl ด้วย (ถ้ามี)
+            with just_closed_by_tp_sl_lock:
+                 just_closed_by_tp_sl = False
+
+            logger.info(" *** ตั้ง Flag just_reversed_position = True และรีเซ็ต last_trade_side *** ")
+            time.sleep(5) # หน่วงเวลาเล็กน้อย
+            return # ออกจากฟังก์ชันเพื่อประมวลผลใหม่ในรอบถัดไป
+
+    # B. โพซิชันปิด (ไม่มีใน exchange แล้ว แต่บอทยังมีข้อมูล) - กรณี TP/SL ปกติ
+    elif not pos_info_from_exchange and current_position_details:
         # ตรวจสอบ open orders เพื่อดูว่า TP/SL ยังอยู่ไหม
+        tp_sl_orders_exist = False
         try:
             open_orders = exchange.fetch_open_orders(SYMBOL)
             tp_sl_orders = [o for o in open_orders if o.get('reduceOnly') and o.get('type') in ['TAKE_PROFIT_MARKET', 'STOP_MARKET']]
+            tp_sl_orders_exist = len(tp_sl_orders) > 0
         except Exception as e:
             logger.warning(f" ไม่สามารถดึง open orders ได้เพื่อตรวจสอบ TP/SL: {e}")
-            tp_sl_orders = [] # สมมุติว่าไม่มีเพื่อความปลอดภัย
+            # สมมุติว่าไม่มีเพื่อให้รีเซ็ตสถานะได้
+            tp_sl_orders_exist = False
 
         # ถ้าไม่มีข้อมูลจาก exchange และไม่มี TP/SL ค้างอยู่ แสดงว่าโพซิชันถูกปิดแล้ว (อาจด้วย TP/SL)
-        if not tp_sl_orders:
+        if not tp_sl_orders_exist:
             closed_price = current_market_price
             pnl = 0.0
             entry = current_position_details['entry_price']
@@ -932,7 +993,7 @@ def monitor_position(current_market_price: float):
                 pnl = (entry - closed_price) * contracts
 
             send_telegram(
-                f" <b>ปิดโพซิชัน {side.upper()} สําเร็จ</b>\n"
+                f" <b>ปิดโพซิชัน {side.upper()} สำเร็จ</b>\n"
                 f"ราคาออก: <code>{closed_price:.2f}</code>\n"
                 f"PnL(ประมาณ): <code>{pnl:.2f} USDT</code>")
 
@@ -942,16 +1003,39 @@ def monitor_position(current_market_price: float):
                 logger.warning(f" ไม่สามารถยกเลิกคำสั่งทั้งหมดหลังปิดโพซิชัน: {e}")
                 send_telegram(f" ยกเลิกคำสั่งไม่สำเร็จหลังปิดโพซิชัน: {e}")
 
+            # *** อัปเดตสถานะและ Flag พร้อมกัน ***
             current_position_details = None
             last_trade_side = None # รีเซ็ตเพื่อให้สามารถเทรดฝั่งเดียวกันได้หลัง cooldown
             last_ema_position_status = None
             last_trade_closed_time = datetime.now() # อัปเดต cooldown
+
+            # *** ตั้ง Flag ว่าเพิ่งปิดด้วย TP/SL ***
+            with just_closed_by_tp_sl_lock:
+                just_closed_by_tp_sl = True
+                just_closed_by_tp_sl_time = datetime.now()
+
+            # รีเซ็ต Flag Reversal ด้วย
+            with just_reversed_position_lock:
+                just_reversed_position = False
+
             save_monthly_stats()
-            add_trade_result("TP/SL", pnl) # สมมุติว่าเป็นผลจาก TP/SL
+            add_trade_result("TP/SL", pnl)
+            logger.info(" *** ตั้ง Flag just_closed_by_tp_sl = True และรีเซ็ต Flag Reversal *** ")
             return
 
     # C. มีโพซิชันเปิดอยู่ → ดำเนินการจัดการ TP/SL
     elif pos_info_from_exchange and current_position_details:
+        # รีเซ็ต Flag หากยังมีโพซิชันอยู่ (กรณี Reversal แล้วผ่านไปหนึ่งรอบ)
+        with just_reversed_position_lock:
+            if just_reversed_position and (datetime.now() - just_reversed_position_time).total_seconds() > 30:
+                 logger.info(" *** รีเซ็ต Flag just_reversed_position = False (หลัง Reversal ผ่านไปหนึ่งรอบ) *** ")
+                 just_reversed_position = False
+        # รีเซ็ต Flag หากยังมีโพซิชันอยู่ (กรณี just_closed_by_tp_sl)
+        with just_closed_by_tp_sl_lock:
+            if just_closed_by_tp_sl:
+                logger.info(" *** พบว่ายังมีโพซิชันอยู่ รีเซ็ต Flag just_closed_by_tp_sl = False *** ")
+                just_closed_by_tp_sl = False
+
         current_position_details['unrealized_pnl'] = pos_info_from_exchange['unrealizedPnl']
         current_position_details['liquidation_price'] = pos_info_from_exchange['liquidationPrice']
 
@@ -1007,9 +1091,28 @@ def monitor_position(current_market_price: float):
                 logger.warning(f" ยกเลิกคำสั่งค้างไม่สำเร็จ: {e}")
             current_position_details = None
             last_ema_position_status = None
+            last_trade_side = None # รีเซ็ต
+            # รีเซ็ต Flag ทั้งหมด
+            with just_closed_by_tp_sl_lock:
+                if just_closed_by_tp_sl:
+                    logger.info(" *** ไม่มีอะไรเลย รีเซ็ต Flag just_closed_by_tp_sl = False *** ")
+                    just_closed_by_tp_sl = False
+            with just_reversed_position_lock:
+                if just_reversed_position:
+                    logger.info(" *** ไม่มีอะไรเลย รีเซ็ต Flag just_reversed_position = False *** ")
+                    just_reversed_position = False
             save_monthly_stats()
         else:
             logger.info(" ไม่มีโพซิชันเปิดอยู่")
+            # รีเซ็ต Flag หากไม่มีอะไรเลย
+            with just_closed_by_tp_sl_lock:
+                if just_closed_by_tp_sl:
+                     logger.debug(" *** ไม่มีโพซิชัน รีเซ็ต Flag just_closed_by_tp_sl = False (Debug) *** ")
+                     just_closed_by_tp_sl = False
+            with just_reversed_position_lock:
+                if just_reversed_position:
+                     logger.debug(" *** ไม่มีโพซิชัน รีเซ็ต Flag just_reversed_position = False (Debug) *** ")
+                     just_reversed_position = False
 
 # ==============================================================================
 # 14. ฟังก์ชันรายงานประจำเดือน (MONTHLY REPORT FUNCTIONS)
