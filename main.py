@@ -91,11 +91,20 @@ last_monthly_report_date = None
 initial_balance = 0.0
 last_ema_position_status = None
 last_ema_calc_time = datetime.min
+
+# *** เพิ่ม: Flag และ Lock สำหรับการปิดด้วย TP/SL ***
 just_closed_by_tp_sl = False
 just_closed_by_tp_sl_lock = threading.Lock()
 just_closed_by_tp_sl_time = datetime.min # เก็บเวลาที่ปิดล่าสุดเพื่อใช้ cooldown เสริม
+
 last_trade_closed_time = datetime.min  # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด ***
 last_trade_side = None  # ตัวแปรสำหรับจดจำฝั่งล่าสุดที่เทรด
+
+# *** เพิ่ม: Flag และ Lock สำหรับการตรวจจับ Reversal ***
+just_reversed_position = False
+just_reversed_position_time = datetime.min
+just_reversed_position_lock = threading.Lock()
+# *** สิ้นสุดการเพิ่ม Flag และ Lock สำหรับ Reversal ***
 
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
