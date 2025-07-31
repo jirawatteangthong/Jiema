@@ -1087,6 +1087,7 @@ def send_startup_message():
 # ==============================================================================
 def main():
     global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time
+    global waiting_for_cooldown
 
     try:
         setup_exchange()
