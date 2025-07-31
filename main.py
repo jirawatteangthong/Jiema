@@ -1116,84 +1116,84 @@ def monitor_position(current_market_price: float):
             return
 
     # C. มีโพซิชันเปิดอยู่ → ดำเนินการจัดการ TP/SL
-elif pos_info_from_exchange and current_position_details
-    logger.debug(f"DEBUG: เข้าสู่ส่วน C ของ monitor_position - มี Position อยู่")
-    # รีเซ็ต Flag หากยังมีโพซิชันอยู่ (กรณี Reversal แล้วผ่านไปหนึ่งรอบ)
-    with just_reversed_position_lock:
-        if just_reversed_position and (datetime.now() - just_reversed_position_time).total_seconds() > 30:
-             logger.info(" *** รีเซ็ต Flag just_reversed_position = False (หลัง Reversal ผ่านไปหนึ่งรอบ) *** ")
-             just_reversed_position = False
-    # รีเซ็ต Flag หากยังมีโพซิชันอยู่ (กรณี just_closed_by_tp_sl)
-    with just_closed_by_tp_sl_lock:
-        if just_closed_by_tp_sl:
-            logger.info(" *** พบว่ายังมีโพซิชันอยู่ รีเซ็ต Flag just_closed_by_tp_sl = False *** ")
-            just_closed_by_tp_sl = False
+    elif pos_info_from_exchange and current_position_details
+        logger.debug(f"DEBUG: เข้าสู่ส่วน C ของ monitor_position - มี Position อยู่")
+        # รีเซ็ต Flag หากยังมีโพซิชันอยู่ (กรณี Reversal แล้วผ่านไปหนึ่งรอบ)
+        with just_reversed_position_lock:
+            if just_reversed_position and (datetime.now() - just_reversed_position_time).total_seconds() > 30:
+                 logger.info(" *** รีเซ็ต Flag just_reversed_position = False (หลัง Reversal ผ่านไปหนึ่งรอบ) *** ")
+                 just_reversed_position = False
+       # รีเซ็ต Flag หากยังมีโพซิชันอยู่ (กรณี just_closed_by_tp_sl)
+        with just_closed_by_tp_sl_lock:
+            if just_closed_by_tp_sl:
+                 logger.info(" *** พบว่ายังมีโพซิชันอยู่ รีเซ็ต Flag just_closed_by_tp_sl = False *** ")
+                 just_closed_by_tp_sl = False
 
-    # อัปเดตข้อมูลจาก Exchange
-    current_position_details['unrealized_pnl'] = pos_info_from_exchange['unrealizedPnl']
-    current_position_details['liquidation_price'] = pos_info_from_exchange['liquidationPrice']
+       # อัปเดตข้อมูลจาก Exchange
+       current_position_details['unrealized_pnl'] = pos_info_from_exchange['unrealizedPnl']
+       current_position_details['liquidation_price'] = pos_info_from_exchange['liquidationPrice']
 
-    # ดึงค่าจาก current_position_details
-    side = current_position_details['side']
-    entry_price = current_position_details['entry_price']
-    contracts = current_position_details['contracts']
-    sl_step = current_position_details['sl_step']
-    tp_price = current_position_details['tp_price'] # ค่าที่จะถูกตรวจสอบ
-    sl_price = current_position_details['sl_price'] # ค่าที่จะถูกตรวจสอบ
+       # ดึงค่าจาก current_position_details
+       side = current_position_details['side']
+       entry_price = current_position_details['entry_price']
+       contracts = current_position_details['contracts']
+       sl_step = current_position_details['sl_step']
+       tp_price = current_position_details['tp_price'] # ค่าที่จะถูกตรวจสอบ
+       sl_price = current_position_details['sl_price'] # ค่าที่จะถูกตรวจสอบ
 
-    logger.info(
-        f" {side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
+       logger.info(
+           f" {side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
 
-    # เพิ่ม Log เพื่อตรวจสอบค่า TP/SL ปัจจุบัน
-    logger.debug(f"DEBUG: ค่า TP/SL ปัจจุบัน - tp_price: {tp_price}, sl_price: {sl_price}")
+       # เพิ่ม Log เพื่อตรวจสอบค่า TP/SL ปัจจุบัน
+       logger.debug(f"DEBUG: ค่า TP/SL ปัจจุบัน - tp_price: {tp_price}, sl_price: {sl_price}")
 
-    # ตั้ง TP/SL ครั้งแรก
-    if tp_price is None or sl_price is None:
-        logger.info("เงื่อนไข TP/SL เริ่มต้นเป็นจริง (tp_price หรือ sl_price เป็น None) จะตั้ง TP/SL")
-        tp = entry_price + TP_DISTANCE_POINTS if side == 'long' else entry_price - TP_DISTANCE_POINTS
-        sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
+       # ตั้ง TP/SL ครั้งแรก
+       if tp_price is None or sl_price is None:
+           logger.info("เงื่อนไข TP/SL เริ่มต้นเป็นจริง (tp_price หรือ sl_price เป็น None) จะตั้ง TP/SL")
+           tp = entry_price + TP_DISTANCE_POINTS if side == 'long' else entry_price - TP_DISTANCE_POINTS
+           sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
 
-        current_position_details['tp_price'] = tp
-        current_position_details['sl_price'] = sl
-        current_position_details['initial_sl_price'] = sl
+           current_position_details['tp_price'] = tp
+           current_position_details['sl_price'] = sl
+           current_position_details['initial_sl_price'] = sl
 
-        logger.info(f" ตั้ง TP/SL เริ่มต้น → TP: {tp:.2f} | SL: {sl:.2f}")
-        # เพิ่ม Log ก่อนการเรียกฟังก์ชัน
-        logger.debug(f"DEBUG: เรียก set_tpsl_for_position ด้วย parameters - side: {side}, contracts: {contracts}, sl: {sl}, tp: {tp}")
-        success = set_tpsl_for_position(side, contracts, sl, tp)
-        # เพิ่ม Log หลังการเรียกฟังก์ชัน
-        logger.debug(f"DEBUG: set_tpsl_for_position คืนค่า: {success}")
-        if not success:
-             logger.error(" การตั้ง TP/SL เริ่มต้นล้มเหลว!")
-             send_telegram(f" Error: ไม่สามารถตั้ง TP/SL เริ่มต้นได้สำหรับ {side.upper()}")
-        else:
-             logger.info(" การตั้ง TP/SL เริ่มต้นสำเร็จ")
-    else:
-        logger.info("TP/SL ถูกตั้งไว้แล้ว จะตรวจสอบ Trailing SL")
-        # ... (Trailing SL logic - สามารถปรับปรุงได้เช่นกัน ถ้าจำเป็น) ...
-        # เพิ่ม Log เพื่อตรวจสอบเงื่อนไข Trailing SL
-        pnl_points = (current_market_price - entry_price) if side == 'long' else (entry_price - current_market_price)
-        logger.debug(f"DEBUG: ตรวจสอบ Trailing SL - PnL Points: {pnl_points:.2f}, SL Step: {sl_step}")
+           logger.info(f" ตั้ง TP/SL เริ่มต้น → TP: {tp:.2f} | SL: {sl:.2f}")
+           # เพิ่ม Log ก่อนการเรียกฟังก์ชัน
+           logger.debug(f"DEBUG: เรียก set_tpsl_for_position ด้วย parameters - side: {side}, contracts: {contracts}, sl: {sl}, tp: {tp}")
+           success = set_tpsl_for_position(side, contracts, sl, tp)
+           # เพิ่ม Log หลังการเรียกฟังก์ชัน
+           logger.debug(f"DEBUG: set_tpsl_for_position คืนค่า: {success}")
+           if not success:
+                logger.error(" การตั้ง TP/SL เริ่มต้นล้มเหลว!")
+                send_telegram(f" Error: ไม่สามารถตั้ง TP/SL เริ่มต้นได้สำหรับ {side.upper()}")
+           else:
+                logger.info(" การตั้ง TP/SL เริ่มต้นสำเร็จ")
+       else:
+           logger.info("TP/SL ถูกตั้งไว้แล้ว จะตรวจสอบ Trailing SL")
+           # ... (Trailing SL logic - สามารถปรับปรุงได้เช่นกัน ถ้าจำเป็น) ...
+           # เพิ่ม Log เพื่อตรวจสอบเงื่อนไข Trailing SL
+           pnl_points = (current_market_price - entry_price) if side == 'long' else (entry_price - current_market_price)
+           logger.debug(f"DEBUG: ตรวจสอบ Trailing SL - PnL Points: {pnl_points:.2f}, SL Step: {sl_step}")
 
-        trail_trigger_1 = TRAIL_SL_STEP1_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS
-        trail_trigger_2 = TRAIL_SL_STEP2_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS
-        trail_sl_1 = entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT
-        trail_sl_2 = entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT
+           trail_trigger_1 = TRAIL_SL_STEP1_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS
+           trail_trigger_2 = TRAIL_SL_STEP2_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS
+           trail_sl_1 = entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT
+           trail_sl_2 = entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT
 
-        if sl_step == 0 and pnl_points >= trail_trigger_1:
-            current_position_details['sl_step'] = 1
-            current_position_details['sl_price'] = trail_sl_1
-            logger.info(" SL Step 1 triggered → ย้าย SL")
-            send_telegram(f" <b>SL Step 1</b> | SL ใหม่: <code>{trail_sl_1:.2f}</code>")
-            logger.debug(f"DEBUG: เรียก set_tpsl_for_position สำหรับ Trailing SL Step 1")
-            set_tpsl_for_position(side, contracts, trail_sl_1, tp_price)
-        elif sl_step == 1 and pnl_points >= trail_trigger_2:
-            current_position_details['sl_step'] = 2
-            current_position_details['sl_price'] = trail_sl_2
-            logger.info(" SL Step 2 triggered → ย้าย SL อีกครั้ง")
-            send_telegram(f" <b>SL Step 2</b> | SL ใหม่: <code>{trail_sl_2:.2f}</code>")
-            logger.debug(f"DEBUG: เรียก set_tpsl_for_position สำหรับ Trailing SL Step 2")
-            set_tpsl_for_position(side, contracts, trail_sl_2, tp_price)
+           if sl_step == 0 and pnl_points >= trail_trigger_1:
+               current_position_details['sl_step'] = 1
+               current_position_details['sl_price'] = trail_sl_1
+               logger.info(" SL Step 1 triggered → ย้าย SL")
+               send_telegram(f" <b>SL Step 1</b> | SL ใหม่: <code>{trail_sl_1:.2f}</code>")
+               logger.debug(f"DEBUG: เรียก set_tpsl_for_position สำหรับ Trailing SL Step 1")
+               set_tpsl_for_position(side, contracts, trail_sl_1, tp_price)
+           elif sl_step == 1 and pnl_points >= trail_trigger_2:
+               current_position_details['sl_step'] = 2
+               current_position_details['sl_price'] = trail_sl_2
+               logger.info(" SL Step 2 triggered → ย้าย SL อีกครั้ง")
+               send_telegram(f" <b>SL Step 2</b> | SL ใหม่: <code>{trail_sl_2:.2f}</code>")
+               logger.debug(f"DEBUG: เรียก set_tpsl_for_position สำหรับ Trailing SL Step 2")
+               set_tpsl_for_position(side, contracts, trail_sl_2, tp_price)
    
     # D. ไม่มีโพซิชันทั้งใน exchange และใน bot
     else:
