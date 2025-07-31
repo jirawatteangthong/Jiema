@@ -95,6 +95,7 @@ initial_balance = 0.0
 last_ema_position_status = None
 last_ema_calc_time = datetime.min
 last_trade_closed_time = datetime.min # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด ***
+waiting_for_cooldown = False  # ✅ เพิ่มบรรทัดนี้
 
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
@@ -842,6 +843,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
 
 def monitor_position(current_market_price: float):
     global current_position_details, last_ema_position_status, monthly_stats, last_trade_closed_time
+    global waiting_for_cooldown
 
     logger.info(f"🔄 กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
 
@@ -900,6 +902,7 @@ def monitor_position(current_market_price: float):
         current_position_details = None
         last_ema_position_status = None   
         last_trade_closed_time = datetime.now()
+        waiting_for_cooldown = True 
         save_monthly_stats()
         return
    
@@ -1140,12 +1143,14 @@ def main():
 
             # --- 3. ตรวจสอบสัญญาณและเปิดโพซิชันใหม่ (ถ้าไม่มีโพซิชันเปิดอยู่) ---
             if current_position_details is None:
-                # ตรวจสอบ Cooldown ก่อน
-                if (current_time - last_trade_closed_time).total_seconds() < TRADE_COOLDOWN_SECONDS:
-                    time_left_cooldown = TRADE_COOLDOWN_SECONDS - (current_time - last_trade_closed_time).total_seconds()
-                    logger.info(f"⏳ อยู่ในช่วง Cooldown หลังปิดเทรด. จะเปิดเทรดใหม่ได้ในอีก {time_left_cooldown:,.0f} วินาที.")
-                    continue #🔥เทสบอทให้ลบส่วนนี้ออก
-                    
+                if waiting_for_cooldown:
+                    cooldown_left = TRADE_COOLDOWN_SECONDS - (datetime.now() - last_trade_closed_time).total_seconds()
+                    if cooldown_left > 0:
+                        logger.info(f"🕒 ยังอยู่ในช่วง cooldown ({cooldown_left:.0f} วินาที) → ยังไม่เปิดออเดอร์ใหม่.")
+                        continue
+                    else:
+                        waiting_for_cooldown = False
+                 
                 elif force_open_initial_order:
                     logger.info("🔍 ไม่มีโพซิชันเปิดอยู่ และตั้งค่าให้บังคับเปิด Long ออเดอร์ครั้งแรก.")
                     send_telegram("✨ <b>ทดสอบ:</b> กำลังบังคับเปิด Long ออเดอร์เพื่อทดสอบ TP/SL.")
