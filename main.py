@@ -366,9 +366,9 @@ def get_current_position() -> dict | None:
                             'symbol': pos['symbol'],
                             'side': pos_side,
                             'contracts': abs(pos_amount),
-                            'entryPrice': entry_price_val,
-                            'unrealizedPnl': unrealized_pnl_val,
-                            'liquidationPrice': liquidation_price_val,
+                            'entry_price': entry_price_val,
+                            'unrealized_pnl': unrealized_pnl_val,
+                            'liquidation_price': liquidation_price_val,
                             'info': pos
                         }
                 else:
