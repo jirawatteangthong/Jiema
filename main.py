@@ -849,31 +849,16 @@ def monitor_position(current_market_price: float):
 
     pos_info_from_exchange = get_current_position()
 
-    # ✅ A. ตรวจจับว่า "โพซิชันใหม่เข้ามาแทน" (entry / side เปลี่ยน)
+    # ✅ A. มีโพซิชันทั้งในระบบและใน exchange → อัปเดตข้อมูล
     if pos_info_from_exchange and current_position_details:
-        new_entry = pos_info_from_exchange['entryPrice']
-        new_side = pos_info_from_exchange['side']
-        old_entry = current_position_details['entry_price']
-        old_side = current_position_details['side']
+        current_position_details.update({
+            'entry_price': pos_info_from_exchange['entry_price'],
+            'contracts': pos_info_from_exchange['contracts'],
+            'side': pos_info_from_exchange['side']
+        })
+        return
 
-        if abs(new_entry - old_entry) > 1e-6 or new_side != old_side:
-            logger.warning("⚠️ ตรวจพบโพซิชันใหม่เข้ามา (entry หรือ side เปลี่ยน)")
-            send_telegram(f"⚠️ <b>ตรวจพบโพซิชันใหม่</b> โดยยังมีสถานะโพซิชันเดิมอยู่\n"
-                          f"📉 Side เดิม: {old_side.upper()}, Entry: {old_entry:.2f}\n"
-                          f"📈 Side ใหม่: {new_side.upper()}, Entry: {new_entry:.2f}\n"
-                          f"ระบบจะรีเซ็ตสถานะและยกเลิก TP/SL เดิม")
-
-            try:
-                exchange.cancel_all_orders(SYMBOL)
-            except Exception as e:
-                logger.warning(f"❌ ไม่สามารถยกเลิกคำสั่งค้าง: {e}")
-
-            current_position_details = None
-            last_ema_position_status = None
-            time.sleep(5)
-            return
-
-    # ✅ B. โพซิชันปิด (ไม่มีใน exchange แล้ว แต่บอทยังมีข้อมูล)
+    # ✅ B. ตรวจพบว่าโพซิชัน "หายไปจาก exchange" แต่ระบบยังจำอยู่ → เคลียร์โพซิชัน
     if not pos_info_from_exchange and current_position_details:
         closed_price = current_market_price
         pnl = 0.0
@@ -890,21 +875,32 @@ def monitor_position(current_market_price: float):
                       f"ราคาออก: <code>{closed_price:.2f}</code>\n"
                       f"PnL (ประมาณ): <code>{pnl:.2f} USDT</code>")
 
+        # ✅ เช็กซ้ำว่าปิดจริงหรือไม่ (บางครั้ง Binance ยังอัปเดตช้า)
+        confirm_pos = get_current_position()
+        if confirm_pos:
+            logger.warning("⚠️ ตรวจพบโพซิชันกลับเข้ามาหลัง TP → ข้ามการรีเซ็ตสถานะ")
+            return
+
+        logger.info("🕒 รีเซ็ตสถานะโพซิชัน + เปิด cooldown (กันเปิดสวน)")
+
+        # ✅ รีเซ็ตสถานะ
+        current_position_details = None
+        last_ema_position_status = None
+        last_trade_closed_time = datetime.now()
+        waiting_for_cooldown = True
+
+        save_monthly_stats()
+
+        # ✅ ย้าย cancel_all_orders มาหลังสุด เพื่อให้ Binance fill order เสร็จแน่นอนก่อนยกเลิก
         try:
+            time.sleep(1)  # Buffer เล็กน้อยให้ระบบเคลียร์ภายใน
             exchange.cancel_all_orders(SYMBOL)
         except Exception as e:
             logger.warning(f"⚠️ ไม่สามารถยกเลิกคำสั่งทั้งหมดหลังปิดโพซิชัน: {e}")
             send_telegram(f"⚠️ ยกเลิกคำสั่งไม่สำเร็จหลังปิดโพซิชัน: {e}")
 
-        logger.info("🕒 รีเซ็ตสถานะโพซิชันทันที (ใช้ waiting_for_cooldown คุมการเปิดออเดอร์ใหม่)")
-        #ถ้าอยากหน่วงเวลาในการปิดออเดอร์ ให้เพิ่ม time.sleep(5) 
-
-        current_position_details = None
-        last_ema_position_status = None   
-        last_trade_closed_time = datetime.now()
-        waiting_for_cooldown = True 
-        save_monthly_stats()
         return
+
    
     # ✅ C. มีโพซิชันเปิดอยู่ → ดำเนินการจัดการ TP/SL
     elif pos_info_from_exchange and current_position_details:
