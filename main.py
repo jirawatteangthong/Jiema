@@ -597,11 +597,16 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
 
             if position_info and position_info.get('side') == expected_direction:
                 actual_size = position_info.get('contracts', 0.0)
-                confirmed_entry_price = position_info.get('entryPrice')
+                confirmed_entry_price = position_info.get('entry_price') or position_info.get('entryPrice')
 
                 if math.isclose(actual_size, expected_contracts, rel_tol=size_tolerance):
                     logger.info(f"✅ ยืนยันโพซิชัน {expected_direction.upper()} สำเร็จ:")
-                    logger.info(f"   - Entry Price: {confirmed_entry_price:,.2f}")
+
+                    if confirmed_entry_price is not None:
+                        logger.info(f"   - Entry Price: {confirmed_entry_price:,.2f}")
+                    else:
+                        logger.warning("⚠️ Entry Price ยังเป็น None ใน confirm_position_entry()")
+
                     logger.info(f"   - Size: {actual_size:,.8f} Contracts")
                     logger.info(f"   - Direction: {expected_direction.upper()}")
 
@@ -612,10 +617,10 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
                         'entry_price': confirmed_entry_price,
                         'unrealized_pnl': position_info.get('unrealizedPnl', 0.0),
                         'liquidation_price': position_info.get('liquidationPrice', None),
-                        'sl_step': 0, # เริ่มต้นที่ Step 0
-                        'sl_price': None, # จะถูกตั้งใน monitor_position
-                        'tp_price': None, # จะถูกตั้งใน monitor_position
-                        'initial_sl_price': None # จะถูกบันทึกเมื่อตั้ง SL ครั้งแรก
+                        'sl_step': 0,  # เริ่มต้นที่ Step 0
+                        'sl_price': None,  # จะถูกตั้งใน monitor_position
+                        'tp_price': None,  # จะถูกตั้งใน monitor_position
+                        'initial_sl_price': None  # จะถูกบันทึกเมื่อตั้ง SL ครั้งแรก
                     }
                     logger.info(f"INFO: current_position_details set: {current_position_details}")
 
@@ -623,7 +628,7 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
                     send_telegram(
                         f"🎯 เปิดโพซิชัน {expected_direction.upper()} สำเร็จ!\n"
                         f"📊 ขนาด: {actual_size:,.8f} Contracts\n"
-                        f"💰 Entry: {confirmed_entry_price:,.2f}\n"
+                        f"💰 Entry: {confirmed_entry_price if confirmed_entry_price is not None else 'N/A'}\n"
                         f"📈 P&L: {profit_loss:,.2f} USDT"
                     )
                     return True, confirmed_entry_price
@@ -642,7 +647,6 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
         f"📊 คาดหวัง: {expected_direction.upper()} {expected_contracts:,.8f} Contracts"
     )
     return False, None
-
 
 # ==============================================================================
 # 11. ฟังก์ชันจัดการคำสั่งซื้อขาย
@@ -902,7 +906,7 @@ def monitor_position(current_market_price: float):
 
         # ✅ ย้าย cancel_all_orders มาหลังสุด เพื่อให้ Binance fill order เสร็จแน่นอนก่อนยกเลิก
         try:
-            time.sleep(1)  # Buffer เล็กน้อยให้ระบบเคลียร์ภายใน
+            time.sleep(2)  # Buffer เล็กน้อยให้ระบบเคลียร์ภายใน
             exchange.cancel_all_orders(SYMBOL)
         except Exception as e:
             logger.warning(f"⚠️ ไม่สามารถยกเลิกคำสั่งทั้งหมดหลังปิดโพซิชัน: {e}")
