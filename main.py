@@ -860,16 +860,25 @@ def monitor_position(current_market_price: float):
 
     # ✅ B. ตรวจพบว่าโพซิชัน "หายไปจาก exchange" แต่ระบบยังจำอยู่ → เคลียร์โพซิชัน
     if not pos_info_from_exchange and current_position_details:
+        logger.warning(f"⛔️ current_position_details ขาดข้อมูล: {current_position_details}")
+
+        # ✅ เช็กว่า entry_price มีอยู่ก่อน
+        entry = current_position_details.get('entry_price')
+        contracts = current_position_details.get('contracts')
+        side = current_position_details.get('side')
+
+        if not entry or not contracts or not side:
+            logger.warning("⚠️ ข้อมูล current_position_details ไม่ครบ → ข้ามการคำนวณ PnL")
+            return  # หรือ continue, ตามบริบทคุณ
+
         closed_price = current_market_price
-        pnl = 0.0
-        entry = current_position_details['entry_price']
-        contracts = current_position_details['contracts']
-        side = current_position_details['side']
+        pnl = 0.0  
 
         if side == 'long':
             pnl = (closed_price - entry) * contracts
         else:
             pnl = (entry - closed_price) * contracts
+    
 
         send_telegram(f"✅ <b>ปิดโพซิชัน {side.upper()} สำเร็จ</b>\n"
                       f"ราคาออก: <code>{closed_price:.2f}</code>\n"
