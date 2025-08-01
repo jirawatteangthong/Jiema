@@ -21,7 +21,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
 TIMEFRAME = '1m'
-LEVERAGE = 5
+LEVERAGE = 15
 TP_DISTANCE_POINTS = 201
 SL_DISTANCE_POINTS = 1111
 
