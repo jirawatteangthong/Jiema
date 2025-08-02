@@ -22,7 +22,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
 TIMEFRAME = '1m'
 LEVERAGE = 15
-TP_DISTANCE_POINTS = 201
+TP_DISTANCE_POINTS = 180
 SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (2 Steps) ---
@@ -96,7 +96,9 @@ last_ema_position_status = None
 last_ema_calc_time = datetime.min
 last_trade_closed_time = datetime.min # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด ***
 waiting_for_cooldown = False  # ✅ เพิ่มบรรทัดนี้
-
+recent_tp_close_prices = []
+PRICE_BLACKLIST_RANGE_POINTS = 100  # ห้ามเปิดออเดอร์ใหม่ภายใน 100 points จากราคาปิด TP
+PRICE_BLACKLIST_DURATION_SECONDS = 300  # เก็บราคาใน blacklist นาน 5 นาที
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
 # ==============================================================================
@@ -501,6 +503,40 @@ def round_to_precision(value: float, precision_type: str) -> float:
         logger.warning(f"⚠️ ไม่พบ Precision สำหรับ '{precision_type}'. ใช้ round() ปกติ.")
         return round(value, 8)
 
+def add_tp_close_to_blacklist(close_price: float):
+    """เพิ่มราคาปิด TP เข้าสู่ blacklist"""
+    global recent_tp_close_prices
+    recent_tp_close_prices.append({
+        'price': close_price,
+        'timestamp': datetime.now()
+    })
+    
+    # ทำความสะอาด blacklist โดยเก็บเฉพาะราคาที่ยังไม่หมดอายุ
+    cleanup_price_blacklist()
+    
+    logger.info(f"🚫 เพิ่มราคา {close_price:.2f} เข้า TP Blacklist (±{PRICE_BLACKLIST_RANGE_POINTS} points)")
+    send_telegram(f"🚫 ห้ามเปิดออเดอร์ใกล้ราคา {close_price:.2f} เป็นเวลา {PRICE_BLACKLIST_DURATION_SECONDS//60} นาที")
+
+def cleanup_price_blacklist():
+    """ทำความสะอาด blacklist โดยลบราคาที่หมดอายุแล้ว"""
+    global recent_tp_close_prices
+    current_time = datetime.now()
+    recent_tp_close_prices = [
+        price_data for price_data in recent_tp_close_prices 
+        if (current_time - price_data['timestamp']).total_seconds() < PRICE_BLACKLIST_DURATION_SECONDS
+    ]
+
+def is_price_in_tp_blacklist(current_price: float) -> bool:
+    """ตรวจสอบว่าราคาปัจจุบันอยู่ใน TP blacklist หรือไม่"""
+    cleanup_price_blacklist()  # ทำความสะอาดก่อนตรวจสอบ
+    
+    for price_data in recent_tp_close_prices:
+        if abs(current_price - price_data['price']) <= PRICE_BLACKLIST_RANGE_POINTS:
+            time_left = PRICE_BLACKLIST_DURATION_SECONDS - (datetime.now() - price_data['timestamp']).total_seconds()
+            logger.info(f"🚫 Price {current_price:.2f} is blacklisted (close to TP exit {price_data['price']:.2f}, {time_left:.0f}s remaining)")
+            return True
+    return False
+
 def calculate_order_details(available_usdt: float, price: float) -> tuple[float, float]:
     """
     คำนวณจำนวนสัญญาที่จะเปิดและ Margin ที่ต้องใช้ โดยพิจารณาจาก Exchange Limits
@@ -662,6 +698,12 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             logger.warning(f"🚫 COOLDOWN ACTIVE → เหลืออีก {time_left:.0f} วินาที")
             send_telegram(f"🚫 บอทยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน\nจะไม่เปิดออเดอร์ใหม่จนกว่าจะครบ {TRADE_COOLDOWN_SECONDS // 60} นาที")
             return False, None
+
+    # ตรวจสอบ TP Price Blacklist
+    if is_price_in_tp_blacklist(current_price):
+        logger.warning(f"🚫 ไม่เปิดออเดอร์ - ราคาปัจจุบัน {current_price:.2f} อยู่ใน TP Blacklist")
+        send_telegram(f"🚫 ห้ามเปิดออเดอร์ใหม่\nราคาปัจจุบัน {current_price:.2f} อยู่ใกล้จุดปิด TP เดิม")
+        return False, None
 
     try:
         balance = get_portfolio_balance()
@@ -1007,6 +1049,10 @@ def monitor_position(current_market_price: float):
             f" Size: <code>{contracts:.8f}</code>"
         )
 
+        if pnl > 0:  # กำไร = น่าจะเป็น TP
+            add_tp_close_to_blacklist(closed_price)
+            logger.info(f"📊 ตรวจพบการปิดโพซิชันด้วยกำไร → เพิ่มราคา {closed_price:.2f} เข้า TP Blacklist")
+
         # เช็กซ้ำว่าปิดจริงหรือไม่ (บางครั้ง Binance ยังอัปเดตช้า)
         time.sleep(1)
         confirm_pos = get_current_position()
@@ -1293,6 +1339,12 @@ def main():
                         last_ema_calc_time = current_time  # อัปเดตเวลาที่คำนวณ EMA ล่าสุด
                         
                         if signal:
+                            # ตรวจสอบ TP Blacklist ก่อนเปิดออเดอร์
+                            if is_price_in_tp_blacklist(current_price):
+                                logger.info(f"🚫 มีสัญญาณ {signal.upper()} แต่ราคาอยู่ใน TP Blacklist - ข้ามการเปิดออเดอร์")
+                                send_telegram(f"🚫 สัญญาณ {signal.upper()} ถูกบล็อก\nราคาอยู่ใกล้จุดปิด TP เดิม")
+                                continue
+                            
                             logger.info(f"ตรวจพบสัญญาณ EMA Cross: {signal.upper()}. กำลังพยายามเปิดออเดอร์.")
                             send_telegram(f" <b>SIGNAL:</b> ตรวจพบสัญญาณ EMA Cross: <b>{signal.upper()}</b>")
                             
