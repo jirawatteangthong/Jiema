@@ -652,94 +652,92 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
 # 11. ฟังก์ชันจัดการคำสั่งซื้อขาย
 # ==============================================================================
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float | None]:
-    global current_position_details, last_trade_closed_time
+global current_position_details, last_trade_closed_time, waiting_for_cooldown
 
-    # ✅ [1] ตรวจสอบ cooldown 15 นาที
-    if last_trade_closed_time:
-        seconds_since_close = (datetime.now() - last_trade_closed_time).total_seconds()
-        if seconds_since_close < TRADE_COOLDOWN_SECONDS:
-            time_left = TRADE_COOLDOWN_SECONDS - seconds_since_close
-            logger.warning(f"❌ ยังไม่พ้นช่วง cooldown → เหลืออีก {time_left:.0f} วินาที")
-            send_telegram(f"⚠️ บอทยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน\nจะไม่เปิดออเดอร์ใหม่จนกว่าจะครบ {TRADE_COOLDOWN_SECONDS // 60} นาที")
-            return False, None
-
-    try:
-        balance = get_portfolio_balance()
-        if balance <= MARGIN_BUFFER_USDT:
-            error_msg = f"ยอดคงเหลือ ({balance:,.2f} USDT) ต่ำเกินไป ไม่เพียงพอสำหรับ Margin Buffer ({MARGIN_BUFFER_USDT} USDT)."
-            send_telegram(f"⛔️ Balance Error: {error_msg}")
-            logger.error(f"❌ {error_msg}")
-            return False, None
-
-        order_amount, estimated_used_margin = calculate_order_details(balance, current_price)
-
-        if order_amount <= 0:
-            error_msg = "❌ Calculated order amount is zero or insufficient. Cannot open position."
-            send_telegram(f"⛔️ Order Calculation Error: {error_msg}")
-            logger.error(f"❌ {error_msg}")
-            return False, None
-
-        decimal_places = 0
-        if market_info and 'limits' in market_info and 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None:
-            step_size = market_info['limits']['amount']['step']
-            if step_size < 1:
-                decimal_places = int(round(-math.log10(step_size)))
-
-        logger.info(f"ℹ️ Trading Summary before opening order:")
-        logger.info(f"   - Balance: {balance:,.2f} USDT")
-        logger.info(f"   - Contracts: {order_amount:,.{decimal_places}f}")
-        logger.info(f"   - Required Margin (incl. buffer): {estimated_used_margin + MARGIN_BUFFER_USDT:,.2f} USDT")
-        logger.info(f"   - Direction: {direction.upper()}")
-
-        side = 'buy' if direction == 'long' else 'sell'
-        params = {}
-
-        order = None
-        for attempt in range(3):
-            logger.info(f"⚡️ ส่งคำสั่ง Market Order (Attempt {attempt + 1}/3) - {order_amount:,.{decimal_places}f} Contracts, Direction: {direction.upper()}")
-            try:
-                order = exchange.create_market_order(
-                    symbol=SYMBOL,
-                    side=side,
-                    amount=order_amount,
-                    params=params
-                )
-                if order and order.get('id'):
-                    logger.info(f"✅ Market Order ส่งสำเร็จ: ID → {order.get('id')}, Status: {order.get('status', 'N/A')}")
-                    time.sleep(5)
-                    break
-                else:
-                    logger.warning(f"⚠️ Order response ไม่สมบูรณ์ (Attempt {attempt + 1}/3)")
-
-            except ccxt.NetworkError as e:
-                logger.warning(f"⚠️ Network Error (Attempt {attempt + 1}/3): {e}")
-                if attempt == 2:
-                    send_telegram(f"⛔️ Network Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
-                time.sleep(15)
-
-            except ccxt.ExchangeError as e:
-                logger.warning(f"⚠️ Exchange Error (Attempt {attempt + 1}/3): {e}")
-                if attempt == 2:
-                    send_telegram(f"⛔️ Exchange Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
-                time.sleep(15)
-
-            except Exception as e:
-                logger.error(f"❌ Unexpected error (Attempt {attempt + 1}/3): {e}", exc_info=True)
-                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
-                return False, None
-
-        if not order:
-            logger.error("❌ ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
-            send_telegram("⛔️ Order Failed: ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
-            return False, None
-
-        logger.info(f"INFO: Calling confirm_position_entry for direction: {direction}")
-        return confirm_position_entry(direction, order_amount)
-
-    except Exception as e:
-        logger.error(f"❌ Critical Error in open_market_order: {e}", exc_info=True)
-        send_telegram(f"⛔️ Critical Error: ไม่สามารถเปิดออเดอร์ได้\n{str(e)[:200]}...")
+```
+# *** การแก้ไขหลัก: ตรวจสอบ cooldown อย่างเข้มงวด ***
+if last_trade_closed_time and last_trade_closed_time != datetime.min:
+    seconds_since_close = (datetime.now() - last_trade_closed_time).total_seconds()
+    if seconds_since_close < TRADE_COOLDOWN_SECONDS:
+        time_left = TRADE_COOLDOWN_SECONDS - seconds_since_close
+        logger.warning(f"🚫 COOLDOWN ACTIVE → เหลืออีก {time_left:.0f} วินาที")
+        send_telegram(f"🚫 บอทยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน\nจะไม่เปิดออเดอร์ใหม่จนกว่าจะครบ {TRADE_COOLDOWN_SECONDS // 60} นาที")
         return False, None
+
+try:
+    balance = get_portfolio_balance()
+    if balance <= MARGIN_BUFFER_USDT:
+        error_msg = f"ยอดคงเหลือ ({balance:,.2f} USDT) ต่ำเกินไป ไม่เพียงพอสำหรับ Margin Buffer ({MARGIN_BUFFER_USDT} USDT)."
+        send_telegram(f" Balance Error: {error_msg}")
+        logger.error(f" {error_msg}")
+        return False, None
+
+    order_amount, estimated_used_margin = calculate_order_details(balance, current_price)
+    if order_amount <= 0:
+        error_msg = " Calculated order amount is zero or insufficient. Cannot open position."
+        send_telegram(f" Order Calculation Error: {error_msg}")
+        logger.error(f" {error_msg}")
+        return False, None
+
+    decimal_places = 0
+    if market_info and 'limits' in market_info and 'amount' in market_info['limits'] and 'step' in market_info['limits']['amount'] and market_info['limits']['amount']['step'] is not None:
+        step_size = market_info['limits']['amount']['step']
+        if step_size < 1:
+            decimal_places = int(round(-math.log10(step_size)))
+
+    logger.info(f" Trading Summary before opening order:")
+    logger.info(f" - Balance: {balance:,.2f} USDT")
+    logger.info(f" - Contracts: {order_amount:,.{decimal_places}f}")
+    logger.info(f" - Required Margin (incl. buffer): {estimated_used_margin + MARGIN_BUFFER_USDT:,.2f} USDT")
+    logger.info(f" - Direction: {direction.upper()}")
+
+    side = 'buy' if direction == 'long' else 'sell'
+    params = {}
+    order = None
+
+    for attempt in range(3):
+        logger.info(f"ส่งคำสั่ง Market Order (Attempt {attempt + 1}/3) - {order_amount:,.{decimal_places}f} Contracts, Direction: {direction.upper()}")
+        try:
+            order = exchange.create_market_order(
+                symbol=SYMBOL,
+                side=side,
+                amount=order_amount,
+                params=params
+            )
+            if order and order.get('id'):
+                logger.info(f" Market Order ส่งสำเร็จ: ID → {order.get('id')}, Status: {order.get('status', 'N/A')}")
+                time.sleep(2)
+                break
+            else:
+                logger.warning(f" Order response ไม่สมบูรณ์ (Attempt {attempt + 1}/3)")
+        except ccxt.NetworkError as e:
+            logger.warning(f" Network Error (Attempt {attempt + 1}/3): {e}")
+            if attempt == 2:
+                send_telegram(f" Network Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
+            time.sleep(10)
+        except ccxt.ExchangeError as e:
+            logger.warning(f" Exchange Error (Attempt {attempt + 1}/3): {e}")
+            if attempt == 2:
+                send_telegram(f" Exchange Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
+            time.sleep(10)
+        except Exception as e:
+            logger.error(f" Unexpected error (Attempt {attempt + 1}/3): {e}", exc_info=True)
+            send_telegram(f" Unexpected Error: ไม่สามารถส่งออเดอร์ได้\n{str(e)[:200]}...")
+            return False, None
+
+    if not order:
+        logger.error("ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
+        send_telegram(" Order Failed: ล้มเหลวในการส่งออเดอร์หลังจาก 3 ครั้ง")
+        return False, None
+
+    logger.info(f"INFO: Calling confirm_position_entry for direction: {direction}")
+    return confirm_position_entry(direction, order_amount)
+
+except Exception as e:
+    logger.error(f" Critical Error in open_market_order: {e}", exc_info=True)
+    send_telegram(f" Critical Error: ไม่สามารถเปิดออเดอร์ได้\n{str(e)[:200]}...")
+    return False, None
+```
 
 # ========================================================================
 # 12. ฟังก์ชันตั้งค่า TP/SL/กันทุน (ปรับปรุงสำหรับ Trailing SL) - แก้ไขแล้ว
