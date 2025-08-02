@@ -41,6 +41,9 @@ TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 160
 TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -10
 
 CROSS_THRESHOLD_POINTS = 1
+# --- EMA Parameters ---
+EMA_FAST_PERIOD = 50
+EMA_SLOW_PERIOD = 200
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -414,65 +417,70 @@ def check_ema_cross() -> str | None:
     try:
         retries = 3
         ohlcv = None
+        
+        # คำนวณจำนวนแท่งเทียนที่ต้องการตาม EMA periods
+        min_required_candles = max(EMA_FAST_PERIOD, EMA_SLOW_PERIOD) + 50
+        required_limit = max(EMA_FAST_PERIOD, EMA_SLOW_PERIOD) * 4  # 🔥🔥ใช้ 4 เท่าเพื่อความปลอดภัย
+        
         for i in range(retries):
-            logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA ({i+1}/{retries})...")
+            logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} ({i+1}/{retries})...")
             try:
-                ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=500)
-                time.sleep(0.5)
+                ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=required_limit)
+                time.sleep(0.2)  # ลดเวลา sleep
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-                logger.warning(f"⚠️ Error fetching OHLCV (Attempt {i+1}/{retries}): {e}. Retrying in 15 seconds...")
+                logger.warning(f"⚠️ Error fetching OHLCV (Attempt {i+1}/{retries}): {e}. Retrying in 10 seconds...")
                 if i == retries - 1:
                     send_telegram(f"⛔️ API Error: ไม่สามารถดึง OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
-                time.sleep(15)
+                time.sleep(10)  # ลดเวลา sleep
             except Exception as e:
                 logger.error(f"❌ Unexpected error fetching OHLCV: {e}", exc_info=True)
                 send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึง OHLCV ได้\nรายละเอียด: {e}")
                 return None
 
-        if not ohlcv or len(ohlcv) < 201:
-            logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย 201 แท่ง ได้ {len(ohlcv)}")
-            send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง).")
+        if not ohlcv or len(ohlcv) < min_required_candles:
+            logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย {min_required_candles} แท่ง ได้ {len(ohlcv)}")
+            send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง) สำหรับ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD}")
             return None
 
         closes = [candle[4] for candle in ohlcv]
 
-        ema50_current = calculate_ema(closes, 50)
-        ema200_current = calculate_ema(closes, 200)
+        ema_fast_current = calculate_ema(closes, EMA_FAST_PERIOD)
+        ema_slow_current = calculate_ema(closes, EMA_SLOW_PERIOD)
 
-        logger.info(f"💡 EMA Values: Current EMA50={ema50_current:,.2f}, EMA200={ema200_current:,.2f}")
+        logger.info(f"📊 EMA Values: Current EMA{EMA_FAST_PERIOD}={ema_fast_current:,.2f}, EMA{EMA_SLOW_PERIOD}={ema_slow_current:,.2f}")
 
-        if None in [ema50_current, ema200_current]:
+        if None in [ema_fast_current, ema_slow_current]:
             logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
             return None
 
         current_ema_position = None
-        if ema50_current > ema200_current:
+        if ema_fast_current > ema_slow_current:
             current_ema_position = 'above'
-        elif ema50_current < ema200_current:
+        elif ema_fast_current < ema_slow_current:
             current_ema_position = 'below'
 
         if last_ema_position_status is None:
             if current_ema_position:
                 last_ema_position_status = current_ema_position
                 save_monthly_stats()
-                logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
+                logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
             return None
 
         cross_signal = None
 
         if last_ema_position_status == 'below' and current_ema_position == 'above' and \
-           ema50_current > (ema200_current + CROSS_THRESHOLD_POINTS):
+           ema_fast_current > (ema_slow_current + CROSS_THRESHOLD_POINTS):
             cross_signal = 'long'
-            logger.info(f"🚀 Threshold Golden Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA200({ema200_current:,.2f})")
+            logger.info(f"🚀 Threshold Golden Cross: EMA{EMA_FAST_PERIOD}({ema_fast_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA{EMA_SLOW_PERIOD}({ema_slow_current:,.2f})")
 
         elif last_ema_position_status == 'above' and current_ema_position == 'below' and \
-             ema50_current < (ema200_current - CROSS_THRESHOLD_POINTS):
+             ema_fast_current < (ema_slow_current - CROSS_THRESHOLD_POINTS):
             cross_signal = 'short'
-            logger.info(f"🔻 Threshold Death Cross: EMA50({ema50_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA200({ema200_current:,.2f})")
+            logger.info(f"🔻 Threshold Death Cross: EMA{EMA_FAST_PERIOD}({ema_fast_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA{EMA_SLOW_PERIOD}({ema_slow_current:,.2f})")
 
         if cross_signal is not None:
-            logger.info(f"✨ สัญญาณ EMA Cross ที่ตรวจพบ: {cross_signal.upper()}")
+            logger.info(f"✨ สัญญาณ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} Cross ที่ตรวจพบ: {cross_signal.upper()}")
             if current_ema_position != last_ema_position_status:
                 logger.info(f"ℹ️ EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()} during a cross signal. Updating last_ema_position_status.")
                 last_ema_position_status = current_ema_position
@@ -482,7 +490,7 @@ def check_ema_cross() -> str | None:
             last_ema_position_status = current_ema_position
             save_monthly_stats()
         else:
-            logger.info("🔎 ไม่พบสัญญาณ EMA Cross ที่ชัดเจน.")
+            logger.info(f"🔎 ไม่พบสัญญาณ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} Cross ที่ชัดเจน.")
 
         return cross_signal
 
@@ -490,6 +498,34 @@ def check_ema_cross() -> str | None:
         logger.error(f"❌ เกิดข้อผิดพลาดในการคำนวณ EMA: {e}", exc_info=True)
         send_telegram(f"⛔️ Error: ไม่สามารถคำนวณ EMA ได้\nรายละเอียด: {e}")
         return None
+
+# ฟังก์ชันเสริมสำหรับการปรับเปลี่ยนค่า EMA ระหว่างการทำงาน (ถ้าต้องการ)
+def update_ema_parameters(fast_period: int, slow_period: int):
+    """
+    ปรับเปลี่ยนค่า EMA periods ระหว่างการทำงาน
+    fast_period: ค่า EMA ที่เร็วกว่า (เช่น 10, 20, 50)
+    slow_period: ค่า EMA ที่ช้ากว่า (เช่น 50, 100, 200)
+    """
+    global EMA_FAST_PERIOD, EMA_SLOW_PERIOD, last_ema_position_status
+    
+    if fast_period >= slow_period:
+        logger.error("Fast EMA period ต้องน้อยกว่า Slow EMA period")
+        return False
+    
+    if fast_period < 1 or slow_period < 1:
+        logger.error("EMA periods ต้องมากกว่า 0")
+        return False
+    
+    old_fast = EMA_FAST_PERIOD
+    old_slow = EMA_SLOW_PERIOD
+    
+    EMA_FAST_PERIOD = fast_period
+    EMA_SLOW_PERIOD = slow_period
+    last_ema_position_status = None  # รีเซ็ตสถานะเมื่อเปลี่ยนค่า EMA
+    
+    logger.info(f"🔄 อัปเดตค่า EMA จาก {old_fast}/{old_slow} เป็น {EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD}")
+    send_telegram(f"🔄 เปลี่ยนค่า EMA เป็น {EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD}\nรีเซ็ตสถานะ EMA แล้ว")
+    return True
 
 # ==============================================================================
 # 10. ฟังก์ชันช่วยสำหรับการคำนวณและตรวจสอบออเดอร์
