@@ -1301,9 +1301,9 @@ def monthly_report_scheduler():
         else:
             time.sleep(60)
 
-# ==============================================================================
+# =================================================================
 # 15. ฟังก์ชันเริ่มต้นบอท (BOT STARTUP FUNCTIONS)
-# ==============================================================================
+# =================================================================
 def send_startup_message():
     global initial_balance
     try:
@@ -1343,6 +1343,29 @@ def send_startup_message():
         
     except Exception as e:
         logger.error(f"เกิดข้อผิดพลาดในการส่งข้อความเริ่มต้น: {e}", exc_info=True)
+
+# =================================================================
+# 16. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
+# =================================================================
+def main():
+    global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time
+    global waiting_for_cooldown
+    
+    try:
+        setup_exchange()
+        load_monthly_stats()
+        send_startup_message()
+        
+        monthly_thread = threading.Thread(target=monthly_report_scheduler, daemon=True)
+        monthly_thread.start()
+        logger.info("Monthly Report Scheduler Thread Started.")
+        
+    except Exception as e:
+        error_msg = f"Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+        send_telegram(error_msg)
+        logger.critical(f"Startup error: {e}", exc_info=True)
+        time.sleep(ERROR_RETRY_SLEEP_SECONDS)
+        sys.exit(1)
     
     logger.info("บอทเข้าสู่ Main Loop แล้วและพร้อมทำงาน...")
     force_open_initial_order = False  # ตั้งเป็น True สำหรับการทดสอบเปิด Long ทันที/False เพื่อใช้ema คำนวณ
@@ -1377,14 +1400,14 @@ def send_startup_message():
                 ticker = exchange.fetch_ticker(SYMBOL)
                 time.sleep(0.2)  # ลดจาก 0.5 เป็น 0.2
             except Exception as e:
-                logger.warning(f" Error fetching ticker: {e}. Retrying in {ERROR_RETRY_SLEEP_SECONDS} วินาที...")
-                send_telegram(f" API Error: ไม่สามารถดึงราคาล่าสุดได้. รายละเอียด: {e.args[0] if e.args else str(e)}")
+                logger.warning(f"Error fetching ticker: {e}. Retrying in {ERROR_RETRY_SLEEP_SECONDS} วินาที...")
+                send_telegram(f"🚨 API Error: ไม่สามารถดึงราคาล่าสุดได้. รายละเอียด: {e.args[0] if e.args else str(e)}")
                 time.sleep(ERROR_RETRY_SLEEP_SECONDS)
                 continue
             
             if not ticker or 'last' not in ticker:
-                logger.error(" Failed to fetch valid ticker. Skipping loop and retrying.")
-                send_telegram(" Error: ไม่สามารถดึงราคาล่าสุดได้ถูกต้อง. Skipping.")
+                logger.error("Failed to fetch valid ticker. Skipping loop and retrying.")
+                send_telegram("❌ Error: ไม่สามารถดึงราคาล่าสุดได้ถูกต้อง. Skipping.")
                 time.sleep(ERROR_RETRY_SLEEP_SECONDS)
                 continue
             
@@ -1407,14 +1430,14 @@ def send_startup_message():
                 # Force open mode (สำหรับทดสอบ)
                 if force_open_initial_order:
                     logger.info("ไม่มีโพซิชันเปิดอยู่ และตั้งค่าให้บังคับเปิด Long ออเดอร์ครั้งแรก.")
-                    send_telegram(" <b>ทดสอบ:</b> กำลังบังคับเปิด Long ออเดอร์เพื่อทดสอบ TP/SL.")
+                    send_telegram("🧪 <b>ทดสอบ:</b> กำลังบังคับเปิด Long ออเดอร์เพื่อทดสอบ TP/SL.")
                     market_order_success, confirmed_entry_price = open_market_order('long', current_price)
                     if market_order_success and confirmed_entry_price:
                         logger.info(f"บังคับเปิด Long ออเดอร์สำเร็จ. บอทจะดูแล TP/SL ในรอบถัดไป.")
                         force_open_initial_order = False
                     else:
                         logger.warning(f"ไม่สามารถบังคับเปิด Long ออเดอร์ได้. โปรดตรวจสอบ Log.")
-                        
+                
                 # โหมด EMA Cross ปกติ
                 else:
                     # ตรวจสอบว่าถึงเวลาคำนวณ EMA หรือยัง
@@ -1424,9 +1447,8 @@ def send_startup_message():
                         last_ema_calc_time = current_time  # อัปเดตเวลาที่คำนวณ EMA ล่าสุด
                         
                         if signal:
-                           
                             logger.info(f"ตรวจพบสัญญาณ EMA Cross: {signal.upper()}. กำลังพยายามเปิดออเดอร์.")
-                            send_telegram(f" <b>SIGNAL:</b> ตรวจพบสัญญาณ EMA Cross: <b>{signal.upper()}</b>")
+                            send_telegram(f"🎯 <b>SIGNAL:</b> ตรวจพบสัญญาณ EMA Cross: <b>{signal.upper()}</b>")
                             
                             market_order_success, confirmed_entry_price = open_market_order(signal, current_price)
                             if market_order_success and confirmed_entry_price:
@@ -1438,13 +1460,13 @@ def send_startup_message():
                     else:
                         time_until_next_ema = EMA_CALC_INTERVAL_SECONDS - (current_time - last_ema_calc_time).total_seconds()
                         logger.info(f"ไม่มีโพซิชันเปิดอยู่. รอคำนวณ EMA Cross อีก {time_until_next_ema:,.0f} วินาที.")
-                        
+            
             elif current_position_details is not None:  # กรณีมีโพซิชันเปิดอยู่แล้ว
                 logger.info(f"Current Position: {current_position_details['side'].upper()}, SL Step: {current_position_details['sl_step']}. บอทจะดูแลการปิดหรือเลื่อน SL เพิ่มเติม.")
-                
+            
             elif waiting_for_cooldown:  # กรณีอยู่ใน cooldown period
                 seconds_left = TRADE_COOLDOWN_SECONDS - (current_time - last_trade_closed_time).total_seconds()
-                logger.info(f"⏰ อยู่ในช่วง Cooldown - เหลืออีก {seconds_left:.0f} วินาที")
+                logger.info(f"อยู่ในช่วง Cooldown - เหลืออีก {seconds_left:.0f} วินาที")
             
             # --- 5. หน่วงเวลาสำหรับรอบ Main Loop (ลูปเร็ว) ---
             logger.info(f"จบรอบ Main Loop. รอ {FAST_LOOP_INTERVAL_SECONDS} วินาทีสำหรับรอบถัดไป.")
@@ -1452,22 +1474,23 @@ def send_startup_message():
             
         except KeyboardInterrupt:
             logger.info("บอทหยุดทำงานโดยผู้ใช้ (KeyboardInterrupt).")
-            send_telegram(" Bot หยุดทำงานโดยผู้ใช้.")
+            send_telegram("🛑 Bot หยุดทำงานโดยผู้ใช้.")
             break
         except (ccxt.NetworkError, ccxt.ExchangeError) as e:
-            error_msg = f" API Error ใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+            error_msg = f"🚨 API Error ใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
             logger.error(error_msg, exc_info=True)
             send_telegram(error_msg)
             time.sleep(ERROR_RETRY_SLEEP_SECONDS)
         except Exception as e:
-            error_msg = f" Error: เกิดข้อผิดพลาดที่ไม่คาดคิดใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
+            error_msg = f"❌ Error: เกิดข้อผิดพลาดที่ไม่คาดคิดใน Main Loop\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
             logger.error(error_msg, exc_info=True)
             send_telegram(error_msg)
             time.sleep(ERROR_RETRY_SLEEP_SECONDS)
 
-# ========================================================================
+# =================================================================
 # 17. จุดเริ่มต้นการทำงานของโปรแกรม (ENTRY POINT)
-# ========================================================================
-
+# =================================================================
 if __name__ == '__main__':
     main()
+
+
