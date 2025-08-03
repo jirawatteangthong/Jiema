@@ -1028,7 +1028,7 @@ def monitor_position(current_market_price: float):
     logger.info(f"กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
     pos_info_from_exchange = get_current_position()
     
-    # A. มีโพซิชันทั้งในระบบและใน exchange → อัปเดตข้อมูล
+ # A. มีโพซิชันทั้งในระบบและใน exchange → อัปเดตข้อมูล
     if pos_info_from_exchange and current_position_details:
         current_position_details.update({
             'entry_price': pos_info_from_exchange['entry_price'],
@@ -1049,24 +1049,24 @@ def monitor_position(current_market_price: float):
         logger.info(f"{side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
 
         # ตั้ง TP/SL ครั้งแรก (ถ้ายังไม่ได้ตั้ง) - *** ไม่ตั้ง TP แล้ว แค่ตั้ง SL ***
-        if sl_price is None:  # *** เปลี่ยนจาก tp_price is None or sl_price is None เป็น sl_price is None ***
-        # ไม่ตั้ง TP แล้ว แค่คำนวณ SL
-        sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
-        current_position_details['sl_price'] = sl
-        current_position_details['initial_sl_price'] = sl
-        current_position_details['sl_step'] = 0
-        # *** ตั้ง tp_price เป็น 0 เพื่อไม่ให้เข้าเงื่อนไขนี้อีก ***
-        current_position_details['tp_price'] = 0  
-    
-        logger.info(f"ตั้ง SL เริ่มต้น → SL: {sl:.2f} (ไม่ตั้ง TP)")
-    
-        # ตั้งแค่ SL ใน Exchange (ใช้ฟังก์ชันใหม่)
-        success = set_sl_only_for_position(side, contracts, sl)
-        if not success:
-            logger.error("ไม่สามารถตั้ง SL เริ่มต้นได้")
-            send_telegram("⚠️ ไม่สามารถตั้ง SL เริ่มต้นได้ กรุณาตรวจสอบด่วน!")
-            return
-            
+        if sl_price is None:
+            # ไม่ตั้ง TP แล้ว แค่คำนวณ SL
+            sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
+            current_position_details['sl_price'] = sl
+            current_position_details['initial_sl_price'] = sl
+            current_position_details['sl_step'] = 0
+            # *** ตั้ง tp_price เป็น 0 เพื่อไม่ให้เข้าเงื่อนไขนี้อีก ***
+            current_position_details['tp_price'] = 0
+        
+            logger.info(f"ตั้ง SL เริ่มต้น → SL: {sl:.2f} (ไม่ตั้ง TP)")
+        
+            # ตั้งแค่ SL ใน Exchange (ใช้ฟังก์ชันใหม่)
+            success = set_sl_only_for_position(side, contracts, sl)
+            if not success:
+                logger.error("ไม่สามารถตั้ง SL เริ่มต้นได้")
+                send_telegram("⚠️ ไม่สามารถตั้ง SL เริ่มต้นได้ กรุณาตรวจสอบด่วน!")
+                return
+                
         # Trailing SL 3-step (เพิ่ม Step 3 ที่ทำหน้าที่เป็น TP จำลอง)
         pnl_points = (current_market_price - entry_price) if side == 'long' else (entry_price - current_market_price)
         
@@ -1108,8 +1108,33 @@ def monitor_position(current_market_price: float):
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 3 (TP จำลอง) ได้")
         
+        # *** เพิ่มใหม่: ระบบเตือน Manual TP สำหรับกำไรเกิน 200 points ***
+        elif sl_step == 3 and pnl_points > MANUAL_TP_ALERT_THRESHOLD:
+            current_time = datetime.now()
+            time_since_last_alert = (current_time - last_manual_tp_alert_time).total_seconds()
+            
+            # แจ้งเตือนทุก 5 นาที
+            if time_since_last_alert >= MANUAL_TP_ALERT_INTERVAL:
+                profit_percentage = ((pnl_points / MANUAL_TP_ALERT_THRESHOLD) - 1) * 100  # คำนวณเปอร์เซ็นต์เกิน
+                
+                logger.info(f"🚨 Manual TP Alert: กำไรเกิน {MANUAL_TP_ALERT_THRESHOLD} points ({pnl_points:.0f} points)")
+                
+                send_telegram(
+                    f"🚨 <b>⚠️ แจ้งเตือน: ตั้ง TP ด้วยมือ! ⚠️</b>\n\n"
+                    f"📊 <b>โพซิชัน:</b> {side.upper()}\n"
+                    f"💰 <b>กำไรปัจจุบัน:</b> <code>{pnl_points:.0f} points</code>\n"
+                    f"📈 <b>เกินเป้า:</b> <code>+{profit_percentage:.1f}%</code>\n"
+                    f"💵 <b>ราคาปัจจุบัน:</b> <code>{current_market_price:.2f}</code>\n"
+                    f"🏁 <b>ราคาเข้า:</b> <code>{entry_price:.2f}</code>\n\n"
+                    f"🎯 <b>แนะนำ:</b> ตั้ง TP ที่ราคาปัจจุบัน\n"
+                    f"⏰ <b>จะแจ้งซ้ำอีกใน:</b> {MANUAL_TP_ALERT_INTERVAL//60} นาที\n\n"
+                    f"📝 <b>หมายเหตุ:</b> ราคาวิ่งต่อเนื่องโดยไม่กลับมาชน SL Step 3"
+                )
+                
+                last_manual_tp_alert_time = current_time
+                logger.info(f"ส่งการแจ้งเตือน Manual TP แล้ว (กำไร: {pnl_points:.0f} points)")
+        
         return
-
  # B. ตรวจพบว่าโพซิชัน "หายไปจาก exchange" แต่ระบบยังจำอยู่ → เคลียร์โพซิชัน
     if not pos_info_from_exchange and current_position_details:
         logger.warning(f"โพซิชันหายไปจาก Exchange แต่บอทยังจำอยู่: {current_position_details}")
