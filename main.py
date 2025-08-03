@@ -20,14 +20,14 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '1h'
+TIMEFRAME = '15m'
 LEVERAGE = 15
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (3 Steps) ---
 # 📈สำหรับ Long Position: (ราคาวิ่งขึ้น)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 250
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
 TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
@@ -37,7 +37,7 @@ TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 510  # + points จาก entry
 TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 501   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 250
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
@@ -52,8 +52,8 @@ MANUAL_TP_ALERT_INTERVAL = 300   # แจ้งเตือนซ้ำทุก
 
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
-EMA_FAST_PERIOD = 10 #📉
-EMA_SLOW_PERIOD = 50 #📈
+EMA_FAST_PERIOD = 50 #📉
+EMA_SLOW_PERIOD = 200 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -73,7 +73,7 @@ STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
 FAST_LOOP_INTERVAL_SECONDS = 3 # ⏰สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
-EMA_CALC_INTERVAL_SECONDS = 300 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
+EMA_CALC_INTERVAL_SECONDS = 180 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
 TRADE_COOLDOWN_SECONDS = 180 # ⏰เพิ่ม: ระยะเวลา Cooldown
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20 #วันที่สรุปรายเดือน
@@ -1047,24 +1047,26 @@ def monitor_position(current_market_price: float):
         sl_price = current_position_details.get('sl_price')
         
         logger.info(f"{side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
-        
+
         # ตั้ง TP/SL ครั้งแรก (ถ้ายังไม่ได้ตั้ง) - *** ไม่ตั้ง TP แล้ว แค่ตั้ง SL ***
-        if tp_price is None or sl_price is None:
-            # ไม่ตั้ง TP แล้ว แค่คำนวณ SL
-            sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
-            current_position_details['sl_price'] = sl
-            current_position_details['initial_sl_price'] = sl
-            current_position_details['sl_step'] = 0
-            # *** ไม่ตั้ง tp_price แล้ว ***
-            logger.info(f"ตั้ง SL เริ่มต้น → SL: {sl:.2f} (ไม่ตั้ง TP)")
+        if sl_price is None:  # *** เปลี่ยนจาก tp_price is None or sl_price is None เป็น sl_price is None ***
+        # ไม่ตั้ง TP แล้ว แค่คำนวณ SL
+        sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
+        current_position_details['sl_price'] = sl
+        current_position_details['initial_sl_price'] = sl
+        current_position_details['sl_step'] = 0
+        # *** ตั้ง tp_price เป็น 0 เพื่อไม่ให้เข้าเงื่อนไขนี้อีก ***
+        current_position_details['tp_price'] = 0  
+    
+        logger.info(f"ตั้ง SL เริ่มต้น → SL: {sl:.2f} (ไม่ตั้ง TP)")
+    
+        # ตั้งแค่ SL ใน Exchange (ใช้ฟังก์ชันใหม่)
+        success = set_sl_only_for_position(side, contracts, sl)
+        if not success:
+            logger.error("ไม่สามารถตั้ง SL เริ่มต้นได้")
+            send_telegram("⚠️ ไม่สามารถตั้ง SL เริ่มต้นได้ กรุณาตรวจสอบด่วน!")
+            return
             
-            # ตั้งแค่ SL ใน Exchange (ใช้ฟังก์ชันใหม่)
-            success = set_sl_only_for_position(side, contracts, sl)
-            if not success:
-                logger.error("ไม่สามารถตั้ง SL เริ่มต้นได้")
-                send_telegram("⚠️ ไม่สามารถตั้ง SL เริ่มต้นได้ กรุณาตรวจสอบด่วน!")
-                return
-        
         # Trailing SL 3-step (เพิ่ม Step 3 ที่ทำหน้าที่เป็น TP จำลอง)
         pnl_points = (current_market_price - entry_price) if side == 'long' else (entry_price - current_market_price)
         
