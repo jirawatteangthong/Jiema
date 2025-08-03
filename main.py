@@ -22,28 +22,38 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
 TIMEFRAME = '1m'
 LEVERAGE = 15
-TP_DISTANCE_POINTS = 180
+TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (2 Steps) ---
-# สำหรับ Long Position: (ราคาวิ่งขึ้น)
+# 📈สำหรับ Long Position: (ราคาวิ่งขึ้น)
 TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 100
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
-TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 160
+TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 150
 TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 10
+# เพิ่มพารามิเตอร์ SL Step 3 (TP จำลอง) ใหม่:
+TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 210  # +210 points จาก entry
+TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 200   # ตั้ง SL ที่ +200 points (เหมือน TP)
 
-# สำหรับ Short Position: (ราคาวิ่งลง)
+# 📉สำหรับ Short Position: (ราคาวิ่งลง)
 TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 100
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
-TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 160
+TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 150
 TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -10
 
-CROSS_THRESHOLD_POINTS = 1
+TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 210 # -210 points จาก entry  
+TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -200 # ตั้ง SL ที่ -200 points (เหมือน TP)
+
+#⏳ระบบเตือน Manual TP
+MANUAL_TP_ALERT_THRESHOLD = 200  # แจ้งเตือนเมื่อกำไรเกิน...
+MANUAL_TP_ALERT_INTERVAL = 300   # แจ้งเตือนซ้ำทุก..วินาที
+
+CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
-EMA_FAST_PERIOD = 50
-EMA_SLOW_PERIOD = 200
+EMA_FAST_PERIOD = 50 #📉
+EMA_SLOW_PERIOD = 200 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -62,12 +72,12 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
-FAST_LOOP_INTERVAL_SECONDS = 3 # สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
-EMA_CALC_INTERVAL_SECONDS = 180 # สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
-TRADE_COOLDOWN_SECONDS = 180 # *** เพิ่ม: ระยะเวลา Cooldown หลังปิดเทรด (15 นาที) ***
+FAST_LOOP_INTERVAL_SECONDS = 3 # ⏰สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
+EMA_CALC_INTERVAL_SECONDS = 180 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
+TRADE_COOLDOWN_SECONDS = 180 # ⏰เพิ่ม: ระยะเวลา Cooldown
 ERROR_RETRY_SLEEP_SECONDS = 60
-MONTHLY_REPORT_DAY = 20
-MONTHLY_REPORT_HOUR = 0
+MONTHLY_REPORT_DAY = 20 #วันที่สรุปรายเดือน
+MONTHLY_REPORT_HOUR = 0 #สรุปราย ช.ม. ✖️ไม่ใช่
 MONTHLY_REPORT_MINUTE = 5
 
 # ==============================================================================
@@ -97,11 +107,11 @@ last_monthly_report_date = None
 initial_balance = 0.0
 last_ema_position_status = None
 last_ema_calc_time = datetime.min
-last_trade_closed_time = datetime.min # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด ***
-waiting_for_cooldown = False  # ✅ เพิ่มบรรทัดนี้
-recent_tp_close_prices = []
-PRICE_BLACKLIST_RANGE_POINTS = 100  # ห้ามเปิดออเดอร์ใหม่ภายใน 100 points จากราคาปิด TP
-PRICE_BLACKLIST_DURATION_SECONDS = 300  # เก็บราคาใน blacklist นาน 5 นาที
+last_trade_closed_time = datetime.min # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด **
+waiting_for_cooldown = False  # เพิ่มบรรทัดนี้
+last_manual_tp_alert_time = datetime.min  # เก็บเวลาที่แจ้งเตือนครั้งล่าสุด
+
+
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
 # ==============================================================================
@@ -539,39 +549,83 @@ def round_to_precision(value: float, precision_type: str) -> float:
         logger.warning(f"⚠️ ไม่พบ Precision สำหรับ '{precision_type}'. ใช้ round() ปกติ.")
         return round(value, 8)
 
-def add_tp_close_to_blacklist(close_price: float):
-    """เพิ่มราคาปิด TP เข้าสู่ blacklist"""
-    global recent_tp_close_prices
-    recent_tp_close_prices.append({
-        'price': close_price,
-        'timestamp': datetime.now()
-    })
+def set_sl_only_for_position(direction: str, amount: float, sl_price: float) -> bool:
+    """
+    ตั้งแค่ Stop Loss อย่างเดียว (ไม่ตั้ง TP)
+    จะยกเลิก TP/SL ที่เปิดอยู่ก่อนเสมอแล้วตั้งใหม่
+    """
+    if not amount or amount <= 0:
+        logger.error("ไม่สามารถตั้ง SL ได้: ขนาดโพซิชันเป็น 0 หรือไม่ถูกต้อง")
+        return False
     
-    # ทำความสะอาด blacklist โดยเก็บเฉพาะราคาที่ยังไม่หมดอายุ
-    cleanup_price_blacklist()
+    # ยกเลิก TP/SL เก่าก่อน
+    cancel_all_open_tp_sl_orders()
+    time.sleep(2)  # เพิ่ม delay ให้ยกเลิกเสร็จสิ้น
     
-    logger.info(f"🚫 เพิ่มราคา {close_price:.2f} เข้า TP Blacklist (±{PRICE_BLACKLIST_RANGE_POINTS} points)")
-    send_telegram(f"🚫 ห้ามเปิดออเดอร์ใกล้ราคา {close_price:.2f} เป็นเวลา {PRICE_BLACKLIST_DURATION_SECONDS//60} นาที")
-
-def cleanup_price_blacklist():
-    """ทำความสะอาด blacklist โดยลบราคาที่หมดอายุแล้ว"""
-    global recent_tp_close_prices
-    current_time = datetime.now()
-    recent_tp_close_prices = [
-        price_data for price_data in recent_tp_close_prices 
-        if (current_time - price_data['timestamp']).total_seconds() < PRICE_BLACKLIST_DURATION_SECONDS
-    ]
-
-def is_price_in_tp_blacklist(current_price: float) -> bool:
-    """ตรวจสอบว่าราคาปัจจุบันอยู่ใน TP blacklist หรือไม่"""
-    cleanup_price_blacklist()  # ทำความสะอาดก่อนตรวจสอบ
+    # ตรวจสอบ market_info
+    if not market_info or 'precision' not in market_info:
+        logger.error("ไม่พบข้อมูล market_info หรือ precision. ไม่สามารถตั้ง SL ได้")
+        return False
     
-    for price_data in recent_tp_close_prices:
-        if abs(current_price - price_data['price']) <= PRICE_BLACKLIST_RANGE_POINTS:
-            time_left = PRICE_BLACKLIST_DURATION_SECONDS - (datetime.now() - price_data['timestamp']).total_seconds()
-            logger.info(f"🚫 Price {current_price:.2f} is blacklisted (close to TP exit {price_data['price']:.2f}, {time_left:.0f}s remaining)")
-            return True
-    return False
+    try:
+        # ปัดเศษราคาให้ถูกต้องตาม Exchange
+        market_info_precision_price = 'price'
+        sl_price_formatted = round_to_precision(sl_price, market_info_precision_price)
+        
+        logger.info(f"กำลังตั้ง SL: {sl_price_formatted:,.2f} สำหรับ {direction.upper()}")
+        
+        # ตรวจสอบความถูกต้องของราคา SL
+        current_price = exchange.fetch_ticker(SYMBOL)['last']
+        
+        if direction == 'long':
+            if sl_price_formatted >= current_price:
+                logger.error(f"❌ SL price ({sl_price_formatted}) ต้องต่ำกว่าราคาปัจจุบัน ({current_price}) สำหรับ Long")
+                return False
+        else:  # short
+            if sl_price_formatted <= current_price:
+                logger.error(f"❌ SL price ({sl_price_formatted}) ต้องสูงกว่าราคาปัจจุบัน ({current_price}) สำหรับ Short")
+                return False
+        
+        sl_side = 'sell' if direction == 'long' else 'buy'
+        
+        # ตั้ง Stop Loss Order
+        try:
+            sl_order = exchange.create_order(
+                symbol=SYMBOL,
+                type='STOP_MARKET',
+                side=sl_side,
+                amount=amount,
+                price=None,
+                params={
+                    'stopPrice': sl_price_formatted,
+                    'reduceOnly': True,
+                }
+            )
+            logger.info(f"🛑 Stop Loss order placed: ID → {sl_order.get('id', 'N/A')}, Price: {sl_price_formatted}")
+            
+        except Exception as sl_error:
+            logger.error(f"Error setting Stop Loss: {str(sl_error)}")
+            send_telegram(f"❌ SL Error: ไม่สามารถตั้ง Stop Loss ได้\n{str(sl_error)}")
+            return False
+        
+        # ส่งการแจ้งเตือนสำเร็จ
+        send_telegram(
+            f"✅ <b>ตั้ง SL สำเร็จ!</b>\n"
+            f"🛑 <b>SL:</b> <code>{sl_price_formatted:,.2f}</code>\n"
+            f"📊 <b>Direction:</b> {direction.upper()}\n"
+            f"📏 <b>Size:</b> {amount:,.8f}"
+        )
+        
+        return True
+        
+    except ccxt.BaseError as e:
+        logger.error(f"Error setting SL: {str(e)}", exc_info=True)
+        send_telegram(f"❌ API Error (SL): {e.args[0] if e.args else str(e)}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error setting SL: {e}", exc_info=True)
+        send_telegram(f"❌ Unexpected Error (SL): {e}")
+        return False
 
 def calculate_order_details(available_usdt: float, price: float) -> tuple[float, float]:
     """
@@ -735,12 +789,6 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
             send_telegram(f"🚫 บอทยังไม่พ้นช่วง cooldown หลังปิดโพซิชัน\nจะไม่เปิดออเดอร์ใหม่จนกว่าจะครบ {TRADE_COOLDOWN_SECONDS // 60} นาที")
             return False, None
 
-    # ตรวจสอบ TP Price Blacklist
-    if is_price_in_tp_blacklist(current_price):
-        logger.warning(f"🚫 ไม่เปิดออเดอร์ - ราคาปัจจุบัน {current_price:.2f} อยู่ใน TP Blacklist")
-        send_telegram(f"🚫 ห้ามเปิดออเดอร์ใหม่\nราคาปัจจุบัน {current_price:.2f} อยู่ใกล้จุดปิด TP เดิม")
-        return False, None
-
     try:
         balance = get_portfolio_balance()
         if balance <= MARGIN_BUFFER_USDT:
@@ -867,7 +915,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
     
     # ยกเลิก TP/SL เก่าก่อน
     cancel_all_open_tp_sl_orders()
-    time.sleep(2)  # เพิ่ม delay ให้ยกเลิกเสร็จสิ้น
+    time.sleep(1)  # เพิ่ม delay ให้ยกเลิกเสร็จสิ้น
     
     # ตรวจสอบ market_info
     if not market_info or 'precision' not in market_info:
@@ -976,11 +1024,10 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
 def monitor_position(current_market_price: float):
     global current_position_details, last_ema_position_status, monthly_stats, last_trade_closed_time
     global waiting_for_cooldown
-
+    
     logger.info(f"กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
-
     pos_info_from_exchange = get_current_position()
-
+    
     # A. มีโพซิชันทั้งในระบบและใน exchange → อัปเดตข้อมูล
     if pos_info_from_exchange and current_position_details:
         current_position_details.update({
@@ -990,7 +1037,7 @@ def monitor_position(current_market_price: float):
             'unrealized_pnl': pos_info_from_exchange['unrealized_pnl'],
             'liquidation_price': pos_info_from_exchange['liquidation_price']
         })
-
+        
         # ดำเนินการจัดการ TP/SL
         side = current_position_details['side']
         entry_price = current_position_details['entry_price']
@@ -998,102 +1045,112 @@ def monitor_position(current_market_price: float):
         sl_step = current_position_details.get('sl_step', 0)
         tp_price = current_position_details.get('tp_price')
         sl_price = current_position_details.get('sl_price')
-
-        logger.info(f" {side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
-
-        # ตั้ง TP/SL ครั้งแรก (ถ้ายังไม่ได้ตั้ง)
+        
+        logger.info(f"{side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
+        
+        # ตั้ง TP/SL ครั้งแรก (ถ้ายังไม่ได้ตั้ง) - *** ไม่ตั้ง TP แล้ว แค่ตั้ง SL ***
         if tp_price is None or sl_price is None:
-            tp = entry_price + TP_DISTANCE_POINTS if side == 'long' else entry_price - TP_DISTANCE_POINTS
+            # ไม่ตั้ง TP แล้ว แค่คำนวณ SL
             sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
-
-            current_position_details['tp_price'] = tp
             current_position_details['sl_price'] = sl
             current_position_details['initial_sl_price'] = sl
             current_position_details['sl_step'] = 0
-
-            logger.info(f"ตั้ง TP/SL เริ่มต้น → TP: {tp:.2f} | SL: {sl:.2f}")
-
-            # ตั้ง TP/SL จริงใน Exchange
-            success = set_tpsl_for_position(side, contracts, sl, tp)
+            # *** ไม่ตั้ง tp_price แล้ว ***
+            logger.info(f"ตั้ง SL เริ่มต้น → SL: {sl:.2f} (ไม่ตั้ง TP)")
+            
+            # ตั้งแค่ SL ใน Exchange (ใช้ฟังก์ชันใหม่)
+            success = set_sl_only_for_position(side, contracts, sl)
             if not success:
-                logger.error("ไม่สามารถตั้ง TP/SL เริ่มต้นได้")
-                send_telegram("ไม่สามารถตั้ง TP/SL เริ่มต้นได้กรุณาตรวจสอบด่วน!")
+                logger.error("ไม่สามารถตั้ง SL เริ่มต้นได้")
+                send_telegram("⚠️ ไม่สามารถตั้ง SL เริ่มต้นได้ กรุณาตรวจสอบด่วน!")
                 return
-
-        # Trailing SL 2-step
+        
+        # Trailing SL 3-step (เพิ่ม Step 3 ที่ทำหน้าที่เป็น TP จำลอง)
         pnl_points = (current_market_price - entry_price) if side == 'long' else (entry_price - current_market_price)
-
+        
         trail_trigger_1 = TRAIL_SL_STEP1_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS
         trail_trigger_2 = TRAIL_SL_STEP2_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS
-
+        trail_trigger_3 = TRAIL_SL_STEP3_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS
+        
         trail_sl_1 = entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT
         trail_sl_2 = entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT
-
+        trail_sl_3 = entry_price + TRAIL_SL_STEP3_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT
+        
         # ตรวจสอบ Trailing SL Step 1
         if sl_step == 0 and pnl_points >= trail_trigger_1:
             current_position_details['sl_step'] = 1
             current_position_details['sl_price'] = trail_sl_1
-
-            logger.info(f" SL Step 1 triggered → ย้าย SL จาก {sl_price:.2f} เป็น {trail_sl_1:.2f}")
-            send_telegram(f" <b>SL Step 1 Triggered!</b>\nSL เดิม: <code>{sl_price:.2f}</code>\nSL ใหม่: <code>{trail_sl_1:.2f}</code>\nกำไร: <code>{pnl_points:.0f} points</code>")
-
-            success = set_tpsl_for_position(side, contracts, trail_sl_1, tp_price)
+            logger.info(f"🔄 SL Step 1 triggered → ย้าย SL จาก {sl_price:.2f} เป็น {trail_sl_1:.2f}")
+            send_telegram(f"🔄 <b>SL Step 1 Triggered!</b>\nSL เดิม: <code>{sl_price:.2f}</code>\nSL ใหม่: <code>{trail_sl_1:.2f}</code>\nกำไร: <code>{pnl_points:.0f} points</code>")
+            success = set_sl_only_for_position(side, contracts, trail_sl_1)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 1 ได้")
-
+        
         # ตรวจสอบ Trailing SL Step 2
         elif sl_step == 1 and pnl_points >= trail_trigger_2:
             current_position_details['sl_step'] = 2
             current_position_details['sl_price'] = trail_sl_2
-
-            logger.info(f" SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
-            send_telegram(f" <b>SL Step 2 Triggered!</b>\nSL เดิม: <code>{trail_sl_1:.2f}</code>\nSL ใหม่: <code>{trail_sl_2:.2f}</code>\nกำไร: <code>{pnl_points:.0f} points</code>")
-
-            success = set_tpsl_for_position(side, contracts, trail_sl_2, tp_price)
+            logger.info(f"🔄 SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
+            send_telegram(f"🔄 <b>SL Step 2 Triggered!</b>\nSL เดิม: <code>{trail_sl_1:.2f}</code>\nSL ใหม่: <code>{trail_sl_2:.2f}</code>\nกำไร: <code>{pnl_points:.0f} points</code>")
+            success = set_sl_only_for_position(side, contracts, trail_sl_2)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 2 ได้")
-
+        
+        # *** เพิ่ม: ตรวจสอบ Trailing SL Step 3 (TP จำลอง) ***
+        elif sl_step == 2 and pnl_points >= trail_trigger_3:
+            current_position_details['sl_step'] = 3
+            current_position_details['sl_price'] = trail_sl_3
+            logger.info(f"🎯 SL Step 3 (TP จำลอง) triggered → ย้าย SL ไปที่ราคา TP {trail_sl_3:.2f}")
+            send_telegram(f"🎯 <b>ถึงเป้า TP แล้ว!</b>\nตั้ง SL ที่ราคา TP: <code>{trail_sl_3:.2f}</code>\nกำไร: <code>{pnl_points:.0f} points</code>\n✅ <b>เตรียมรับกำไรเต็มจำนวน</b>")
+            success = set_sl_only_for_position(side, contracts, trail_sl_3)
+            if not success:
+                logger.error("ไม่สามารถอัปเดต SL Step 3 (TP จำลอง) ได้")
+        
         return
 
-    # B. ตรวจพบว่าโพซิชัน "หายไปจาก exchange" แต่ระบบยังจำอยู่ → เคลียร์โพซิชัน
+ # B. ตรวจพบว่าโพซิชัน "หายไปจาก exchange" แต่ระบบยังจำอยู่ → เคลียร์โพซิชัน
     if not pos_info_from_exchange and current_position_details:
         logger.warning(f"โพซิชันหายไปจาก Exchange แต่บอทยังจำอยู่: {current_position_details}")
-
+        
         # เช็กว่า entry_price มีอยู่ก่อน
         entry = current_position_details.get('entry_price')
         contracts = current_position_details.get('contracts')
         side = current_position_details.get('side')
-
+        sl_step = current_position_details.get('sl_step', 0)  # *** เพิ่มการเช็ก sl_step ***
+        
         if not entry or not contracts or not side:
             logger.warning("ข้อมูล current_position_details ไม่ครบ → ข้ามการคำนวณ PnL")
             current_position_details = None
             return
-
+        
         closed_price = current_market_price
         pnl = 0.0
-
         if side == 'long':
             pnl = (closed_price - entry) * contracts
         else:
             pnl = (entry - closed_price) * contracts
-
+        
+        # *** ตรวจสอบว่าปิดด้วย SL Step 3 (TP จำลอง) หรือไม่ ***
+        reason = "TP" if sl_step == 3 else "SL"
+        emoji = "🎯" if sl_step == 3 else "🛑"
+        
         send_telegram(
-            f" <b>ปิดโพซิชัน {side.upper()} สำเร็จ</b>\n"
+            f"{emoji} <b>ปิดโพซิชัน {side.upper()} สำเร็จ</b>\n"
+            f"สาเหตุ: <b>{reason}</b>\n"
             f"ราคาเข้า: <code>{entry:.2f}</code>\n"
-            f" ราคาออก: <code>{closed_price:.2f}</code>\n"
-            f" PnL (ประมาณ): <code>{pnl:+.2f} USDT</code>\n"
-            f" Size: <code>{contracts:.8f}</code>"
+            f"ราคาออก: <code>{closed_price:.2f}</code>\n"
+            f"PnL (ประมาณ): <code>{pnl:+.2f} USDT</code>\n"
+            f"Size: <code>{contracts:.8f}</code>"
         )
-
-        if pnl > 0:  # กำไร = น่าจะเป็น TP
-            add_tp_close_to_blacklist(closed_price)
-            logger.info(f"📊 ตรวจพบการปิดโพซิชันด้วยกำไร → เพิ่มราคา {closed_price:.2f} เข้า TP Blacklist")
-
+        
+        # เพิ่มสถิติ
+        add_trade_result(reason, pnl)
+        
         # เช็กซ้ำว่าปิดจริงหรือไม่ (บางครั้ง Binance ยังอัปเดตช้า)
         time.sleep(1)
         confirm_pos = get_current_position()
         if confirm_pos:
-            logger.warning("ตรวจพบโพซิชันกลับเข้ามาหลัง TP → ข้ามการรีเซ็ตสถานะ")
+            logger.warning("ตรวจพบโพซิชันกลับเข้ามาหลัง close → ข้ามการรีเซ็ตสถานะ")
             current_position_details = {
                 'symbol': confirm_pos['symbol'],
                 'side': confirm_pos['side'],
@@ -1107,18 +1164,18 @@ def monitor_position(current_market_price: float):
                 'initial_sl_price': current_position_details.get('initial_sl_price')
             }
             return
-
+        
         # *** การแก้ไขหลัก: การรีเซ็ตสถานะและเปิด cooldown ***
-        logger.info("รีเซ็ตสถานะโพซิชัน + เปิด cooldown (กันเปิดสวน)")
+        logger.info("รีเซ็ตสถานะโพซิชัน + เปิด cooldown")
         
         current_position_details = None
-        # *** ไม่รีเซ็ต last_ema_position_status เพื่อป้องกันสัญญาณ Cross ซ้ำทันที ***
+        # *** สำคัญ: ไม่รีเซ็ต last_ema_position_status เพื่อรอสัญญาณใหม่ ***
         last_trade_closed_time = datetime.now()
         waiting_for_cooldown = True
         save_monthly_stats()
         
-        logger.info(f"🔒 เริ่ม COOLDOWN PERIOD: {TRADE_COOLDOWN_SECONDS} วินาที")
-        send_telegram(f"⏰ เริ่มช่วง Cooldown {TRADE_COOLDOWN_SECONDS//60} นาที หลังปิดโพซิชัน")
+        logger.info(f"เริ่ม COOLDOWN PERIOD: {TRADE_COOLDOWN_SECONDS} วินาที")
+        send_telegram(f"⏳ เริ่มช่วง Cooldown {TRADE_COOLDOWN_SECONDS//60} นาทีหลังปิดโพซิชัน")
         
         # ยกเลิกคำสั่งทั้งหมดหลังปิดโพซิชัน
         try:
@@ -1130,7 +1187,7 @@ def monitor_position(current_market_price: float):
             send_telegram(f"ยกเลิกคำสั่งไม่สำเร็จหลังปิดโพซิชัน: {e}")
         
         return
-
+    
     # C. ไม่มีโพซิชันทั้งใน exchange และใน bot
     else:
         if current_position_details:
@@ -1143,7 +1200,7 @@ def monitor_position(current_market_price: float):
             current_position_details = None
             save_monthly_stats()
         else:
-            logger.info("ไม่มีโพซิชันเปิดอยู่")
+            logger.info("ไม่มีโพซิชันเปิดอยู่")   
 
 # ========================================================================
 # เพิ่มฟังก์ชันช่วยเหลือสำหรับการ round precision
@@ -1375,12 +1432,7 @@ def main():
                         last_ema_calc_time = current_time  # อัปเดตเวลาที่คำนวณ EMA ล่าสุด
                         
                         if signal:
-                            # ตรวจสอบ TP Blacklist ก่อนเปิดออเดอร์
-                            if is_price_in_tp_blacklist(current_price):
-                                logger.info(f"🚫 มีสัญญาณ {signal.upper()} แต่ราคาอยู่ใน TP Blacklist - ข้ามการเปิดออเดอร์")
-                                send_telegram(f"🚫 สัญญาณ {signal.upper()} ถูกบล็อก\nราคาอยู่ใกล้จุดปิด TP เดิม")
-                                continue
-                            
+                           
                             logger.info(f"ตรวจพบสัญญาณ EMA Cross: {signal.upper()}. กำลังพยายามเปิดออเดอร์.")
                             send_telegram(f" <b>SIGNAL:</b> ตรวจพบสัญญาณ EMA Cross: <b>{signal.upper()}</b>")
                             
