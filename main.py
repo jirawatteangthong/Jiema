@@ -20,40 +20,40 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '1m'
+TIMEFRAME = '1h'
 LEVERAGE = 15
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
 
-# --- Trailing Stop Loss Parameters (2 Steps) ---
+# --- Trailing Stop Loss Parameters (3 Steps) ---
 # 📈สำหรับ Long Position: (ราคาวิ่งขึ้น)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 100
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
-TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 150
-TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 10
+TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
+TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100
 # เพิ่มพารามิเตอร์ SL Step 3 (TP จำลอง) ใหม่:
-TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 210  # +210 points จาก entry
-TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 200   # ตั้ง SL ที่ +200 points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 510  # + points จาก entry
+TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 501   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 100
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
-TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 150
-TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -10
+TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
+TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100
 
-TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 210 # -210 points จาก entry  
-TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -200 # ตั้ง SL ที่ -200 points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 510 # - points จาก entry  
+TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -501 # ตั้ง SL ที่ - points (เหมือน TP)
 
 #⏳ระบบเตือน Manual TP
-MANUAL_TP_ALERT_THRESHOLD = 200  # แจ้งเตือนเมื่อกำไรเกิน...
+MANUAL_TP_ALERT_THRESHOLD = 200  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
 MANUAL_TP_ALERT_INTERVAL = 300   # แจ้งเตือนซ้ำทุก..วินาที
 
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
-EMA_FAST_PERIOD = 50 #📉
-EMA_SLOW_PERIOD = 200 #📈
+EMA_FAST_PERIOD = 10 #📉
+EMA_SLOW_PERIOD = 50 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -73,7 +73,7 @@ STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
 FAST_LOOP_INTERVAL_SECONDS = 3 # ⏰สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
-EMA_CALC_INTERVAL_SECONDS = 180 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
+EMA_CALC_INTERVAL_SECONDS = 300 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
 TRADE_COOLDOWN_SECONDS = 180 # ⏰เพิ่ม: ระยะเวลา Cooldown
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20 #วันที่สรุปรายเดือน
@@ -1306,51 +1306,43 @@ def monthly_report_scheduler():
 # ==============================================================================
 def send_startup_message():
     global initial_balance
-
     try:
         initial_balance = get_portfolio_balance()
         startup_time = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        
+        message = f"""🔄 <b>บอทเริ่มทำงาน</b> 💰
+🤖 <b>EMA Cross Trading Bot</b>
 
-        message = f"""🔄 <b>บอทเริ่มทำงาน💰</b>
-<b>🤖 EMA Cross Trading Bot</b>
-<b>💰 ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
-<b>⏰ เวลาเริ่ม:</b> <code>{startup_time}</code>
-<b>📊 เฟรม:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
-<b>🎯 TP:</b> <code>{TP_DISTANCE_POINTS}</code> | <b>SL (เริ่มต้น):</b> <code>{SL_DISTANCE_POINTS}</code>
-<b>📈 Trailing SL (Long):</b> Step1:{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts->SL({TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+,}pts), Step2:{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts->SL({TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+,}pts)
-<b>📈 Trailing SL (Short):</b> Step1:{TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS}pts->SL({TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT:+,}pts), Step2:{TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS}pts->SL({TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT:+,}pts)
-<b>🔧 Margin Buffer:</b> <code>{MARGIN_BUFFER_USDT:,.0f} USDT</code>
-<b>🌐 Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
-<b>🔍 กำลังรอเปิดออเดอร์...</b>"""
+💰 <b>ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
+⏰ <b>เวลาเริ่ม:</b> <code>{startup_time}</code>
+📊 <b>เฟรม:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
+
+📈 <b>EMA Strategy:</b>
+   • <b>EMA Fast:</b> <code>{EMA_FAST_PERIOD}</code>
+   • <b>EMA Slow:</b> <code>{EMA_SLOW_PERIOD}</code>
+   • <b>Cross Threshold:</b> <code>{CROSS_THRESHOLD_POINTS} points</code>
+
+🛑 <b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
+🎯 <b>SL Step System:</b>
+   • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
+   • <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
+   • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG:+}pts</code>
+
+🔧 <b>Risk Management:</b>
+   • <b>Margin Buffer:</b> <code>{MARGIN_BUFFER_USDT:,.0f} USDT</code>
+   • <b>Position Size:</b> <code>{int(TARGET_POSITION_SIZE_FACTOR*100)}%</code> of equity
+   • <b>Cooldown:</b> <code>{TRADE_COOLDOWN_SECONDS//60} นาที</code>
+
+🚨 <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code>
+🌐 <b>Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
+
+🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
 
         send_telegram(message)
-        logger.info("✅ ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
-
-    except Exception as e:
-        logger.error(f"❌ เกิดข้อผิดพลาดในการส่งข้อความเริ่มต้น: {e}", exc_info=True)
-
-# ==============================================================================
-# 16. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
-# ==============================================================================
-def main():
-    global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time
-    global waiting_for_cooldown
-    
-    try:
-        setup_exchange()
-        load_monthly_stats()
-        send_startup_message()
-        
-        monthly_thread = threading.Thread(target=monthly_report_scheduler, daemon=True)
-        monthly_thread.start()
-        logger.info(" Monthly Report Scheduler Thread Started.")
+        logger.info("ส่งข้อความแจ้งเตือนเมื่อบอทเริ่มทำงาน.")
         
     except Exception as e:
-        error_msg = f" Error: ไม่สามารถเริ่มต้นบอทได้\nรายละเอียด: {e} | Retry อีกครั้งใน {ERROR_RETRY_SLEEP_SECONDS} วินาที."
-        send_telegram(error_msg)
-        logger.critical(f" Startup error: {e}", exc_info=True)
-        time.sleep(ERROR_RETRY_SLEEP_SECONDS)
-        sys.exit(1)
+        logger.error(f"เกิดข้อผิดพลาดในการส่งข้อความเริ่มต้น: {e}", exc_info=True)
     
     logger.info("บอทเข้าสู่ Main Loop แล้วและพร้อมทำงาน...")
     force_open_initial_order = False  # ตั้งเป็น True สำหรับการทดสอบเปิด Long ทันที/False เพื่อใช้ema คำนวณ
