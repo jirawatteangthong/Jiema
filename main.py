@@ -53,7 +53,7 @@ MANUAL_TP_ALERT_INTERVAL = 600   # แจ้งเตือนซ้ำทุก
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
 EMA_FAST_PERIOD = 10 #📉
-EMA_SLOW_PERIOD = 50 #📈
+EMA_SLOW_PERIOD = 40 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
