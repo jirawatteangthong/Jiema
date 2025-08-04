@@ -1139,15 +1139,10 @@ def monitor_position(current_market_price: float):
                 logger.info(f"🚨 Manual TP Alert: กำไรเกิน {MANUAL_TP_ALERT_THRESHOLD} points ({pnl_points:.0f} points)")
 
                 send_telegram(
-                    f"🚨 <b>⚠️ กำไรเกินคาดหวัง! ตั้ง TP ด้วยมือ! ⚠️</b>\n\n"
+                    f"🚨 <b>⚠️ กำไรเกินคาด รีบปิดโพชิชันนะจ๊ะ💸 ⚠️</b>\n\n"
                     f"📊 <b>โพซิชัน:</b> {side.upper()}\n"
                     f"💰 <b>กำไรปัจจุบัน:</b> <code>{pnl_points:.0f} points</code>\n"
                     f"🔥 <b>เกินเป้า 700:</b> <code>+{profit_above_threshold:.0f} points</code>\n"
-                    f"📈 <b>เทียบกับกำไรรับประกัน:</b> <code>+{profit_percentage:.1f}%</code>\n\n"
-                    f"💵 <b>ราคาปัจจุบัน:</b> <code>{current_market_price:.2f}</code>\n"
-                    f"🏁 <b>ราคาเข้า:</b> <code>{entry_price:.2f}</code>\n"
-                    f"🛡️ <b>SL ปัจจุบัน:</b> <code>{current_position_details.get('sl_price', 'N/A')}</code>\n\n"
-                    f"🎯 <b>แนะนำ:</b> ตั้ง TP ที่ราคาปัจจุบันเพื่อเก็บกำไรเต็มจำนวน\n"
                     f"⏰ <b>จะแจ้งซ้ำอีกใน:</b> {MANUAL_TP_ALERT_INTERVAL//60} นาที\n\n"
                     f"🔥 <b>โอกาส:</b> กำไรเกินกว่าที่คาดไว้ {profit_above_threshold:.0f} points!"
                 )
@@ -1358,23 +1353,16 @@ def send_startup_message():
         initial_balance = get_portfolio_balance()
         startup_time = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
         
-        message = f"""🔄 <b>บอทเริ่มทำงาน</b> 💰
-🤖 <b>EMA Cross Trading Bot</b>
+        message = f"""🤖 <b>บอทเริ่มทำงาน</b> 💰
 💰 <b>ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
-⏰ <b>เวลาเริ่ม:</b> <code>{startup_time}</code>
-📊 <b>เฟรม:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
-   <b>EMA Strategy:</b>
+📊 <b>TF:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
 📈 • <b>EMA Fast:</b> <code>{EMA_FAST_PERIOD}</code>
 📉 • <b>EMA Slow:</b> <code>{EMA_SLOW_PERIOD}</code>
-   • <b>Cross Threshold:</b> <code>{CROSS_THRESHOLD_POINTS} points</code>
- 💴<b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
- 🚀<b>SL Step System:</b>
- 🔥• <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
- 🌈• <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
- 🎉• <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>+501pts</code> 
+❎ <b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
+🚀 • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
+🔥 • <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
+🎉 • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>+501pts</code> 
 ⏰ <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (จะมีการแจ้งเตือนปิดกำไร🤑)
-🌐 <b>Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
-
 🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
 
         send_telegram(message)
