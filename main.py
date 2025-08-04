@@ -1360,23 +1360,19 @@ def send_startup_message():
         
         message = f"""🔄 <b>บอทเริ่มทำงาน</b> 💰
 🤖 <b>EMA Cross Trading Bot</b>
-
 💰 <b>ยอดเริ่มต้น:</b> <code>{initial_balance:,.2f} USDT</code>
 ⏰ <b>เวลาเริ่ม:</b> <code>{startup_time}</code>
 📊 <b>เฟรม:</b> <code>{TIMEFRAME}</code> | <b>Leverage:</b> <code>{LEVERAGE}x</code>
-
-📈 <b>EMA Strategy:</b>
-   • <b>EMA Fast:</b> <code>{EMA_FAST_PERIOD}</code>
-   • <b>EMA Slow:</b> <code>{EMA_SLOW_PERIOD}</code>
+   <b>EMA Strategy:</b>
+📈 • <b>EMA Fast:</b> <code>{EMA_FAST_PERIOD}</code>
+📉 • <b>EMA Slow:</b> <code>{EMA_SLOW_PERIOD}</code>
    • <b>Cross Threshold:</b> <code>{CROSS_THRESHOLD_POINTS} points</code>
-
-🛑 <b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
-🎯 <b>SL Step System:</b>
-   • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
-   • <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
-   • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>+501pts</code> (รับประกันกำไร)
-
-🚨 <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (เกินคาดหวัง)
+ 💴<b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
+ 🚀<b>SL Step System:</b>
+ 🔥• <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
+ 🌈• <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
+ 🎉• <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>+501pts</code> 
+⏰ <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (จะมีการแจ้งเตือนปิดกำไร🤑)
 🌐 <b>Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
 
 🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
