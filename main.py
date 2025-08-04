@@ -20,7 +20,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '15m'
+TIMEFRAME = '1h'
 LEVERAGE = 15
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
@@ -47,13 +47,13 @@ TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 510 # - points จาก entry
 TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -501 # ตั้ง SL ที่ - points (เหมือน TP)
 
 #⏳ระบบเตือน Manual TP
-MANUAL_TP_ALERT_THRESHOLD = 200  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
-MANUAL_TP_ALERT_INTERVAL = 300   # แจ้งเตือนซ้ำทุก..วินาที
+MANUAL_TP_ALERT_THRESHOLD = 700  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
+MANUAL_TP_ALERT_INTERVAL = 600   # แจ้งเตือนซ้ำทุก..วินาที
 
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
-EMA_FAST_PERIOD = 50 #📉
-EMA_SLOW_PERIOD = 200 #📈
+EMA_FAST_PERIOD = 10 #📉
+EMA_SLOW_PERIOD = 50 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -1098,41 +1098,62 @@ def monitor_position(current_market_price: float):
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 2 ได้")
         
-        # *** เพิ่ม: ตรวจสอบ Trailing SL Step 3 (TP จำลอง) ***
-        elif sl_step == 2 and pnl_points >= trail_trigger_3:
+                # *** ตรวจสอบ Trailing SL Step 3 (TP จำลอง) ***
+        elif sl_step == 2 and pnl_points >= trail_trigger_3:    
             current_position_details['sl_step'] = 3
+
+            # คำนวณราคา SL ที่ +501/-501 points จาก entry
+            if side == 'long':
+                trail_sl_3 = entry_price + TRAIL_SL_STEP3_NEW_SL_POINTS_LONG
+            else:
+                trail_sl_3 = entry_price + TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT  # สำหรับ short จะเป็นค่าลบอยู่แล้ว
+
+            trail_sl_3 = round_to_precision(trail_sl_3, 'price')  # <<< ปัด precision
             current_position_details['sl_price'] = trail_sl_3
-            logger.info(f"🎯 SL Step 3 (TP จำลอง) triggered → ย้าย SL ไปที่ราคา TP {trail_sl_3:.2f}")
-            send_telegram(f"🎯 <b>ถึงเป้า TP แล้ว!</b>\nตั้ง SL ที่ราคา TP: <code>{trail_sl_3:.2f}</code>\nกำไร: <code>{pnl_points:.0f} points</code>\n✅ <b>เตรียมรับกำไรเต็มจำนวน</b>")
+
+            logger.info(f"🎯 SL Step 3 (TP จำลอง) triggered → ตั้ง SL ที่ {trail_sl_3:.2f} (กำไร 501 points)")
+
+            send_telegram(
+                f"🎯 <b>ถึงเป้า TP แล้ว!</b>\n"
+                f"📊 <b>โพซิชัน:</b> {side.upper()}\n"
+                f"💰 <b>กำไรปัจจุบัน:</b> <code>{pnl_points:.0f} points</code>\n"
+                f"🏁 <b>ราคาเข้า:</b> <code>{entry_price:.2f}</code>\n"
+                f"💵 <b>ราคาปัจจุบัน:</b> <code>{current_market_price:.2f}</code>\n"
+                f"🛡️ <b>ตั้ง SL ที่:</b> <code>{trail_sl_3:.2f}</code>\n"
+                f"✅ <b>เก็บกำไร:</b> <code>501 points</code> รับประกัน!"
+            )
+
             success = set_sl_only_for_position(side, contracts, trail_sl_3)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 3 (TP จำลอง) ได้")
-        
-        # *** เพิ่มใหม่: ระบบเตือน Manual TP สำหรับกำไรเกิน 200 points ***
+
+        # *** ระบบเตือน Manual TP สำหรับกำไรเกิน 700 points ***
         elif sl_step == 3 and pnl_points > MANUAL_TP_ALERT_THRESHOLD:
             current_time = datetime.now()
             time_since_last_alert = (current_time - last_manual_tp_alert_time).total_seconds()
-            
-            # แจ้งเตือนทุก 5 นาที
+
             if time_since_last_alert >= MANUAL_TP_ALERT_INTERVAL:
-                profit_percentage = ((pnl_points / MANUAL_TP_ALERT_THRESHOLD) - 1) * 100  # คำนวณเปอร์เซ็นต์เกิน
-                
+                profit_above_threshold = pnl_points - MANUAL_TP_ALERT_THRESHOLD
+                profit_percentage = ((pnl_points / 501) - 1) * 100  # เทียบกับกำไรรับประกัน 501 points
+
                 logger.info(f"🚨 Manual TP Alert: กำไรเกิน {MANUAL_TP_ALERT_THRESHOLD} points ({pnl_points:.0f} points)")
-                
+
                 send_telegram(
-                    f"🚨 <b>⚠️ แจ้งเตือน: ตั้ง TP ด้วยมือ! ⚠️</b>\n\n"
+                    f"🚨 <b>⚠️ กำไรเกินคาดหวัง! ตั้ง TP ด้วยมือ! ⚠️</b>\n\n"
                     f"📊 <b>โพซิชัน:</b> {side.upper()}\n"
                     f"💰 <b>กำไรปัจจุบัน:</b> <code>{pnl_points:.0f} points</code>\n"
-                    f"📈 <b>เกินเป้า:</b> <code>+{profit_percentage:.1f}%</code>\n"
+                    f"🔥 <b>เกินเป้า 700:</b> <code>+{profit_above_threshold:.0f} points</code>\n"
+                    f"📈 <b>เทียบกับกำไรรับประกัน:</b> <code>+{profit_percentage:.1f}%</code>\n\n"
                     f"💵 <b>ราคาปัจจุบัน:</b> <code>{current_market_price:.2f}</code>\n"
-                    f"🏁 <b>ราคาเข้า:</b> <code>{entry_price:.2f}</code>\n\n"
-                    f"🎯 <b>แนะนำ:</b> ตั้ง TP ที่ราคาปัจจุบัน\n"
+                    f"🏁 <b>ราคาเข้า:</b> <code>{entry_price:.2f}</code>\n"
+                    f"🛡️ <b>SL ปัจจุบัน:</b> <code>{current_position_details.get('sl_price', 'N/A')}</code>\n\n"
+                    f"🎯 <b>แนะนำ:</b> ตั้ง TP ที่ราคาปัจจุบันเพื่อเก็บกำไรเต็มจำนวน\n"
                     f"⏰ <b>จะแจ้งซ้ำอีกใน:</b> {MANUAL_TP_ALERT_INTERVAL//60} นาที\n\n"
-                    f"📝 <b>หมายเหตุ:</b> ราคาวิ่งต่อเนื่องโดยไม่กลับมาชน SL Step 3"
+                    f"🔥 <b>โอกาส:</b> กำไรเกินกว่าที่คาดไว้ {profit_above_threshold:.0f} points!"
                 )
-                
+
                 last_manual_tp_alert_time = current_time
-                logger.info(f"ส่งการแจ้งเตือน Manual TP แล้ว (กำไร: {pnl_points:.0f} points)")
+                logger.info(f"ส่งการแจ้งเตือน Manual TP แล้ว (กำไร: {pnl_points:.0f} points, เกิน: {profit_above_threshold:.0f} points)")
         
         return
  # B. ตรวจพบว่าโพซิชัน "หายไปจาก exchange" แต่ระบบยังจำอยู่ → เคลียร์โพซิชัน
@@ -1353,14 +1374,9 @@ def send_startup_message():
 🎯 <b>SL Step System:</b>
    • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
    • <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
-   • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG:+}pts</code>
+   • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>+501pts</code> (รับประกันกำไร)
 
-🔧 <b>Risk Management:</b>
-   • <b>Margin Buffer:</b> <code>{MARGIN_BUFFER_USDT:,.0f} USDT</code>
-   • <b>Position Size:</b> <code>{int(TARGET_POSITION_SIZE_FACTOR*100)}%</code> of equity
-   • <b>Cooldown:</b> <code>{TRADE_COOLDOWN_SECONDS//60} นาที</code>
-
-🚨 <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code>
+🚨 <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (เกินคาดหวัง)
 🌐 <b>Railway Region:</b> <code>{os.getenv('RAILWAY_REGION', 'Unknown')}</code>
 
 🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
