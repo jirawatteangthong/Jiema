@@ -21,30 +21,30 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
 TIMEFRAME = '1h'
-LEVERAGE = 15
+LEVERAGE = 20
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (3 Steps) ---
 # 📈สำหรับ Long Position: (ราคาวิ่งขึ้น)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 250
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 350
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
 TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
-TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 100
+TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 10
 # เพิ่มพารามิเตอร์ SL Step 3 (TP จำลอง) ใหม่:
-TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 510  # + points จาก entry
-TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 501   # ตั้ง SL ที่ + points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 515  # + points จาก entry
+TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 499   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 250
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 350
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
-TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -100
+TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -10
 
-TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 510 # - points จาก entry  
-TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -501 # ตั้ง SL ที่ - points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 515 # - points จาก entry  
+TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -499 # ตั้ง SL ที่ - points (เหมือน TP)
 
 #⏳ระบบเตือน Manual TP
 MANUAL_TP_ALERT_THRESHOLD = 700  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
