@@ -20,14 +20,14 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '1h'
+TIMEFRAME = '15m'
 LEVERAGE = 20
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
 
 # --- Trailing Stop Loss Parameters (3 Steps) ---
 # 📈สำหรับ Long Position: (ราคาวิ่งขึ้น)
-TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 350
+TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
 TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
@@ -37,7 +37,7 @@ TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 515  # + points จาก entry
 TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 499   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
-TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 350
+TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
@@ -52,8 +52,8 @@ MANUAL_TP_ALERT_INTERVAL = 600   # แจ้งเตือนซ้ำทุก
 
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
-EMA_FAST_PERIOD = 10 #📉
-EMA_SLOW_PERIOD = 40 #📈
+EMA_FAST_PERIOD = 49 #📉
+EMA_SLOW_PERIOD = 200 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
@@ -73,7 +73,7 @@ STATS_FILE = 'trading_stats.json'
 
 # --- Bot Timing (แยกจังหวะเวลา) ---
 FAST_LOOP_INTERVAL_SECONDS = 3 # ⏰สำหรับการจัดการออเดอร์, TP/SL (เร็วขึ้น)
-EMA_CALC_INTERVAL_SECONDS = 300 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
+EMA_CALC_INTERVAL_SECONDS = 180 # ⏰สำหรับการคำนวณ EMA และหา Cross Signal (ช้าลง)
 TRADE_COOLDOWN_SECONDS = 180 # ⏰เพิ่ม: ระยะเวลา Cooldown
 ERROR_RETRY_SLEEP_SECONDS = 60
 MONTHLY_REPORT_DAY = 20 #วันที่สรุปรายเดือน
