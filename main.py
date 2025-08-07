@@ -20,7 +20,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
-TIMEFRAME = '15m'
+TIMEFRAME = '1h'
 LEVERAGE = 20
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
@@ -57,7 +57,7 @@ EMA_SLOW_PERIOD = 50 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
-TARGET_POSITION_SIZE_FACTOR = 0.5 # ใช้ 0.8 (80%) ของ Equity ที่ใช้ได้ทั้งหมด
+TARGET_POSITION_SIZE_FACTOR = 0.8 # ใช้ 0.8 (80%) ของ Equity ที่ใช้ได้ทั้งหมด
 
 # --- Order Confirmation & Stability ---
 CONFIRMATION_RETRIES = 15
@@ -421,94 +421,101 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
 
     return ema
 
+# แก้ไขฟังก์ชัน check_ema_cross() ใหม่
 def check_ema_cross() -> str | None:
     global last_ema_position_status
-
+    
     try:
         retries = 3
         ohlcv = None
         
         # คำนวณจำนวนแท่งเทียนที่ต้องการตาม EMA periods
         min_required_candles = max(EMA_FAST_PERIOD, EMA_SLOW_PERIOD) + 50
-        required_limit = max(EMA_FAST_PERIOD, EMA_SLOW_PERIOD) * 4  # 🔥🔥ใช้ 4 เท่าเพื่อความปลอดภัย
+        required_limit = max(EMA_FAST_PERIOD, EMA_SLOW_PERIOD) * 4 # ใช้ 4 เท่าเพื่อความปลอดภัย
         
         for i in range(retries):
-            logger.debug(f"🔍 กำลังดึงข้อมูล OHLCV สำหรับ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} ({i+1}/{retries})...")
+            logger.debug(f"กำลังดึงข้อมูล OHLCV สำหรับ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} ({i+1}/{retries})...")
             try:
                 ohlcv = exchange.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=required_limit)
-                time.sleep(0.2)  # ลดเวลา sleep
+                time.sleep(0.2) # ลดเวลา sleep
                 break
             except (ccxt.NetworkError, ccxt.ExchangeError) as e:
                 logger.warning(f"⚠️ Error fetching OHLCV (Attempt {i+1}/{retries}): {e}. Retrying in 10 seconds...")
                 if i == retries - 1:
-                    send_telegram(f"⛔️ API Error: ไม่สามารถดึง OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
-                time.sleep(10)  # ลดเวลา sleep
+                    send_telegram(f"⚠️ API Error: ไม่สามารถดึง OHLCV ได้ (Attempt {i+1}/{retries})\nรายละเอียด: {e}")
+                time.sleep(10) # ลดเวลา sleep
             except Exception as e:
                 logger.error(f"❌ Unexpected error fetching OHLCV: {e}", exc_info=True)
-                send_telegram(f"⛔️ Unexpected Error: ไม่สามารถดึง OHLCV ได้\nรายละเอียด: {e}")
+                send_telegram(f"❌ Unexpected Error: ไม่สามารถดึง OHLCV ได้\nรายละเอียด: {e}")
                 return None
-
+        
         if not ohlcv or len(ohlcv) < min_required_candles:
-            logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย {min_required_candles} แท่ง ได้ {len(ohlcv)}")
+            logger.warning(f"ข้อมูล OHLCV ไม่เพียงพอ. ต้องการอย่างน้อย {min_required_candles} แท่ง ได้{len(ohlcv)}")
             send_telegram(f"⚠️ ข้อมูล OHLCV ไม่เพียงพอ ({len(ohlcv)} แท่ง) สำหรับ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD}")
             return None
-
+        
         closes = [candle[4] for candle in ohlcv]
-
+        
+        # คำนวณ EMA ปัจจุบันและก่อนหน้า
         ema_fast_current = calculate_ema(closes, EMA_FAST_PERIOD)
         ema_slow_current = calculate_ema(closes, EMA_SLOW_PERIOD)
-
+        
+        # คำนวณ EMA ก่อนหน้า 1 แท่ง (สำหรับตรวจสอบการตัดกัน)
+        ema_fast_previous = calculate_ema(closes[:-1], EMA_FAST_PERIOD)
+        ema_slow_previous = calculate_ema(closes[:-1], EMA_SLOW_PERIOD)
+        
         logger.info(f"📊 EMA Values: Current EMA{EMA_FAST_PERIOD}={ema_fast_current:,.2f}, EMA{EMA_SLOW_PERIOD}={ema_slow_current:,.2f}")
-
-        if None in [ema_fast_current, ema_slow_current]:
-            logger.warning("ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
+        logger.info(f"📊 EMA Previous: EMA{EMA_FAST_PERIOD}={ema_fast_previous:,.2f}, EMA{EMA_SLOW_PERIOD}={ema_slow_previous:,.2f}")
+        
+        if None in [ema_fast_current, ema_slow_current, ema_fast_previous, ema_slow_previous]:
+            logger.warning("❌ ค่า EMA ไม่สามารถคำนวณได้ (เป็น None).")
             return None
-
-        current_ema_position = None
-        if ema_fast_current > ema_slow_current:
-            current_ema_position = 'above'
-        elif ema_fast_current < ema_slow_current:
-            current_ema_position = 'below'
-
+        
+        # กำหนดสถานะ EMA ปัจจุบันและก่อนหน้า
+        current_ema_position = 'above' if ema_fast_current > ema_slow_current else 'below'
+        previous_ema_position = 'above' if ema_fast_previous > ema_slow_previous else 'below'
+        
+        # === กรณีที่บอทเพิ่งเริ่มรัน หรือ reset หลังปิดโพซิชัน ===
         if last_ema_position_status is None:
-            if current_ema_position:
-                last_ema_position_status = current_ema_position
-                save_monthly_stats()
-                logger.info(f"ℹ️ บอทเพิ่งเริ่มรัน. บันทึกสถานะ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} ปัจจุบันเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
-            return None
-
-        cross_signal = None
-
-        if last_ema_position_status == 'below' and current_ema_position == 'above' and \
-           ema_fast_current > (ema_slow_current + CROSS_THRESHOLD_POINTS):
-            cross_signal = 'long'
-            logger.info(f"🚀 Threshold Golden Cross: EMA{EMA_FAST_PERIOD}({ema_fast_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points above EMA{EMA_SLOW_PERIOD}({ema_slow_current:,.2f})")
-
-        elif last_ema_position_status == 'above' and current_ema_position == 'below' and \
-             ema_fast_current < (ema_slow_current - CROSS_THRESHOLD_POINTS):
-            cross_signal = 'short'
-            logger.info(f"🔻 Threshold Death Cross: EMA{EMA_FAST_PERIOD}({ema_fast_current:,.2f}) is {CROSS_THRESHOLD_POINTS} points below EMA{EMA_SLOW_PERIOD}({ema_slow_current:,.2f})")
-
-        if cross_signal is not None:
-            logger.info(f"✨ สัญญาณ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} Cross ที่ตรวจพบ: {cross_signal.upper()}")
-            if current_ema_position != last_ema_position_status:
-                logger.info(f"ℹ️ EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()} during a cross signal. Updating last_ema_position_status.")
-                last_ema_position_status = current_ema_position
-                save_monthly_stats()
-        elif current_ema_position != last_ema_position_status:
-            logger.info(f"ℹ️ EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()}. Updating last_ema_position_status (no cross signal detected).")
             last_ema_position_status = current_ema_position
             save_monthly_stats()
+            logger.info(f"🔄 บอทเพิ่งเริ่มรัน/รีเซ็ต. บันทึกสถานะ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} เริ่มต้นเป็น: {current_ema_position.upper()}. จะรอสัญญาณการตัดกันครั้งถัดไป.")
+            return None
+        
+        # === ตรวจสอบการตัดกันของ EMA ===
+        cross_signal = None
+        
+        # ตรวจสอบ Golden Cross (EMA Fast ตัดขึ้นข้าม EMA Slow)
+        if (previous_ema_position == 'below' and current_ema_position == 'above' and 
+            ema_fast_current > (ema_slow_current + CROSS_THRESHOLD_POINTS)):
+            cross_signal = 'long'
+            logger.info(f"🟢 Golden Cross Detected: EMA{EMA_FAST_PERIOD} ({ema_fast_current:,.2f}) ตัดขึ้นข้าม EMA{EMA_SLOW_PERIOD} ({ema_slow_current:,.2f}) + {CROSS_THRESHOLD_POINTS} points threshold")
+        
+        # ตรวจสอบ Death Cross (EMA Fast ตัดลงข้าม EMA Slow)
+        elif (previous_ema_position == 'above' and current_ema_position == 'below' and 
+              ema_fast_current < (ema_slow_current - CROSS_THRESHOLD_POINTS)):
+            cross_signal = 'short'
+            logger.info(f"🔴 Death Cross Detected: EMA{EMA_FAST_PERIOD} ({ema_fast_current:,.2f}) ตัดลงข้าม EMA{EMA_SLOW_PERIOD} ({ema_slow_current:,.2f}) - {CROSS_THRESHOLD_POINTS} points threshold")
+        
+        # อัปเดตสถานะ EMA ปัจจุบัน
+        if current_ema_position != last_ema_position_status:
+            logger.info(f"🔄 EMA position changed from {last_ema_position_status.upper()} to {current_ema_position.upper()}")
+            last_ema_position_status = current_ema_position
+            save_monthly_stats()
+        
+        # แสดงผลสัญญาณ
+        if cross_signal is not None:
+            logger.info(f"🎯 สัญญาณ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} Cross ที่ตรวจพบ: {cross_signal.upper()}")
+            return cross_signal
         else:
-            logger.info(f"🔎 ไม่พบสัญญาณ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} Cross ที่ชัดเจน.")
-
-        return cross_signal
-
+            logger.info(f"⏳ ไม่พบสัญญาณ EMA{EMA_FAST_PERIOD}/{EMA_SLOW_PERIOD} Cross ที่ชัดเจน. สถานะปัจจุบัน: {current_ema_position.upper()}")
+            return None
+            
     except Exception as e:
         logger.error(f"❌ เกิดข้อผิดพลาดในการคำนวณ EMA: {e}", exc_info=True)
-        send_telegram(f"⛔️ Error: ไม่สามารถคำนวณ EMA ได้\nรายละเอียด: {e}")
+        send_telegram(f"❌ Error: ไม่สามารถคำนวณ EMA ได้\nรายละเอียด: {e}")
         return None
-
+        
 # ฟังก์ชันเสริมสำหรับการปรับเปลี่ยนค่า EMA ระหว่างการทำงาน (ถ้าต้องการ)
 def update_ema_parameters(fast_period: int, slow_period: int):
     """
@@ -1025,10 +1032,10 @@ def monitor_position(current_market_price: float):
     global current_position_details, last_ema_position_status, monthly_stats, last_trade_closed_time
     global waiting_for_cooldown
     global last_manual_tp_alert_time
-
+    
     logger.info(f"กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
     pos_info_from_exchange = get_current_position()
-
+    
     # A. มีโพซิชันทั้งในระบบและใน exchange → อัปเดตข้อมูล
     if pos_info_from_exchange and current_position_details:
         current_position_details.update({
@@ -1038,16 +1045,16 @@ def monitor_position(current_market_price: float):
             'unrealized_pnl': pos_info_from_exchange['unrealized_pnl'],
             'liquidation_price': pos_info_from_exchange['liquidation_price']
         })
-
+        
         # ตั้งค่าใช้งาน
         side = current_position_details['side']
         entry_price = current_position_details['entry_price']
         contracts = current_position_details['contracts']
         sl_step = current_position_details.get('sl_step', 0)
         sl_price = current_position_details.get('sl_price')
-
+        
         logger.info(f"{side.upper()} | Entry: {entry_price:.2f} | Price: {current_market_price:.2f} | PnL: {current_position_details['unrealized_pnl']:.2f}")
-
+        
         # ตั้ง SL เริ่มต้น ถ้ายังไม่มี
         if sl_price is None:
             sl = entry_price - SL_DISTANCE_POINTS if side == 'long' else entry_price + SL_DISTANCE_POINTS
@@ -1055,44 +1062,44 @@ def monitor_position(current_market_price: float):
             current_position_details['initial_sl_price'] = sl
             current_position_details['sl_step'] = 0
             current_position_details['tp_price'] = 0
-
+            
             logger.info(f"ตั้ง SL เริ่มต้น → SL: {sl:.2f} (ไม่ตั้ง TP)")
             success = set_sl_only_for_position(side, contracts, sl)
             if not success:
                 logger.error("ไม่สามารถตั้ง SL เริ่มต้นได้")
                 return
-
+        
         # คำนวณกำไร
         pnl_points = (current_market_price - entry_price) if side == 'long' else (entry_price - current_market_price)
-
+        
         # Step trigger
         trail_trigger_1 = TRAIL_SL_STEP1_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS
         trail_trigger_2 = TRAIL_SL_STEP2_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS
         trail_trigger_3 = TRAIL_SL_STEP3_TRIGGER_LONG_POINTS if side == 'long' else TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS
-
+        
         # SL เป้าหมายแต่ละ step
         trail_sl_1 = entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT
         trail_sl_2 = entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT
         trail_sl_3 = entry_price + TRAIL_SL_STEP3_NEW_SL_POINTS_LONG if side == 'long' else entry_price + TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT
-
+        
         # SL Step 1
         if sl_step == 0 and pnl_points >= trail_trigger_1:
             current_position_details['sl_step'] = 1
             current_position_details['sl_price'] = trail_sl_1
-            logger.info(f"🔄 SL Step 1 triggered → ย้าย SL จาก {sl_price:.2f} เป็น {trail_sl_1:.2f}")
+            logger.info(f"🚀 SL Step 1 triggered → ย้าย SL จาก {sl_price:.2f} เป็น {trail_sl_1:.2f}")
             success = set_sl_only_for_position(side, contracts, trail_sl_1)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 1 ได้")
-
+        
         # SL Step 2
         elif sl_step == 1 and pnl_points >= trail_trigger_2:
             current_position_details['sl_step'] = 2
             current_position_details['sl_price'] = trail_sl_2
-            logger.info(f"🔄 SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
+            logger.info(f"🚀 SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
             success = set_sl_only_for_position(side, contracts, trail_sl_2)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 2 ได้")
-
+        
         # SL Step 3 (TP จำลอง)
         elif sl_step == 2 and pnl_points >= trail_trigger_3:
             current_position_details['sl_step'] = 3
@@ -1102,38 +1109,48 @@ def monitor_position(current_market_price: float):
             success = set_sl_only_for_position(side, contracts, trail_sl_3)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 3 (TP จำลอง) ได้")
-
+        
         # Manual TP Alert
         elif sl_step == 3 and pnl_points > MANUAL_TP_ALERT_THRESHOLD:
             current_time = datetime.now()
             time_since_last_alert = (current_time - last_manual_tp_alert_time).total_seconds()
             if time_since_last_alert >= MANUAL_TP_ALERT_INTERVAL:
                 last_manual_tp_alert_time = current_time
-                logger.info(f"🚨 Manual TP Alert: กำไรเกิน {MANUAL_TP_ALERT_THRESHOLD} points → แจ้งเตือนเรียบร้อย")
-
+                logger.info(f"🔔 Manual TP Alert: กำไรเกิน {MANUAL_TP_ALERT_THRESHOLD} points → แจ้งเตือนเรียบร้อย")
+                send_telegram(
+                    f"🔔 <b>Manual TP Alert!</b>\n"
+                    f"💰 กำไรปัจจุบัน: <b>{pnl_points:+,.0f} points</b>\n"
+                    f"📈 Entry: {entry_price:,.2f} → Current: {current_market_price:,.2f}\n"
+                    f"💡 <b>แนะนำปิดกำไรด้วยมือ</b>"
+                )
+        
         return
-
+    
     # B. ตรวจพบว่าโพซิชัน "หายจาก exchange" แต่ยังจำในบอท
-    if not pos_info_from_exchange and current_position_details:
+    elif not pos_info_from_exchange and current_position_details:
         logger.warning(f"โพซิชันหายไปจาก Exchange แต่บอทยังจำอยู่: {current_position_details}")
-
+        
         entry = current_position_details.get('entry_price')
         contracts = current_position_details.get('contracts')
         side = current_position_details.get('side')
         sl_step = current_position_details.get('sl_step', 0)
-
+        
         if not entry or not contracts or not side:
             logger.warning("ข้อมูล current_position_details ไม่ครบ → ข้ามการคำนวณ PnL")
             current_position_details = None
+            # *** รีเซ็ต EMA status เมื่อปิดโพซิชัน ***
+            last_ema_position_status = None
+            logger.info("🔄 รีเซ็ต EMA status หลังปิดโพซิชัน - จะตรวจสอบสถานะ EMA ใหม่ในรอบถัดไป")
+            save_monthly_stats()
             return
-
+        
         closed_price = current_market_price
         pnl = (closed_price - entry) * contracts if side == 'long' else (entry - closed_price) * contracts
         reason = "TP" if sl_step == 3 else "SL"
-
+        
         # เพิ่มสถิติ
         add_trade_result(reason, pnl)
-
+        
         # เช็กซ้ำว่าโพซิชันกลับมาไหม
         time.sleep(1)
         confirm_pos = get_current_position()
@@ -1152,20 +1169,25 @@ def monitor_position(current_market_price: float):
                 'initial_sl_price': current_position_details.get('initial_sl_price')
             }
             return
-
-        # ✅ เคลียร์คำสั่ง TP/SL ทันที
+        
+        # เคลียร์คำสั่ง TP/SL ทันที
         try:
             cancel_all_open_tp_sl_orders()
-            logger.info("🧹 เคลียร์คำสั่ง TP/SL เดิมเรียบร้อยหลังปิดโพซิชัน")
+            logger.info("เคลียร์คำสั่ง TP/SL เดิมเรียบร้อยหลังปิดโพซิชัน")
         except Exception as e:
-            logger.warning(f"❗ ไม่สามารถล้างคำสั่ง TP/SL: {e}")
-
+            logger.warning(f"ไม่สามารถล้างคำสั่ง TP/SL: {e}")
+        
         current_position_details = None
         last_trade_closed_time = datetime.now()
         waiting_for_cooldown = True
+        
+        # *** รีเซ็ต EMA status เมื่อปิดโพซิชัน ***
+        last_ema_position_status = None
+        logger.info("🔄 รีเซ็ต EMA status หลังปิดโพซิชัน - จะตรวจสอบสถานะ EMA ใหม่ในรอบถัดไป")
+        
         save_monthly_stats()
         logger.info(f"เริ่ม COOLDOWN PERIOD: {TRADE_COOLDOWN_SECONDS} วินาที")
-
+        
         # ยกเลิกคำสั่งทั้งหมด (เช่น market/limit ที่ยังค้าง)
         try:
             time.sleep(1)
@@ -1173,8 +1195,19 @@ def monitor_position(current_market_price: float):
             logger.info("ยกเลิกคำสั่งทั้งหมดหลังปิดโพซิชันแล้ว")
         except Exception as e:
             logger.warning(f"ยกเลิกคำสั่งไม่สำเร็จหลังปิดโพซิชัน: {e}")
+        
+        # ส่งการแจ้งเตือน
+        send_telegram(
+            f"📊 ปิดโพซิชัน {side.upper()} แล้ว!\n"
+            f"💰 P&L: <b>{pnl:+,.2f} USDT</b>\n"
+            f"📈 Entry: <code>{entry:,.2f}</code> → Exit: <code>{closed_price:,.2f}</code>\n"
+            f"🔧 สาเหตุ: <b>{reason}</b>\n"
+            f"🔄 บอทจะรีเซ็ต EMA และรอสัญญาณใหม่\n"
+            f"⏳ Cooldown: <b>{TRADE_COOLDOWN_SECONDS // 60} นาที</b>"
+        )
+        
         return
-
+    
     # C. ไม่มีโพซิชันทั้งใน exchange และใน bot
     else:
         if current_position_details:
@@ -1184,6 +1217,9 @@ def monitor_position(current_market_price: float):
             except Exception as e:
                 logger.warning(f"ยกเลิกคำสั่งค้างไม่สำเร็จ: {e}")
             current_position_details = None
+            # *** รีเซ็ต EMA status ***
+            last_ema_position_status = None
+            logger.info("🔄 รีเซ็ต EMA status - จะตรวจสอบสถานะ EMA ใหม่ในรอบถัดไป")
             save_monthly_stats()
         else:
             logger.info("ไม่มีโพซิชันเปิดอยู่")
