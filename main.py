@@ -52,12 +52,12 @@ MANUAL_TP_ALERT_INTERVAL = 600   # แจ้งเตือนซ้ำทุก
 
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
 # --- EMA Parameters ---
-EMA_FAST_PERIOD = 49 #📉
-EMA_SLOW_PERIOD = 200 #📈
+EMA_FAST_PERIOD = 9 #📉
+EMA_SLOW_PERIOD = 50 #📈
 
 # --- Risk Management ---
 MARGIN_BUFFER_USDT = 5
-TARGET_POSITION_SIZE_FACTOR = 0.8 # ใช้ 0.8 (80%) ของ Equity ที่ใช้ได้ทั้งหมด
+TARGET_POSITION_SIZE_FACTOR = 0.5 # ใช้ 0.8 (80%) ของ Equity ที่ใช้ได้ทั้งหมด
 
 # --- Order Confirmation & Stability ---
 CONFIRMATION_RETRIES = 15
