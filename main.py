@@ -23,25 +23,25 @@ SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange
 TIMEFRAME = '1h'
 LEVERAGE = 30
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
-SL_DISTANCE_POINTS = 1111
+SL_DISTANCE_POINTS = 1234
 
 # --- Trailing Stop Loss Parameters (3 Steps) ---
 # 📈สำหรับ Long Position: (ราคาวิ่งขึ้น)
 TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
-TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
+TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -700
 
-TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
-TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = -150
+#TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
+#TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = -150
 # เพิ่มพารามิเตอร์ SL Step 3 (TP จำลอง) ใหม่:
 TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 500  # + points จาก entry
 TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 460   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
 TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
-TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
+TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 700
 
-TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
-TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = 150
+#TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
+#TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = 150
 
 TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 500 # - points จาก entry  
 TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -460 # ตั้ง SL ที่ - points (เหมือน TP)
@@ -110,7 +110,10 @@ last_ema_calc_time = datetime.min
 last_trade_closed_time = datetime.min # *** เพิ่ม: ตัวแปรสำหรับเวลาที่ปิดเทรดล่าสุด **
 waiting_for_cooldown = False  # เพิ่มบรรทัดนี้
 last_manual_tp_alert_time = datetime.min  # เก็บเวลาที่แจ้งเตือนครั้งล่าสุด
-
+# กันปัญหาเปิดซ้ำโดยไม่ได้มี cross ใหม่
+must_wait_new_cross = False
+last_cross_bar_time = None
+last_entry_cross_bar_time = None
 
 # ==============================================================================
 # 4. โครงสร้างข้อมูลสถิติ (STATISTICS DATA STRUCTURE)
@@ -424,6 +427,7 @@ def calculate_ema(prices: list[float], period: int) -> float | None:
 # แก้ไขฟังก์ชัน check_ema_cross() ใหม่
 def check_ema_cross() -> str | None:
     global last_ema_position_status
+    global last_cross_bar_time
     
     try:
         retries = 3
@@ -618,9 +622,9 @@ def set_sl_only_for_position(direction: str, amount: float, sl_price: float) -> 
         # ส่งการแจ้งเตือนสำเร็จ
         send_telegram(
             f"✅ <b>ตั้ง SL สำเร็จ!</b>\n"
-            f"🛑 <b>SL:</b> <code>{sl_price_formatted:,.2f}</code>\n"
-            f"📊 <b>Direction:</b> {direction.upper()}\n"
-            f"📏 <b>Size:</b> {amount:,.8f}"
+            f"📌 <b>SL:</b> <code>{sl_price_formatted:,.2f}</code>\n"
+            #f"📊 <b>Direction:</b> {direction.upper()}\n"
+            #f"📏 <b>Size:</b> {amount:,.8f}"
         )
         
         return True
@@ -1092,16 +1096,16 @@ def monitor_position(current_market_price: float):
                 logger.error("ไม่สามารถอัปเดต SL Step 1 ได้")
         
         # SL Step 2
-        elif sl_step == 1 and pnl_points >= trail_trigger_2:
-            current_position_details['sl_step'] = 2
-            current_position_details['sl_price'] = trail_sl_2
-            logger.info(f"🚀 SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
-            success = set_sl_only_for_position(side, contracts, trail_sl_2)
-            if not success:
-                logger.error("ไม่สามารถอัปเดต SL Step 2 ได้")
+       # elif sl_step == 1 and pnl_points >= trail_trigger_2:
+            #current_position_details['sl_step'] = 2
+            #current_position_details['sl_price'] = trail_sl_2
+            #logger.info(f"🚀 SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
+            #success = set_sl_only_for_position(side, contracts, trail_sl_2)
+            #if not success:
+                #logger.error("ไม่สามารถอัปเดต SL Step 2 ได้")
         
-        # SL Step 3 (TP จำลอง)
-        elif sl_step == 2 and pnl_points >= trail_trigger_3:
+        # SL Step 3 (TP จำลอง) แทน Step 2
+        elif sl_step == 1 and pnl_points >= trail_trigger_3:
             current_position_details['sl_step'] = 3
             trail_sl_3 = round_to_precision(trail_sl_3, 'price')
             current_position_details['sl_price'] = trail_sl_3
@@ -1121,7 +1125,7 @@ def monitor_position(current_market_price: float):
                     f"🔔 <b>Manual TP Alert!</b>\n"
                     f"💰 กำไรปัจจุบัน: <b>{pnl_points:+,.0f} points</b>\n"
                     f"📈 Entry: {entry_price:,.2f} → Current: {current_market_price:,.2f}\n"
-                    f"💡 <b>แนะนำปิดกำไรด้วยมือ ด่วนที่สุด🔥</b>"
+                    f"💡 <b>แนะนำปิดกำไรด้วยมือ ด่วนที่สุด กด cancel all🔥</b>"
                 )
         
         return
@@ -1140,6 +1144,7 @@ def monitor_position(current_market_price: float):
             current_position_details = None
             # *** รีเซ็ต EMA status เมื่อปิดโพซิชัน ***
             last_ema_position_status = None
+            must_wait_new_cross = True
             logger.info("🔄 รีเซ็ต EMA status หลังปิดโพซิชัน - จะตรวจสอบสถานะ EMA ใหม่ในรอบถัดไป")
             save_monthly_stats()
             return
@@ -1201,7 +1206,7 @@ def monitor_position(current_market_price: float):
             f"📊 ปิดโพซิชัน {side.upper()} แล้ว!\n"
             f"💰 P&L: <b>{pnl:+,.2f} USDT</b>\n"
             f"📈 Entry: <code>{entry:,.2f}</code> → Exit: <code>{closed_price:,.2f}</code>\n"
-            f"🔧 สาเหตุ: <b>{reason}</b>\n"
+            f"🌈 สาเหตุ: <b>{reason}</b>\n"
             #f"🔄 บอทจะรีเซ็ต EMA และรอสัญญาณใหม่\n"
             f"⏳ Cooldown: <b>{TRADE_COOLDOWN_SECONDS // 60} นาที</b>"
         )
@@ -1219,6 +1224,7 @@ def monitor_position(current_market_price: float):
             current_position_details = None
             # *** รีเซ็ต EMA status ***
             last_ema_position_status = None
+            must_wait_new_cross = True  
             logger.info("🔄 รีเซ็ต EMA status - จะตรวจสอบสถานะ EMA ใหม่ในรอบถัดไป")
             save_monthly_stats()
         else:
@@ -1339,8 +1345,7 @@ def send_startup_message():
 📉 • <b>EMA Slow:</b> <code>{EMA_SLOW_PERIOD}</code>
 ❎ <b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
 🚀 • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
-🔥 • <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
-🎉 • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG}pts</code> 
+🎉 • <b>Step 2 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG}pts</code> 
 ⏰ <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (จะมีการแจ้งเตือนปิดกำไร🤑)
 🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
 
@@ -1449,6 +1454,11 @@ def main():
                     # ตรวจสอบว่าถึงเวลาคำนวณ EMA หรือยัง
                     if (current_time - last_ema_calc_time).total_seconds() >= EMA_CALC_INTERVAL_SECONDS:
                         logger.info("ไม่มีโพซิชันเปิดอยู่. ถึงเวลาตรวจสอบสัญญาณ EMA Cross เพื่อเปิดโพซิชัน...")
+                        if must_wait_new_cross:
+                            _ = check_ema_cross()  # Priming
+                            must_wait_new_cross = False
+                            time.sleep(FAST_LOOP_INTERVAL_SECONDS)
+                            continue
                         signal = check_ema_cross()
                         last_ema_calc_time = current_time  # อัปเดตเวลาที่คำนวณ EMA ล่าสุด
                         
