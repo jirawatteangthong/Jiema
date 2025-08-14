@@ -21,7 +21,7 @@ SECRET = os.getenv('BINANCE_SECRET', 'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 # --- Trade Parameters ---
 SYMBOL = 'BTC/USDT:USDT' # ใช้ 'BTC/USDT:USDT' ตามที่ Exchange คืนมาใน get_current_position()
 TIMEFRAME = '1h'
-LEVERAGE = 20
+LEVERAGE = 30
 TP_DISTANCE_POINTS = 1111 #❤️‍🩹ยกเลิกไปก่อน
 SL_DISTANCE_POINTS = 1111
 
@@ -31,20 +31,20 @@ TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -500
 
 TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
-TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = -200
+TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = -150
 # เพิ่มพารามิเตอร์ SL Step 3 (TP จำลอง) ใหม่:
-TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 515  # + points จาก entry
-TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 499   # ตั้ง SL ที่ + points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 500  # + points จาก entry
+TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 460   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
 TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 500
 
 TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
-TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = 200
+TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = 150
 
-TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 515 # - points จาก entry  
-TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -499 # ตั้ง SL ที่ - points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 500 # - points จาก entry  
+TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -460 # ตั้ง SL ที่ - points (เหมือน TP)
 
 #⏳ระบบเตือน Manual TP
 MANUAL_TP_ALERT_THRESHOLD = 700  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
@@ -1011,7 +1011,7 @@ def set_tpsl_for_position(direction: str, amount: float, current_sl_price: float
             f"🎯 <b>TP:</b> <code>{tp_price_formatted:,.2f}</code>\n"
             f"🛡️ <b>SL:</b> <code>{sl_price_formatted:,.2f}</code>\n"
             f"📊 <b>Direction:</b> {direction.upper()}\n"
-            f"📦 <b>Size:</b> {amount:,.8f}"
+            #f"📦 <b>Size:</b> {amount:,.8f}"
         )
         
         return True
@@ -1121,7 +1121,7 @@ def monitor_position(current_market_price: float):
                     f"🔔 <b>Manual TP Alert!</b>\n"
                     f"💰 กำไรปัจจุบัน: <b>{pnl_points:+,.0f} points</b>\n"
                     f"📈 Entry: {entry_price:,.2f} → Current: {current_market_price:,.2f}\n"
-                    f"💡 <b>แนะนำปิดกำไรด้วยมือ</b>"
+                    f"💡 <b>แนะนำปิดกำไรด้วยมือ ด่วนที่สุด🔥</b>"
                 )
         
         return
@@ -1202,7 +1202,7 @@ def monitor_position(current_market_price: float):
             f"💰 P&L: <b>{pnl:+,.2f} USDT</b>\n"
             f"📈 Entry: <code>{entry:,.2f}</code> → Exit: <code>{closed_price:,.2f}</code>\n"
             f"🔧 สาเหตุ: <b>{reason}</b>\n"
-            f"🔄 บอทจะรีเซ็ต EMA และรอสัญญาณใหม่\n"
+            #f"🔄 บอทจะรีเซ็ต EMA และรอสัญญาณใหม่\n"
             f"⏳ Cooldown: <b>{TRADE_COOLDOWN_SECONDS // 60} นาที</b>"
         )
         
@@ -1340,7 +1340,7 @@ def send_startup_message():
 ❎ <b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
 🚀 • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
 🔥 • <b>Step 2:</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
-🎉 • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>+499pts</code> 
+🎉 • <b>Step 3 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG}pts</code> 
 ⏰ <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (จะมีการแจ้งเตือนปิดกำไร🤑)
 🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
 
@@ -1397,7 +1397,7 @@ def main():
                     if waiting_for_cooldown:
                         waiting_for_cooldown = False
                         logger.info("✅ COOLDOWN PERIOD สิ้นสุด - บอทพร้อมเปิดออเดอร์ใหม่")
-                        send_telegram("✅ สิ้นสุดช่วง Cooldown - บอทพร้อมเทรดใหม่")
+                        #send_telegram("✅ สิ้นสุดช่วง Cooldown - บอทพร้อมเทรดใหม่")
             
             # --- 2. ดึงราคาปัจจุบัน ---
             current_price = None
