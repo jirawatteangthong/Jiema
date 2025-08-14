@@ -459,6 +459,7 @@ def check_ema_cross() -> str | None:
             return None
         
         closes = [candle[4] for candle in ohlcv]
+        prev_bar_time_ms = ohlcv[-2][0]
         
         # คำนวณ EMA ปัจจุบันและก่อนหน้า
         ema_fast_current = calculate_ema(closes, EMA_FAST_PERIOD)
@@ -493,12 +494,14 @@ def check_ema_cross() -> str | None:
         if (previous_ema_position == 'below' and current_ema_position == 'above' and 
             ema_fast_current > (ema_slow_current + CROSS_THRESHOLD_POINTS)):
             cross_signal = 'long'
+            last_cross_bar_time = prev_bar_time_ms
             logger.info(f"🟢 Golden Cross Detected: EMA{EMA_FAST_PERIOD} ({ema_fast_current:,.2f}) ตัดขึ้นข้าม EMA{EMA_SLOW_PERIOD} ({ema_slow_current:,.2f}) + {CROSS_THRESHOLD_POINTS} points threshold")
         
         # ตรวจสอบ Death Cross (EMA Fast ตัดลงข้าม EMA Slow)
         elif (previous_ema_position == 'above' and current_ema_position == 'below' and 
               ema_fast_current < (ema_slow_current - CROSS_THRESHOLD_POINTS)):
             cross_signal = 'short'
+            last_cross_bar_time = prev_bar_time_ms
             logger.info(f"🔴 Death Cross Detected: EMA{EMA_FAST_PERIOD} ({ema_fast_current:,.2f}) ตัดลงข้าม EMA{EMA_SLOW_PERIOD} ({ema_slow_current:,.2f}) - {CROSS_THRESHOLD_POINTS} points threshold")
         
         # อัปเดตสถานะ EMA ปัจจุบัน
@@ -1036,6 +1039,7 @@ def monitor_position(current_market_price: float):
     global current_position_details, last_ema_position_status, monthly_stats, last_trade_closed_time
     global waiting_for_cooldown
     global last_manual_tp_alert_time
+    global must_wait_new_cross
     
     logger.info(f"กำลังตรวจสอบสถานะโพซิชัน (Current Price: {current_market_price:,.2f})")
     pos_info_from_exchange = get_current_position()
@@ -1359,6 +1363,7 @@ def send_startup_message():
 # 16. ฟังก์ชันหลักของบอท (MAIN BOT LOGIC)
 # =================================================================
 def main():
+    global must_wait_new_cross, last_cross_bar_time, last_entry_cross_bar_time
     global current_position_details, last_ema_position_status, last_ema_calc_time, last_trade_closed_time
     global waiting_for_cooldown
     
@@ -1469,6 +1474,10 @@ def main():
                             market_order_success, confirmed_entry_price = open_market_order(signal, current_price)
                             if market_order_success and confirmed_entry_price:
                                 logger.info(f"เปิดออเดอร์ {signal.upper()} สำเร็จ. บอทจะดูแล TP/SL ในรอบถัดไป.")
+                                # 🆕 บันทึกว่าใช้ cross แท่งนี้ไปแล้ว
+                                global last_entry_cross_bar_time, last_cross_bar_time
+                                last_entry_cross_bar_time = last_cross_bar_time
+        
                             else:
                                 logger.warning(f"ไม่สามารถเปิด Market Order {signal.upper()} ได้.")
                         else:
