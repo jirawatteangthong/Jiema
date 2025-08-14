@@ -30,24 +30,24 @@ SL_DISTANCE_POINTS = 1234
 TRAIL_SL_STEP1_TRIGGER_LONG_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_LONG = -700
 
-#TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 450
-#TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = -150
+TRAIL_SL_STEP2_TRIGGER_LONG_POINTS = 500
+TRAIL_SL_STEP2_NEW_SL_POINTS_LONG = 460
 # เพิ่มพารามิเตอร์ SL Step 3 (TP จำลอง) ใหม่:
-TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 500  # + points จาก entry
-TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 460   # ตั้ง SL ที่ + points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_LONG_POINTS = 700  # + points จาก entry
+TRAIL_SL_STEP3_NEW_SL_POINTS_LONG = 650   # ตั้ง SL ที่ + points (เหมือน TP)
 
 # 📉สำหรับ Short Position: (ราคาวิ่งลง)
 TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS = 300
 TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT = 700
 
-#TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 450
-#TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = 150
+TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS = 500
+TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT = -460
 
-TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 500 # - points จาก entry  
-TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -460 # ตั้ง SL ที่ - points (เหมือน TP)
+TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS = 700 # - points จาก entry  
+TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT = -650 # ตั้ง SL ที่ - points (เหมือน TP)
 
 #⏳ระบบเตือน Manual TP
-MANUAL_TP_ALERT_THRESHOLD = 700  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
+MANUAL_TP_ALERT_THRESHOLD = 1000  # แจ้งเตือนเมื่อกำไรเกิน...ให้ปิดด้วยมือ
 MANUAL_TP_ALERT_INTERVAL = 600   # แจ้งเตือนซ้ำทุก..วินาที
 
 CROSS_THRESHOLD_POINTS = 1 #ระยะการตัดของema
@@ -1098,18 +1098,17 @@ def monitor_position(current_market_price: float):
             success = set_sl_only_for_position(side, contracts, trail_sl_1)
             if not success:
                 logger.error("ไม่สามารถอัปเดต SL Step 1 ได้")
-        
-        # SL Step 2
-       # elif sl_step == 1 and pnl_points >= trail_trigger_2:
-            #current_position_details['sl_step'] = 2
-            #current_position_details['sl_price'] = trail_sl_2
-            #logger.info(f"🚀 SL Step 2 triggered → ย้าย SL จาก {trail_sl_1:.2f} เป็น {trail_sl_2:.2f}")
-            #success = set_sl_only_for_position(side, contracts, trail_sl_2)
-            #if not success:
-                #logger.error("ไม่สามารถอัปเดต SL Step 2 ได้")
+        # 🆕 Step 2 (Breakeven/กันทุน)
+        elif sl_step == 1 and pnl_points >= trail_trigger_2:
+            current_position_details['sl_step'] = 2
+            current_position_details['sl_price'] = trail_sl_2
+            logger.info(f"🟰 SL Step 2 (BE) → ตั้ง SL กันทุนที่ {trail_sl_2:.2f}")
+            success = set_sl_only_for_position(side, contracts, trail_sl_2)
+            if not success:
+                logger.error("ไม่สามารถอัปเดต SL Step 2 (BE) ได้")
         
         # SL Step 3 (TP จำลอง) แทน Step 2
-        elif sl_step == 1 and pnl_points >= trail_trigger_3:
+        elif sl_step == 2 and pnl_points >= trail_trigger_3:
             current_position_details['sl_step'] = 3
             trail_sl_3 = round_to_precision(trail_sl_3, 'price')
             current_position_details['sl_price'] = trail_sl_3
@@ -1129,7 +1128,7 @@ def monitor_position(current_market_price: float):
                     f"🔔 <b>Manual TP Alert!</b>\n"
                     f"💰 กำไรปัจจุบัน: <b>{pnl_points:+,.0f} points</b>\n"
                     f"📈 Entry: {entry_price:,.2f} → Current: {current_market_price:,.2f}\n"
-                    f"💡 <b>แนะนำปิดกำไรด้วยมือ ด่วนที่สุด กด cancel all🔥</b>"
+                    f"💡 <b>กำไรทะลุเป้าจะแตกแล้ว🩲 รีบกด cancel all ด่วนๆ🔥</b>"
                 )
         
         return
@@ -1155,7 +1154,7 @@ def monitor_position(current_market_price: float):
         
         closed_price = current_market_price
         pnl = (closed_price - entry) * contracts if side == 'long' else (entry - closed_price) * contracts
-        reason = "TP" if sl_step == 3 else "SL"
+        reason = "TP" if sl_step in (2, 3) else "SL"
         
         # เพิ่มสถิติ
         add_trade_result(reason, pnl)
@@ -1349,7 +1348,8 @@ def send_startup_message():
 📉 • <b>EMA Slow:</b> <code>{EMA_SLOW_PERIOD}</code>
 ❎ <b>SL เริ่มต้น:</b> <code>{SL_DISTANCE_POINTS} points</code>
 🚀 • <b>Step 1:</b> <code>{TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP1_NEW_SL_POINTS_LONG:+}pts</code>
-🎉 • <b>Step 2 (TP):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG}pts</code> 
+🔥 • <b>Step 2:(TP1)</b> <code>{TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP2_NEW_SL_POINTS_LONG:+}pts</code>
+🎉 • <b>Step 3 (TP2):</b> <code>{TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts</code> → SL <code>{TRAIL_SL_STEP3_NEW_SL_POINTS_LONG}pts</code> 
 ⏰ <b>Manual TP Alert:</b> <code>{MANUAL_TP_ALERT_THRESHOLD} points</code> (จะมีการแจ้งเตือนปิดกำไร🤑)
 🔍 <b>กำลังรอเปิดออเดอร์...</b>"""
 
