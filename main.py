@@ -8,7 +8,7 @@ SECRET  = os.getenv('BINANCE_SECRET','YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 SYMBOL      = 'BTC/USDT:USDT'
 TIMEFRAME   = '1h'
-LEVERAGE    = 30
+LEVERAGE    = 15
 
 TP_DISTANCE_POINTS = 1111  # ยังอยู่แต่ไม่ได้ใช้
 SL_DISTANCE_POINTS = 1234  # SL เริ่มต้นจากราคาเข้า
@@ -162,13 +162,13 @@ def send_startup_banner():
         f"📉 • EMA Slow: {EMA_SLOW_PERIOD}\n"
         f"❌ SL เริ่มต้น: {SL_DISTANCE_POINTS} points\n"
         # แสดงทั้ง LONG & SHORT
-        f"🚀 Step 1 (LONG):  {TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP1_NEW_SL_POINTS_LONG)}pts\n"
-        f"🚀 Step 1 (SHORT): {TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT)}pts\n"
-        f"🔥 Step 2 (LONG):  {TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP2_NEW_SL_POINTS_LONG)}pts\n"
-        f"🔥 Step 2 (SHORT): {TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT)}pts\n"
-        f"🎉 Step 3 (LONG):  {TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP3_NEW_SL_POINTS_LONG)}pts\n"
-        f"🎉 Step 3 (SHORT): {TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT)}pts\n"
-        f"🧠 MACD SL: ±{int(SL_MACD_OFFSET_USD)} USDT | ข้ามเมื่อ sl_step ≥ 2 | ใช้ครั้งเดียว/ออเดอร์\n"
+        f"🚀 Step 1 :  {TRAIL_SL_STEP1_TRIGGER_LONG_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP1_NEW_SL_POINTS_LONG)}pts\n"
+        #f"🚀 Step 1 (SHORT): {TRAIL_SL_STEP1_TRIGGER_SHORT_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP1_NEW_SL_POINTS_SHORT)}pts\n"
+        f"🔥 Step 2 :  {TRAIL_SL_STEP2_TRIGGER_LONG_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP2_NEW_SL_POINTS_LONG)}pts\n"
+        #f"🔥 Step 2 (SHORT): {TRAIL_SL_STEP2_TRIGGER_SHORT_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP2_NEW_SL_POINTS_SHORT)}pts\n"
+        f"🎉 Step 3 :  {TRAIL_SL_STEP3_TRIGGER_LONG_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP3_NEW_SL_POINTS_LONG)}pts\n"
+        #f"🎉 Step 3 (SHORT): {TRAIL_SL_STEP3_TRIGGER_SHORT_POINTS}pts → SL {fmt_pts(TRAIL_SL_STEP3_NEW_SL_POINTS_SHORT)}pts\n"
+        #f"🧠 MACD SL: ±{int(SL_MACD_OFFSET_USD)} USDT | ข้ามเมื่อ sl_step ≥ 2 | ใช้ครั้งเดียว/ออเดอร์\n"
         "⏳ กำลังรอสัญญาณเปิดออเดอร์..."
     )
     send_telegram(msg)
@@ -246,7 +246,7 @@ def set_sl_only_for_position(direction: str, amount: float, sl_price: float) -> 
             "✅ ตั้ง SL สำเร็จ!\n"
             f"🛡 SL: <code>{fmt_usd(slp)}</code>\n"
             f"📊 Direction: <b>{direction.upper()}</b>\n"
-            f"📦 Size: <code>{amount:.8f}</code>"
+            #f"📦 Size: <code>{amount:.8f}</code>"
         )
         return True
     except Exception as e:
@@ -329,7 +329,7 @@ def calculate_order_details(available_usdt: float, price: float) -> tuple[float,
 def open_market_order(direction: str, current_price: float) -> tuple[bool, float|None]:
     global current_position_details
     if last_trade_closed_time and (datetime.now()-last_trade_closed_time).total_seconds() < TRADE_COOLDOWN_SECONDS:
-        send_telegram("🚫 Cooldown กำลังทำงาน"); return False, None
+        send_telegram("⏱️ Cooldown กำลังทำงาน"); return False, None
     bal = get_portfolio_balance()
     amount, _ = calculate_order_details(bal, current_price)
     if amount<=0: return False, None
@@ -357,10 +357,10 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
                 'macd_used': False  # <<< MACD EXIT ใช้ได้ครั้งเดียว/ออเดอร์
             }
             send_telegram(
-                "🎯 เปิดโพซิชัน <b>{}</b> สำเร็จ!\n"
+                "💶 เปิดโพซิชัน <b>{}</b> สำเร็จ!\n"
                 "📦 ขนาด: <code>{:.8f}</code> Contracts\n"
                 "🎯 Entry: <code>{}</code>\n"
-                "💵 P&L: 0.00 USDT".format(
+                #"💵 P&L: 0.00 USDT".format(
                     expected_direction.upper(), float(pos['contracts']), fmt_usd(pos['entry_price'])
                 )
             )
@@ -427,8 +427,8 @@ def monitor_position(current_market_price: float):
                                 current_position_details['sl_price'] = new_sl
                                 current_position_details['macd_used'] = True
                                 send_telegram(
-                                    "🔁 <b>MACD EXIT</b>\n"
-                                    f"📊 Direction: <b>{side.upper()}</b>\n"
+                                    "⚠️ <b>MACD ตัดกันมีความเสี่ยง_ต้องตั้งSlใหม่</b>\n"
+                                    #f"📊 Direction: <b>{side.upper()}</b>\n"
                                     f"🎯 Entry: <code>{fmt_usd(entry)}</code>\n"
                                     f"📈 Last: <code>{fmt_usd(last_price)}</code>\n"
                                     f"🛡 SL ใหม่: <code>{fmt_usd(round_to_precision(new_sl,'price'))}</code>\n"
@@ -468,7 +468,7 @@ def monitor_position(current_market_price: float):
             if (now - last_manual_tp_alert_time).total_seconds() >= MANUAL_TP_ALERT_INTERVAL:
                 last_manual_tp_alert_time = now
                 send_telegram(
-                    "🔔 <b>Manual TP Alert</b>\n"
+                    "🔔 <b>ก๊อกๆกำไรทะลุเป้าเกินไป รีบกดClose All ด่วนๆ</b>\n"
                     f"💰 กำไร: <b>{pnl_points:+,.0f} points</b>\n"
                     f"🎯 Entry: <code>{fmt_usd(entry)}</code>\n"
                     f"📈 Now: <code>{fmt_usd(current_market_price)}</code>"
