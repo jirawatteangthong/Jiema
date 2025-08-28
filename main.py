@@ -343,12 +343,12 @@ def open_market_order(direction: str, current_price: float) -> tuple[bool, float
         send_telegram(f"❌ Open order error: {e}")
         return False, None
 
-def confirm_position_entry(expected_direction: str, expected_contracts: float) -> tuple[bool,float|None]:
+def confirm_position_entry(expected_direction: str, expected_contracts: float) -> tuple[bool, float | None]:
     global current_position_details
     time.sleep(2)
     for _ in range(CONFIRMATION_RETRIES):
         pos = get_current_position()
-        if pos and pos.get('side')==expected_direction:
+        if pos and pos.get('side') == expected_direction:
             current_position_details = {
                 'symbol': SYMBOL, 'side': expected_direction, 'contracts': pos['contracts'],
                 'entry_price': pos['entry_price'], 'unrealized_pnl': pos['unrealized_pnl'],
@@ -359,9 +359,10 @@ def confirm_position_entry(expected_direction: str, expected_contracts: float) -
             send_telegram(
                 "💶 เปิดโพซิชัน <b>{}</b> สำเร็จ!\n"
                 "📦 ขนาด: <code>{:.8f}</code> Contracts\n"
-                "🎯 Entry: <code>{}</code>\n"
-                #"💵 P&L: 0.00 USDT".format(
-                    expected_direction.upper(), float(pos['contracts']), fmt_usd(pos['entry_price'])
+                "🎯 Entry: <code>{}</code>\n".format(
+                    expected_direction.upper(),
+                    float(pos['contracts']),
+                    fmt_usd(pos['entry_price'])
                 )
             )
             return True, pos['entry_price']
