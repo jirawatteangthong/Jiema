@@ -8,10 +8,10 @@ SECRET  = os.getenv('BINANCE_SECRET','YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING
 
 SYMBOL      = 'BTC/USDT:USDT'
 TIMEFRAME   = '1h'
-LEVERAGE    = 30
+LEVERAGE    = 32
 
 TP_DISTANCE_POINTS = 1111  # ยังอยู่แต่ไม่ได้ใช้
-SL_DISTANCE_POINTS = 1234  # SL เริ่มต้นจากราคาเข้า
+SL_DISTANCE_POINTS = 1111  # SL เริ่มต้นจากราคาเข้า
 
 # --- Trailing SL Steps (ตามไฟล์เดิม) ---
 TRAIL_SL_STEP1_TRIGGER_LONG_POINTS  = 300
