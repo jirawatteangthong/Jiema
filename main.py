@@ -378,7 +378,7 @@ def reset_h1_baseline(announce=True):
     entry_plan = {'h1_dir': None, 'h1_bar_ts': None, 'stage':'idle',
                   'm5_last_bar_ts': None, 'm5_touch_ts': None, 'macd_initial': None}
     if announce:
-        #send_telegram(f"🧰 ตั้งค่า baseline EMA H1: <b>{(d or 'NONE').upper()}</b>\n🕒 รอ cross ใหม่จาก baseline ก่อนเริ่มหาเงื่อนไข M5/MACD")
+        send_telegram(f"🧰 ตั้งค่า baseline EMA H1: <b>{(d or 'NONE').upper()}</b>\n🕒 รอ cross ใหม่จาก baseline ก่อนเริ่มหาเงื่อนไข M5/MACD")
 
 # ================== Core Logic ==================
 def check_m5_env():
