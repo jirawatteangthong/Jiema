@@ -9,12 +9,12 @@ SECRET  = os.getenv('BINANCE_SECRET',    'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TES
 SYMBOL            = 'BTC/USDT:USDT'   # สัญลักษณ์ Futures
 TIMEFRAME_H1      = '1h'              # TF ใหญ่
 TIMEFRAME_M5      = '5m'              # TF ยืนยันเข้า
-LEVERAGE          = 30                # เลเวอเรจ
-
+LEVERAGE          = 35               # เลเวอเรจ
+TARGET_POSITION_SIZE_FACTOR = 0.85   # ใช้กี่ % ของเงินว่าง (0.8 = 80%) 
 # ---- EMA/MACD Parameters ----
 EMA_FAST_H1       = 10                # EMA10 บน H1  (#ปรับได้)
 EMA_SLOW_H1       = 50                # EMA50 บน H1  (#ปรับได้)
-WAIT_H1_CLOSE     = False             # False=ไม่ต้องรอปิดแท่ง ใช้สัญญาณทันที | True=รอแท่งปิด  (#ปรับได้)
+WAIT_H1_CLOSE     = False             # False=ไม่ต้องรอปิดแท่ง ใช้สัญญาณทันที (มี latch); True=รอแท่งปิด  (#ปรับได้)
 
 EMA200_M5         = 200               # EMA200 บน M5 (#ปรับได้)
 MACD_FAST         = 12                # MACD fast (M5) (#ปรับได้)
@@ -24,6 +24,7 @@ MACD_SIGNAL       = 9                 # MACD signal (M5) (#ปรับได้
 # ---- SL เริ่มต้นจาก Swing M5 ----
 SWING_LOOKBACK_M5 = 50                # ใช้ 50 แท่ง M5 หา swing ล่าสุด (#ปรับได้)
 SL_EXTRA_POINTS   = 200.0             # ระยะเผื่อจาก swing (BUY: -200 / SELL: +200) (#ปรับได้)
+MAX_INITIAL_SL_POINTS = 1234          # SL เริ่มต้นห่างสุดได้ไม่เกิน 1234 pts
 
 # ---- Trailing SL Steps ----
 STEP1_TRIGGER     = 450.0             # เมื่อกำไรถึง +450 จุด (#ปรับได้)
@@ -44,7 +45,6 @@ NEW_SIGNAL_SL_OFFSET    = 100.0        # ตั้ง SL ห่างจาก�
 # ---- Loop/Timing ----
 FAST_LOOP_SECONDS       = 3            # รอบเช็คเร็ว (#ปรับได้)
 H1_CHECK_INTERVAL_SEC   = 30           # เช็ค H1 ทุก 30 วินาที (#ปรับได้)
-M5_CHECK_INTERVAL_SEC   = 3            # เช็ค M5 ทุก 3 วินาที (#ปรับได้)
 
 # ---- Telegram ----
 TELEGRAM_TOKEN   = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -59,27 +59,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ================== GLOBAL STATE ==================
-# --- H1 intrabar signal latch ---
-h1_latched_dir = None        # 'long' / 'short' ที่ล็อกไว้ทั้งแท่ง
-h1_latch_bar_ts = None       # timestamp ของแท่ง H1 ปัจจุบันที่ล็อก
 exchange = None
 market_info = None
+
+# --- H1 intrabar signal latch (กันสวิงกลางแท่ง) ---
+h1_latched_dir = None        # 'long' / 'short' ที่ล็อกไว้ทั้งแท่ง
+h1_latch_bar_ts = None       # timestamp ของแท่ง H1 ปัจจุบันที่ล็อก
+
+# --- H1 baseline (ตั้งตอนเริ่ม/ปิดโพซิชัน แล้วรอ cross ใหม่) ---
+h1_baseline_dir = None       # 'long' / 'short' ณ ตอนตั้ง baseline
+h1_baseline_bar_ts = None    # ts ของแท่ง H1 ตอนตั้ง baseline
 
 # สถานะโพซิชันที่เราถือ
 position = None  # dict: {'side','entry','contracts','sl','step','opened_at'}
 
 # สถานะสัญญาณ/แผนเข้าออเดอร์
 entry_plan = {
-    'h1_dir': None,            # 'long'/'short' จาก EMA10/50 H1
-    'h1_bar_ts': None,         # เวลาของแท่ง H1 ที่ใช้สัญญาณล่าสุด
+    'h1_dir': None,            # 'long'/'short' จาก EMA10/50 H1 (หลัง cross จาก baseline แล้ว)
+    'h1_bar_ts': None,         # ts ของแท่ง H1 ที่ใช้สัญญาณล่าสุด
     'stage': 'idle',           # 'idle' -> 'armed' -> 'wait_macd_cross'
     'm5_last_bar_ts': None,    # กันซ้ำต่อแท่ง M5
     'm5_touch_ts': None,       # เวลาแท่ง M5 ที่แตะ/เลย EMA200
-    'macd_initial': None       # 'buy-<', 'sell->' (เริ่ม DIF<DEA หรือ DIF>DEA)
+    'macd_initial': None       # 'buy-<' (เริ่ม DIF<DEA) / 'sell->' (เริ่ม DIF>DEA)
 }
 
 last_h1_check  = 0.0
-last_m5_check  = 0.0
 last_manual_tp_alert_ts = 0.0
 
 # ================== Telegram ==================
@@ -168,7 +172,7 @@ def find_recent_swing_low_high_m5(ohlcv_m5, lookback=SWING_LOOKBACK_M5, k=2):
     swing_low = None
     swing_high = None
     for i in range(k, len(look)-k):
-        if all(lows[i]  <= lows[i-j]  for j in range(1,k+1)) and all(lows[i]  <= lows[i+j]  for j in range(1,k+1)):
+        if all(lows[i]  <= lows[i-j]  for j in range(1,k+1)) and all(lows[i]  <= lows[i+j] for j in range(1,k+1)):
             swing_low = look[i][3]
         if all(highs[i] >= highs[i-j] for j in range(1,k+1)) and all(highs[i] >= highs[i+j] for j in range(1,k+1)):
             swing_high = look[i][2]
@@ -214,8 +218,12 @@ def open_market(side: str, price_now: float):
     """เปิดออเดอร์ และตั้ง SL เริ่มจาก swing ตามกฎใหม่"""
     global position
     # คำนวณขนาดคร่าว ๆ (notional 80% ของเงินว่าง * leverage)
-    bal = get_free_usdt()
-    notional = max(0.0, bal) * 0.8 * LEVERAGE
+    try:
+        bal = exchange.fetch_balance()
+        free_usdt = bal.get('USDT', {}).get('free', 0.0) or 0.0
+    except Exception:
+        free_usdt = 0.0
+    notional = max(0.0, float(free_usdt)) * TARGET_POSITION_SIZE_FACTOR * LEVERAGE
     if notional <= 0:
         send_telegram("⛔ ไม่พอ margin เปิดออเดอร์")
         return False
@@ -238,17 +246,25 @@ def open_market(side: str, price_now: float):
             'opened_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         send_telegram(
-            "🎯 เปิดโพซิชัน <b>{}</b>\n"
+            "✅ เปิดโพซิชัน <b>{}</b>\n"
             "📦 Size: <code>{:.6f}</code>\n"
             "🎯 Entry: <code>{}</code>".format(side.upper(), position['contracts'], fmt_usd(position['entry']))
         )
         # ตั้ง SL เริ่มต้นจาก swing M5
         ohlcv_m5 = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_M5, limit=max(SWING_LOOKBACK_M5, 60))
         swing_low, swing_high = find_recent_swing_low_high_m5(ohlcv_m5)
+
+        # SL ดิบจาก swing ± extra
+        raw_sl = (swing_low - SL_EXTRA_POINTS) if side == 'long' else (swing_high + SL_EXTRA_POINTS)
+
+        # บังคับเพดาน SL เริ่มต้นไม่ให้ห่างจาก entry เกิน MAX_INITIAL_SL_POINTS
         if side == 'long':
-            sl0 = swing_low - SL_EXTRA_POINTS
+            # ห้ามต่ำกว่า (entry - MAX_INITIAL_SL_POINTS)
+            sl0 = max(raw_sl, position['entry'] - MAX_INITIAL_SL_POINTS)
         else:
-            sl0 = swing_high + SL_EXTRA_POINTS
+            # ห้ามสูงกว่า (entry + MAX_INITIAL_SL_POINTS)
+            sl0 = min(raw_sl, position['entry'] + MAX_INITIAL_SL_POINTS)
+           
         if set_sl_close_position(side, sl0):
             position['sl'] = float(sl0)
         return True
@@ -263,33 +279,20 @@ def tighten_sl_for_new_signal(side: str, price_now: float):
         try:
             close_side = 'sell' if side == 'long' else 'buy'
             exchange.create_market_order(SYMBOL, close_side, position['contracts'])
-            send_telegram("❗️ตรวจพบสัญญาณใหม่ → <b>ปิดโพซิชันทันที</b>")
+            send_telegram("⛑️ ตรวจพบสัญญาณใหม่ → <b>ปิดโพซิชันทันที</b>")
             return True
         except Exception as e:
             logger.error(f"close_now error: {e}")
-            send_telegram(f"❌ close_now error: {e}")
+            send_telegram(f"🦠 close_now error: {e}")
             return False
     else:
         new_sl = (price_now - NEW_SIGNAL_SL_OFFSET) if side=='long' else (price_now + NEW_SIGNAL_SL_OFFSET)
         ok = set_sl_close_position(side, new_sl)
         if ok:
-            send_telegram("🦠 ตรวจพบสัญญาณใหม่ → <b>บังคับ SL ใกล้ราคา</b> เพื่อปิดโพซิชันโดยเร็ว")
+            send_telegram("⛑️ ตรวจพบสัญญาณใหม่ → <b>บังคับ SL ใกล้ราคา</b> เพื่อปิดโพซิชันโดยเร็ว")
         return ok
 
 # ================== Fetch Helpers ==================
-def get_free_usdt():
-    try:
-        bal = exchange.fetch_balance()
-        if 'USDT' in bal and 'free' in bal['USDT']:
-            return float(bal['USDT']['free'])
-        assets = bal.get('info', {}).get('assets', [])
-        for a in assets:
-            if a.get('asset') == 'USDT':
-                return float(a.get('availableBalance', 0.0))
-    except Exception as e:
-        logger.error(f"get_free_usdt error: {e}")
-    return 0.0
-
 def fetch_position():
     """อ่านโพซิชันปัจจุบันแบบย่อ"""
     try:
@@ -304,61 +307,80 @@ def fetch_position():
         logger.error(f"fetch_position error: {e}")
         return None
 
-# ================== Core Logic ==================
+# ================== H1 Signal Helpers ==================
+def get_h1_dir_intrabar() -> tuple[str|None, int|None]:
+    """
+    อ่านทิศ H1 ปัจจุบัน (เพื่อใช้ตั้ง baseline หรือเช็ก cross อย่างรวดเร็ว)
+    - WAIT_H1_CLOSE=True  → ใช้แท่งปิดล่าสุด (o[-2])
+    - WAIT_H1_CLOSE=False → ใช้แท่งปัจจุบัน (o[-1])
+    """
+    limit = max(EMA_SLOW_H1 + 5, 60)
+    o = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_H1, limit=limit)
+    if not o or len(o) < 3: return None, None
+    if WAIT_H1_CLOSE:
+        closes = [c[4] for c in o[:-1]]; ts = o[-2][0]
+    else:
+        closes = [c[4] for c in o];      ts = o[-1][0]
+    ema_fast = last_ema(closes, EMA_FAST_H1)
+    ema_slow = last_ema(closes, EMA_SLOW_H1)
+    if ema_fast is None or ema_slow is None: return None, ts
+    if ema_fast > ema_slow:  return 'long', ts
+    if ema_fast < ema_slow:  return 'short', ts
+    return None, ts
 
 def get_h1_signal_latched() -> tuple[str|None, int|None]:
     """
     คืนค่า: ('long'/'short'/None, bar_ts)
-    - ถ้า WAIT_H1_CLOSE=True: ใช้แท่งปิดล่าสุด (เท่ากับ check_h1_trend เดิม)
-    - ถ้า WAIT_H1_CLOSE=False: ใช้แท่งปัจจุบัน (intrabar) แต่ "ล็อกสัญญาณแรก" ของแท่งนี้จนกว่าจะขึ้นแท่งใหม่
+    - WAIT_H1_CLOSE=True: ใช้แท่งปิดล่าสุด (นิ่งตาม close)
+    - WAIT_H1_CLOSE=False: ใช้แท่งปัจจุบัน แต่ "ล็อกสัญญาณแรกของแท่ง" (กันสวิง intrabar)
     """
     global h1_latched_dir, h1_latch_bar_ts
-
     limit = max(EMA_SLOW_H1 + 5, 60)
     o = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_H1, limit=limit)
-    if not o or len(o) < 3:
-        return None, None
+    if not o or len(o) < 3: return None, None
 
     if WAIT_H1_CLOSE:
-        # ใช้แท่งปิด (o[-2]) แบบเดิม
-        closes = [c[4] for c in o[:-1]]
-        ts = o[-2][0]
-        ema_fast = last_ema(closes, EMA_FAST_H1)
-        ema_slow = last_ema(closes, EMA_SLOW_H1)
-        if ema_fast is None or ema_slow is None:
-            return None, ts
+        closes = [c[4] for c in o[:-1]]; ts = o[-2][0]
+        ema_fast = last_ema(closes, EMA_FAST_H1); ema_slow = last_ema(closes, EMA_SLOW_H1)
+        if ema_fast is None or ema_slow is None: return None, ts
         if ema_fast > ema_slow:  return 'long', ts
         if ema_fast < ema_slow:  return 'short', ts
         return None, ts
     else:
-        # ใช้ intrabar + latch
-        closes = [c[4] for c in o]     # รวมแท่งปัจจุบัน
-        ts_current = o[-1][0]          # timestamp ของแท่ง H1 ปัจจุบัน
-
+        closes = [c[4] for c in o]    # รวมแท่งปัจจุบัน
+        ts_current = o[-1][0]
         # ถ้าเปลี่ยนแท่ง → ล้าง latch
         if h1_latch_bar_ts != ts_current:
             h1_latched_dir = None
             h1_latch_bar_ts = ts_current
-
-        # ถ้ามี latch อยู่แล้ว → ส่งทิศเดิมกลับไปเลย
+        # ถ้ามี latch แล้ว → ส่งทิศเดิมทั้งแท่ง
         if h1_latched_dir is not None:
             return h1_latched_dir, ts_current
-
-        # ยังไม่มี latch → คำนวณสัญญาณตอนนี้ แล้ว "ล็อก" ถ้ามีทิศ
-        ema_fast = last_ema(closes, EMA_FAST_H1)
-        ema_slow = last_ema(closes, EMA_SLOW_H1)
-        if ema_fast is None or ema_slow is None:
-            return None, ts_current
-
+        # ยังไม่มี latch → คำนวณทิศ แล้วล็อกถ้ามี
+        ema_fast = last_ema(closes, EMA_FAST_H1); ema_slow = last_ema(closes, EMA_SLOW_H1)
+        if ema_fast is None or ema_slow is None: return None, ts_current
         if ema_fast > ema_slow:
-            h1_latched_dir = 'long'
-            return 'long', ts_current
+            h1_latched_dir = 'long';  return 'long', ts_current
         elif ema_fast < ema_slow:
-            h1_latched_dir = 'short'
-            return 'short', ts_current
+            h1_latched_dir = 'short'; return 'short', ts_current
         else:
             return None, ts_current
-            
+
+def reset_h1_baseline(announce=True):
+    """ตั้ง baseline = EMA10/50 H1 ปัจจุบัน แล้ว reset entry_plan/latch"""
+    global h1_baseline_dir, h1_baseline_bar_ts, entry_plan, h1_latched_dir, h1_latch_bar_ts
+    d, ts = get_h1_dir_intrabar()
+    h1_baseline_dir = d
+    h1_baseline_bar_ts = ts
+    # reset latch + แผนเข้า
+    h1_latched_dir = None
+    h1_latch_bar_ts = None
+    entry_plan = {'h1_dir': None, 'h1_bar_ts': None, 'stage':'idle',
+                  'm5_last_bar_ts': None, 'm5_touch_ts': None, 'macd_initial': None}
+    if announce:
+        #send_telegram(f"🧰 ตั้งค่า baseline EMA H1: <b>{(d or 'NONE').upper()}</b>\n🕒 รอ cross ใหม่จาก baseline ก่อนเริ่มหาเงื่อนไข M5/MACD")
+
+# ================== Core Logic ==================
 def check_m5_env():
     """คืนข้อมูล M5 ล่าสุดที่ต้องใช้สำหรับ logic เข้า (ใช้แท่งปิดล่าสุด)"""
     limit = max(EMA200_M5 + 10, 240)
@@ -374,22 +396,30 @@ def check_m5_env():
     return {'ts': ts, 'close': close_now, 'high': highs[-1], 'low': lows[-1], 'ema200': ema200, 'macd': macd}
 
 def handle_entry_logic(price_now: float):
-    """สถานะไม่มีโพซิชัน → ใช้ logic ใหม่ตามที่กำหนด"""
-    global entry_plan, last_h1_check
+    """สถานะไม่มีโพซิชัน → ใช้ baseline + latch + M5+MACD ตามที่กำหนด"""
+    global entry_plan, last_h1_check, h1_baseline_dir
 
-    # 1) อ่าน H1 สัญญาณหลัก (intrabar ตาม WAIT_H1_CLOSE)
+    # ถ้ายังไม่มี baseline (เริ่มบอท/เพิ่งปิดโพซิชัน) → ตั้งก่อน
+    if h1_baseline_dir is None:
+        reset_h1_baseline(announce=True)
+        return
+
+    # 1) อ่าน H1 ปัจจุบัน (latch) แล้วเช็กว่า "cross จาก baseline" หรือยัง
     tnow = time.time()
     if tnow - last_h1_check >= H1_CHECK_INTERVAL_SEC or (entry_plan['h1_dir'] is None):
-        h1_dir, h1_ts = get_h1_signal_latched()
+        cur_dir, h1_ts = get_h1_signal_latched()
         last_h1_check = tnow
-        if h1_dir:
-            if (entry_plan['h1_dir'] != h1_dir) or (entry_plan['h1_bar_ts'] != h1_ts):
-                entry_plan = {
-                    'h1_dir': h1_dir, 'h1_bar_ts': h1_ts,
-                    'stage': 'armed', 'm5_last_bar_ts': None,
-                    'm5_touch_ts': None, 'macd_initial': None
-                }
-                send_telegram(f"🥇 H1 สัญญาณใหม่: <b>{h1_dir.upper()}</b> (EMA{EMA_FAST_H1}/{EMA_SLOW_H1})\nรอเงื่อนไข M5 แตะ EMA200 + MACD")
+        if cur_dir and (h1_baseline_dir is not None) and (cur_dir != h1_baseline_dir):
+            # Cross ใหม่จาก baseline → อนุญาตตั้งแผน
+            entry_plan = {
+                'h1_dir': cur_dir, 'h1_bar_ts': h1_ts,
+                'stage': 'armed', 'm5_last_bar_ts': None,
+                'm5_touch_ts': None, 'macd_initial': None
+            }
+            send_telegram(f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
+        else:
+            # ยังไม่ cross → รอต่อ
+            return
 
     if entry_plan['stage'] == 'idle' or entry_plan['h1_dir'] is None:
         return
@@ -412,7 +442,7 @@ def handle_entry_logic(price_now: float):
 
     want = entry_plan['h1_dir']
 
-    # 2A) ระยะ "แตะ/เลย EMA200" + MACD initial direction
+    # 2A) แตะ/เลย EMA200 + MACD initial direction
     if entry_plan['stage'] == 'armed':
         if want == 'long':
             touched = (low <= ema200)             # แตะ/เลยลง
@@ -421,7 +451,7 @@ def handle_entry_logic(price_now: float):
                 entry_plan['stage'] = 'wait_macd_cross'
                 entry_plan['m5_touch_ts'] = m5_ts
                 entry_plan['macd_initial'] = 'buy-<'
-                send_telegram("⏳M5 แตะ/เลย EMA200 ลง → รอ DIF ตัดขึ้นเพื่อเข้า <b>LONG</b>")
+                send_telegram("⏳ M5 แตะ/เลย EMA200 ลง → รอ DIF ตัดขึ้นเพื่อเข้า <b>LONG</b>")
         else:
             touched = (high >= ema200)            # แตะ/เลยขึ้น
             macd_initial_ok = (dif_n > dea_n)     # เริ่มจาก DIF > DEA
@@ -431,7 +461,7 @@ def handle_entry_logic(price_now: float):
                 entry_plan['macd_initial'] = 'sell->'
                 send_telegram("⏳ M5 แตะ/เลย EMA200 ขึ้น → รอ DIF ตัดลงเพื่อเข้า <b>SHORT</b>")
 
-    # 2B) เฝ้ารอ MACD cross ตามเงื่อนไข และ "ย้ำ" สัญญาณ H1 อีกครั้งก่อนเข้า
+    # 2B) รอ MACD cross + ย้ำ H1 (ใช้ latch) ก่อนเข้า
     elif entry_plan['stage'] == 'wait_macd_cross':
         h1_dir_now, h1_ts_now = get_h1_signal_latched()
         if (h1_dir_now is None) or (h1_dir_now != want):
@@ -452,13 +482,13 @@ def handle_entry_logic(price_now: float):
                 send_telegram("⛔ เปิดออเดอร์ไม่สำเร็จ")
 
 def monitor_position_and_trailing(price_now: float):
-    """ดูแล SL step และตรวจสัญญาณ H1 ใหม่ระหว่างถือโพซิชัน"""
+    """ดูแล SL step + ตรวจ H1 ใหม่ระหว่างถือ + รีเซ็ต baseline เมื่อปิดโพซิชัน"""
     global position, last_manual_tp_alert_ts, entry_plan
 
     # อ่านโพซิชันจริง
     pos_real = fetch_position()
     if not pos_real:
-        # โพซิชันปิดแล้ว → เคลียร์คำสั่งค้าง + รีเซ็ต state entry เหมือนเริ่มใหม่
+        # โพซิชันปิดแล้ว → เคลียร์คำสั่งค้าง + รีเซ็ต baseline ใหม่
         cancel_all_open_orders(max_retry=3)
         if position:
             pnl_pts = (price_now - position['entry']) if position['side']=='long' else (position['entry'] - price_now)
@@ -467,13 +497,12 @@ def monitor_position_and_trailing(price_now: float):
                 "Entry: <code>{}</code> → Last: <code>{}</code>\n"
                 "PnL: <b>{:+.2f} pts</b>\n"
                 "🧹 เคลียร์คำสั่งเก่าแล้ว\n"
-                "🔎 เริ่มมองสัญญาณใหม่"
+                "🔎 เริ่มจาก baseline ใหม่"
                 .format(position['side'].upper(), fmt_usd(position['entry']), fmt_usd(price_now), pnl_pts)
             )
         position = None
-        # reset ทั้ง entry_plan เหมือนเริ่มสตาร์ทบอทใหม่
-        entry_plan = {'h1_dir': None, 'h1_bar_ts': None, 'stage':'idle',
-                      'm5_last_bar_ts': None, 'm5_touch_ts': None, 'macd_initial': None}
+        # ตั้ง baseline ใหม่ ณ ตอนนี้ และรอ cross ครั้งถัดไป
+        reset_h1_baseline(announce=True)
         return
 
     # อัปเดต entry/size
@@ -482,12 +511,12 @@ def monitor_position_and_trailing(price_now: float):
         position['entry']     = float(pos_real['entry'])
 
     # 1) ถ้ามีสัญญาณ H1 ใหม่ "สวนฝั่ง" ระหว่างถือ
-    h1_dir_now, _ = check_h1_trend()
+    h1_dir_now, _ = get_h1_dir_intrabar()  # ใช้ intrabar ตรวจทิศ ณ ตอนนี้
     if position and h1_dir_now and ((h1_dir_now == 'long' and position['side']=='short') or
                                     (h1_dir_now == 'short' and position['side']=='long')):
         ok = tighten_sl_for_new_signal(position['side'], price_now)
         if ok:
-            send_telegram("⚠️ตรวจพบสัญญาณใหม่ จำเป็นต้องปิดออเดอร์ทันที/ตั้ง SL")
+            send_telegram("⚠️ ตรวจพบสัญญาณ H1 ใหม่สวนทาง → บังคับปิดโพชิชัน")
 
     # 2) Trailing 3 ขั้น
     if not position: return
@@ -509,7 +538,7 @@ def monitor_position_and_trailing(price_now: float):
         if set_sl_close_position(side, new_sl):
             position['sl'] = new_sl
             position['step'] = 2
-            send_telegram("🚦 Step2 → SL = <code>{}</code>  🚀<b>TP</b>".format(fmt_usd(new_sl)))
+            send_telegram("🚦 Step2 → SL = <code>{}</code>  🤑<b>TP</b>".format(fmt_usd(new_sl)))
 
     # Step 3
     elif position['step'] < 3 and pnl_pts >= STEP3_TRIGGER:
@@ -517,34 +546,39 @@ def monitor_position_and_trailing(price_now: float):
         if set_sl_close_position(side, new_sl):
             position['sl'] = new_sl
             position['step'] = 3
-            send_telegram("💶 Step3 → SL = <code>{}</code>  🎯<b>TP</b>".format(fmt_usd(new_sl)))
+            send_telegram("💶 Step3 → SL = <code>{}</code>  💵<b>TP</b>".format(fmt_usd(new_sl)))
 
     # 3) Manual close alert > 1300 pts
     if pnl_pts >= MANUAL_CLOSE_ALERT_TRIGGER:
         now = time.time()
         if now - last_manual_tp_alert_ts >= 30:  # กันสแปม
             last_manual_tp_alert_ts = now
-            send_telegram(
-                "🚨กำไรทะลุเป้าแล้ว <b>{:.0f} pts</b>\n"
-                "พิจารณา <b>ปิดโพซิชัน</b> ".format(MANUAL_CLOSE_ALERT_TRIGGER)
-            )
+            send_telegram("🚨 กำไรเกินเป้าแล้ว <b>{:.0f} pts</b>\n พิจารณา <b>ปิดโพซิชัน</b> ".format(MANUAL_CLOSE_ALERT_TRIGGER))
 
 # ================== Startup Banner ==================
 def send_startup_banner():
     try:
-        bal = get_free_usdt()
+        # พยายามอ่านยอดแบบง่าย
+        bal_txt = "—"
+        try:
+            bal = exchange.fetch_balance()
+            if 'USDT' in bal and 'free' in bal['USDT']:
+                bal_txt = fmt_usd(bal['USDT']['free'])
+        except Exception:
+            pass
+
         send_telegram(
             "🤖 บอทเริ่มทำงาน 💰\n"
-            f"💵 ยอดเริ่มต้น: {fmt_usd(bal)} USDT\n"
+            f"💵 ยอดเริ่มต้น: {bal_txt} USDT\n"
             f"📊 H1 EMA: {EMA_FAST_H1}/{EMA_SLOW_H1}\n"
             #| ใช้สัญญาณทันที: {('ไม่รอปิดแท่ง' if not WAIT_H1_CLOSE else 'รอปิดแท่ง')}\n"
-            f"🧠 M5 EMA200: {EMA200_M5} | MACD: {MACD_FAST}/{MACD_SLOW}/{MACD_SIGNAL}\n"
+            f"🧠 M5 : {EMA200_M5} | MACD: {MACD_FAST}/{MACD_SLOW}/{MACD_SIGNAL}\n"
             f"🛡 SL เริ่มต้นจาก Swing{SWING_LOOKBACK_M5} แท่ง ±{int(SL_EXTRA_POINTS)} pts\n"
             f"🚦 Step1: +{int(STEP1_TRIGGER)} → SL {int(STEP1_SL_OFFSET)} pts\n"
             f"🚦 Step2: +{int(STEP2_TRIGGER)} → SL +{int(STEP2_SL_OFFSET)} pts (TP)\n"
             f"🎯 Step3: +{int(STEP3_TRIGGER)} → SL +{int(STEP3_SL_OFFSET)} pts (TP)\n"
             f"🌈 Manual alert > +{int(MANUAL_CLOSE_ALERT_TRIGGER)} pts\n"
-            f"⚠️ New H1 signal: {NEW_SIGNAL_ACTION} (±{int(NEW_SIGNAL_SL_OFFSET)} pts)"
+            #f"⚠️ New H1 signal: {NEW_SIGNAL_ACTION} (±{int(NEW_SIGNAL_SL_OFFSET)} pts)"
         )
     except Exception as e:
         logger.error(f"banner error: {e}")
@@ -553,15 +587,16 @@ def send_startup_banner():
 def main():
     setup_exchange()
     send_startup_banner()
+    # ตั้ง baseline ตั้งแต่เริ่ม
+    reset_h1_baseline(announce=True)
+
     while True:
         try:
             price_now = exchange.fetch_ticker(SYMBOL)['last']
-
             if position:
                 monitor_position_and_trailing(price_now)
             else:
                 handle_entry_logic(price_now)
-
             time.sleep(FAST_LOOP_SECONDS)
         except KeyboardInterrupt:
             break
