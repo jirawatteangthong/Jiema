@@ -556,33 +556,70 @@ def monitor_position_and_trailing(price_now: float):
             send_telegram("🚨 กำไรเกินเป้าแล้ว <b>{:.0f} pts</b>\n พิจารณา <b>ปิดโพซิชัน</b> ".format(MANUAL_CLOSE_ALERT_TRIGGER))
 
 # ================== Startup Banner ==================
+def get_free_usdt() -> float | None:
+    """
+    พยายามดึง free USDT จาก Futures หลายทาง:
+    1) bal['USDT']['free'] (ccxt unified)
+    2) bal['info']['assets'][i]['availableBalance'] (Binance futures)
+    3) สำรอง: bal['free']['USDT'] หรือ bal['total']['USDT']
+    """
+    try:
+        # ระบุว่าเป็น futures ชัด ๆ
+        bal = exchange.fetch_balance({'type': 'future'})
+    except Exception:
+        try:
+            bal = exchange.fetch_balance()  # สำรอง
+        except Exception:
+            return None
+
+    # 1) unified
+    v = (bal.get('USDT', {}) or {}).get('free', None)
+    if v is not None:
+        try: return float(v)
+        except: pass
+
+    # 2) binance futures raw
+    try:
+        for a in (bal.get('info', {}) or {}).get('assets', []):
+            if a.get('asset') == 'USDT':
+                v = a.get('availableBalance', None)
+                if v is not None:
+                    return float(v)
+    except Exception:
+        pass
+
+    # 3) อื่น ๆ
+    v = (bal.get('free', {}) or {}).get('USDT', None)
+    if v is not None:
+        try: return float(v)
+        except: pass
+
+    v = (bal.get('total', {}) or {}).get('USDT', None)
+    if v is not None:
+        try: return float(v)
+        except: pass
+
+    return None
+
+
 def send_startup_banner():
     try:
-        # พยายามอ่านยอดแบบง่าย
-        bal_txt = "—"
-        try:
-            bal = exchange.fetch_balance()
-            if 'USDT' in bal and 'free' in bal['USDT']:
-                bal_txt = fmt_usd(bal['USDT']['free'])
-        except Exception:
-            pass
+        bal = get_free_usdt()
+        bal_txt = fmt_usd(bal) if (bal is not None) else "—"
 
         send_telegram(
             "🤖 บอทเริ่มทำงาน 💰\n"
             f"💵 ยอดเริ่มต้น: {bal_txt} USDT\n"
             f"📊 H1 EMA: {EMA_FAST_H1}/{EMA_SLOW_H1}\n"
-            #| ใช้สัญญาณทันที: {('ไม่รอปิดแท่ง' if not WAIT_H1_CLOSE else 'รอปิดแท่ง')}\n"
             f"🧠 M5 : {EMA200_M5} | MACD: {MACD_FAST}/{MACD_SLOW}/{MACD_SIGNAL}\n"
             f"🛡 SL เริ่มต้นจาก Swing{SWING_LOOKBACK_M5} แท่ง ±{int(SL_EXTRA_POINTS)} pts\n"
             f"🚦 Step1: +{int(STEP1_TRIGGER)} → SL {int(STEP1_SL_OFFSET)} pts\n"
             f"🚦 Step2: +{int(STEP2_TRIGGER)} → SL +{int(STEP2_SL_OFFSET)} pts (TP)\n"
             f"🎯 Step3: +{int(STEP3_TRIGGER)} → SL +{int(STEP3_SL_OFFSET)} pts (TP)\n"
-            f"🌈 Manual alert > +{int(MANUAL_CLOSE_ALERT_TRIGGER)} pts\n"
-            #f"⚠️ New H1 signal: {NEW_SIGNAL_ACTION} (±{int(NEW_SIGNAL_SL_OFFSET)} pts)"
+            f"🌈 Manual alert > +{int(MANUAL_CLOSE_ALERT_TRIGGER)} pts"
         )
     except Exception as e:
         logger.error(f"banner error: {e}")
-
 # ================== main ==================
 def main():
     setup_exchange()
