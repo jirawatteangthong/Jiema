@@ -21,8 +21,12 @@ MACD_FAST     = 12
 MACD_SLOW     = 26
 MACD_SIGNAL   = 9
 
-WAIT_H1_CLOSE = True                   # ✅ ใช้สัญญาณ H1 เฉพาะ "แท่งปิด"
+# ---- EMA accuracy / snapshot logging ----
+LOOKBACK_H1_BARS = 1000   # จำนวนแท่ง H1 ที่ดึงมา warm-up EMA (แนะนำ 600-1200)
+LOOKBACK_M5_BARS = 1500   # จำนวนแท่ง M5 ที่ดึงมา warm-up EMA200/MACD (แนะนำ 1200-2000)
 
+WAIT_H1_CLOSE = True   # ✅ ใช้สัญญาณ H1 เฉพาะ "แท่งปิด"
+DIAG_LOG_INTERVAL_SEC = 180  # log วินิจฉัยทุกกี่วินาที (ปรับได้)
 # ---- SL เริ่มต้นจาก Swing M5 ----
 SWING_LOOKBACK_M5   = 50
 SL_EXTRA_POINTS     = 200.0
@@ -81,6 +85,7 @@ exchange = None
 market_info = None
 
 last_snapshot_log_ts = 0.0
+last_diag_log_ts = 0.0
 
 # Baseline H1 (จากแท่งปิด)
 h1_baseline_dir = None
@@ -246,7 +251,7 @@ def log_indicator_snapshot():
         price_now = exchange.fetch_ticker(SYMBOL)['last']
 
         # H1 (แท่งปิด)
-        limit_h1 = max(EMA_SLOW_H1 + 5, 60)
+        limit_h1 = max(LOOKBACK_H1_BARS, EMA_SLOW_H1 + 50)
         o_h1 = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_H1, limit=limit_h1)
         ema_fast_h1 = ema_slow_h1 = h1_close = h1_bar_ts = None
         h1_dir = None
@@ -260,7 +265,7 @@ def log_indicator_snapshot():
                 h1_dir = 'long' if ema_fast_h1 > ema_slow_h1 else 'short' if ema_fast_h1 < ema_slow_h1 else None
 
         # M5 (แท่งปิด)
-        limit_m5 = max(EMA200_M5 + 10, 240)
+        limit_m5 = max(LOOKBACK_M5_BARS, EMA200_M5 + 50)
         o_m5 = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_M5, limit=limit_m5)
         ema200_m5 = m5_close = m5_bar_ts = None
         macd_vals = None
@@ -302,6 +307,28 @@ def log_indicator_snapshot():
 
     except Exception as e:
         logger.error(f"snapshot log error: {e}")
+
+def log_ema_warmup_diagnostics():
+    try:
+        o = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_H1, limit=max(LOOKBACK_H1_BARS, 1200))
+        if not o or len(o) < EMA_SLOW_H1 + 3:
+            return
+        closes = [c[4] for c in o[:-1]]  # ใช้แท่งปิดล่าสุด
+        packs = {
+            "60bars":   closes[-60:],
+            "300bars":  closes[-300:],
+            "1000bars": closes[-1000:]
+        }
+        out = {}
+        for k, arr in packs.items():
+            out[k] = {
+                "ema10": last_ema(arr, 10),
+                "ema50": last_ema(arr, 50),
+                "close": arr[-1] if arr else None
+            }
+        logger.info("[EMA_WARMUP_DIAG_H1] " + json.dumps(out, ensure_ascii=False, default=str))
+    except Exception as e:
+        logger.error(f"ema warmup diag error: {e}")
         
 # ================== Position/Orders ==================
 def fetch_position():
@@ -405,16 +432,21 @@ def tighten_sl_for_new_signal(side: str, price_now: float):
 
 # ================== H1 (แท่งปิด) & Baseline ==================
 def get_h1_dir_closed() -> tuple[str|None, int|None, dict]:
-    limit = max(EMA_SLOW_H1 + 5, 60)
+    limit = max(LOOKBACK_H1_BARS, EMA_SLOW_H1 + 50)
     o = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_H1, limit=limit)
-    if not o or len(o) < 3: return None, None, {}
-    closes = [c[4] for c in o[:-1]]   # ใช้แท่งปิดล่าสุด
+    if not o or len(o) < EMA_SLOW_H1 + 3:
+        return None, None, {}
+    # ใช้ "แท่งปิดล่าสุด" เสมอ
     ts = o[-2][0]
+    closes = [c[4] for c in o[:-1]]
     ema_fast = last_ema(closes, EMA_FAST_H1)
     ema_slow = last_ema(closes, EMA_SLOW_H1)
     close_last = closes[-1] if closes else None
-    direction = 'long' if (ema_fast is not None and ema_slow is not None and ema_fast>ema_slow) \
-               else 'short' if (ema_fast is not None and ema_slow is not None and ema_fast<ema_slow) else None
+
+    direction = None
+    if (ema_fast is not None) and (ema_slow is not None):
+        direction = 'long' if ema_fast > ema_slow else 'short' if ema_fast < ema_slow else None
+
     extra = {'ema_fast_h1': ema_fast, 'ema_slow_h1': ema_slow, 'h1_close': close_last}
     dbg("H1_CLOSED", ts=ts, **extra, dir=direction)
     return direction, ts, extra
@@ -430,20 +462,28 @@ def reset_h1_baseline():
 
 # ================== Entry Logic (H1→M5) ==================
 def check_m5_env():
-    limit = max(EMA200_M5 + 10, 240)
+    limit = max(LOOKBACK_M5_BARS, EMA200_M5 + 50)
     o = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME_M5, limit=limit)
-    if not o or len(o) < EMA200_M5 + 5: return None
-    ts = o[-2][0]
-    closes=[c[4] for c in o[:-1]]; highs=[c[2] for c in o[:-1]]; lows=[c[3] for c in o[:-1]]
-    close_now=closes[-1]; ema200=last_ema(closes, EMA200_M5); macd=macd_from_closes(closes)
+    if not o or len(o) < EMA200_M5 + 5:
+        return None
+    ts = o[-2][0]  # ใช้แท่งปิดล่าสุด
+    closes = [c[4] for c in o[:-1]]
+    highs  = [c[2] for c in o[:-1]]
+    lows   = [c[3] for c in o[:-1]]
+
+    close_now = closes[-1]
+    ema200    = last_ema(closes, EMA200_M5)
+    macd      = macd_from_closes(closes)
+
     if macd:
-        dif_p,dif_n,dea_p,dea_n = macd
+        dif_p, dif_n, dea_p, dea_n = macd
         dbg("M5_ENV", ts=ts, close=close_now, ema200=ema200,
             dif_prev=dif_p, dif_now=dif_n, dea_prev=dea_p, dea_now=dea_n)
     else:
         dbg("M5_ENV", ts=ts, close=close_now, ema200=ema200, macd=None)
-    return {'ts': ts, 'close': close_now, 'high': highs[-1], 'low': lows[-1], 'ema200': ema200, 'macd': macd}
 
+    return {'ts': ts, 'close': close_now, 'high': highs[-1], 'low': lows[-1], 'ema200': ema200, 'macd': macd}
+    
 def handle_entry_logic(price_now: float):
     global entry_plan, last_h1_check, h1_baseline_dir
     if h1_baseline_dir is None:
@@ -509,7 +549,7 @@ def handle_entry_logic(price_now: float):
             dbg("OPEN_MARKET", side=want, ok=ok, price_now=price_now)
             entry_plan.update(stage='idle', m5_touch_ts=None, macd_initial=None)
             if not ok: send_telegram("⛔ เปิดออเดอร์ไม่สำเร็จ")
-
+        
 # ================== Monitoring & Trailing ==================
 def monitor_position_and_trailing(price_now: float):
     global position, last_manual_tp_alert_ts
@@ -744,6 +784,12 @@ def main():
             if now_ts - last_snapshot_log_ts >= SNAPSHOT_LOG_INTERVAL_SEC:
                 last_snapshot_log_ts = now_ts
                 log_indicator_snapshot()
+
+            global last_diag_log_ts
+            now_ts = time.time()
+            if now_ts - last_diag_log_ts >= DIAG_LOG_INTERVAL_SEC:
+                last_diag_log_ts = now_ts
+                log_ema_warmup_diagnostics()
                 
             time.sleep(FAST_LOOP_SECONDS)
         except KeyboardInterrupt:
