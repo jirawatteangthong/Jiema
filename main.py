@@ -417,16 +417,17 @@ def open_market(side: str, price_now: float):
 
 def tighten_sl_for_new_signal(side: str, price_now: float):
     if NEW_SIGNAL_ACTION == 'close_now':
-    ok = safe_close_position(reason="H1 new opposite signal")
-    if ok:
-        send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → <b>ปิดโพซิชันทันที (reduceOnly)</b>")
-    return ok
-        except Exception as e:
-            logger.error(f"close_now error: {e}"); send_telegram(f"🦠 close_now error: {e}"); return False
+        ok = safe_close_position(reason="H1 new opposite signal")
+        if ok:
+            send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → <b>ปิดโพซิชันทันที (reduceOnly)</b>")
+        return ok
+    except Exception as e:
+        logger.error(f"close_now error: {e}"); send_telegram(f"🦠 close_now error: {e}"); return False
     else:
         new_sl = (price_now - NEW_SIGNAL_SL_OFFSET) if side=='long' else (price_now + NEW_SIGNAL_SL_OFFSET)
         ok = set_sl_close_position(side, new_sl)
-        if ok: send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → บังคับ SL ใกล้ราคา")
+        if ok: 
+            send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → บังคับ SL ใกล้ราคา")
         return ok
         
 def safe_close_position(reason: str = "") -> bool:
@@ -689,22 +690,6 @@ def monitor_position_and_trailing(price_now: float):
             position['sl']=new_sl; position['step']=3
             send_once(f"step:3:{position['opened_at']}", "💶 Step3 → SL = <code>{}</code>  💵<b>TP</b>".format(fmt_usd(new_sl)))
             add_tp_reached(3, entry, new_sl)
-
-    # 2.5) Auto-close เมื่อกำไรถึงเป้า (เช่น 1500 pts) → ปิดโพชิชันทันที
-    if pnl_pts >= AUTO_CLOSE_TRIGGER:
-        tag = f"autoclose:{position['opened_at']}"
-        if not _notif_sent.get(tag):
-            try:
-                close_side = 'sell' if side == 'long' else 'buy'
-                # ใช้ reduceOnly เพื่อปิดเฉพาะโพชิชันที่ถืออยู่
-                params = {'reduceOnly': True}
-                exchange.create_market_order(SYMBOL, close_side, position['contracts'], None, params)
-                send_once(tag, f"🛎️ Auto-Close → กำไรถึง <b>{int(AUTO_CLOSE_TRIGGER)}</b> pts: ปิดโพซิชันทันที")
-            except Exception as e:
-                logger.error(f"auto_close error: {e}")
-                send_telegram(f"⚠️ Auto-close error: {e}")
-        # ให้ฟังก์ชันจบตรงนี้ เพื่อรอรอบถัดไปไปจับว่าปิดโพชิชันเสร็จแล้ว (จะเข้าบล็อก pos_real None)
-        return
 
     # Auto-close เมื่อกำไรถึง 1500 pts
     if pnl_pts >= AUTO_CLOSE_TRIGGER:
