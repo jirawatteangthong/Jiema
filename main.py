@@ -417,16 +417,19 @@ def open_market(side: str, price_now: float):
 
 def tighten_sl_for_new_signal(side: str, price_now: float):
     if NEW_SIGNAL_ACTION == 'close_now':
-        ok = safe_close_position(reason="H1 new opposite signal")
-        if ok:
-            send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → <b>ปิดโพซิชันทันที (reduceOnly)</b>")
-        return ok
-    except Exception as e:
-        logger.error(f"close_now error: {e}"); send_telegram(f"🦠 close_now error: {e}"); return False
+        try:
+            ok = safe_close_position(reason="H1 new opposite signal")
+            if ok:
+                send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → <b>ปิดโพซิชันทันที (reduceOnly)</b>")
+            return ok
+        except Exception as e:
+            logger.error(f"close_now error: {e}")
+            send_telegram(f"🦠 close_now error: {e}")
+            return False
     else:
-        new_sl = (price_now - NEW_SIGNAL_SL_OFFSET) if side=='long' else (price_now + NEW_SIGNAL_SL_OFFSET)
+        new_sl = (price_now - NEW_SIGNAL_SL_OFFSET) if side == 'long' else (price_now + NEW_SIGNAL_SL_OFFSET)
         ok = set_sl_close_position(side, new_sl)
-        if ok: 
+        if ok:
             send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → บังคับ SL ใกล้ราคา")
         return ok
         
