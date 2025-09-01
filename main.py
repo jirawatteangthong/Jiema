@@ -50,7 +50,7 @@ SNAPSHOT_LOG_INTERVAL_SEC = 30  # ออกรายงาน indicator ทุ�
 
 # ---- Loop/Timing ----
 FAST_LOOP_SECONDS     = 3
-H1_CHECK_INTERVAL_SEC = 60
+#H1_CHECK_INTERVAL_SEC = 60.  #ยกเลิก ใช้ทุกครั้งที่ปิดแท่งm5ในการเช็ค
 
 # ---- Telegram ----
 TELEGRAM_TOKEN   = os.getenv('TELEGRAM_TOKEN', 'YOUR_TELEGRAM_TOKEN_HERE_FOR_LOCAL_TESTING')
@@ -485,23 +485,33 @@ def check_m5_env():
     return {'ts': ts, 'close': close_now, 'high': highs[-1], 'low': lows[-1], 'ema200': ema200, 'macd': macd}
     
 def handle_entry_logic(price_now: float):
-    global entry_plan, last_h1_check, h1_baseline_dir
-    if h1_baseline_dir is None:
-        reset_h1_baseline(); return
+    global entry_plan, h1_baseline_dir
 
-    tnow = time.time()
-    if tnow - last_h1_check >= H1_CHECK_INTERVAL_SEC or (entry_plan['h1_dir'] is None):
-        cur_dir, h1_ts, extra_h1 = get_h1_dir_closed()
-        last_h1_check = tnow
-        dbg("H1_CROSS_CHECK", cur_dir=cur_dir, cur_ts=h1_ts, baseline=h1_baseline_dir, extra=extra_h1)
-        if cur_dir and (cur_dir != h1_baseline_dir):
-            entry_plan = {'h1_dir': cur_dir, 'h1_bar_ts': h1_ts, 'stage':'armed',
-                          'm5_last_bar_ts': None, 'm5_touch_ts': None, 'macd_initial': None}
-            send_once(f"h1cross:{h1_ts}:{cur_dir}",
-                      f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
+    if h1_baseline_dir is None:
+        reset_h1_baseline()
+        return
+
+    env = check_m5_env()
+    if not env or env['ema200'] is None or env['macd'] is None:
+        return
+
+    m5_ts = env['ts']
+    if entry_plan['m5_last_bar_ts'] == m5_ts:
+        return  # ยังแท่งเดิม
+    entry_plan['m5_last_bar_ts'] = m5_ts
+
+    # ✅ ทุกครั้งที่ M5 ปิดแท่ง → อัปเดต H1 ใหม่
+    cur_dir, h1_ts, extra_h1 = get_h1_dir_closed()
+    dbg("H1_UPDATE_ON_M5_CLOSE", cur_dir=cur_dir, ts=h1_ts, extra=extra_h1, baseline=h1_baseline_dir)
+
+    if cur_dir and (cur_dir != h1_baseline_dir):
+        entry_plan = {'h1_dir': cur_dir, 'h1_bar_ts': h1_ts, 'stage':'armed',
+                      'm5_last_bar_ts': m5_ts, 'm5_touch_ts': None, 'macd_initial': None}
+        send_once(f"h1cross:{h1_ts}:{cur_dir}",
+                  f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
+        
         else:
             return
-
     if entry_plan['stage']=='idle' or entry_plan['h1_dir'] is None: return
 
     env = check_m5_env()
