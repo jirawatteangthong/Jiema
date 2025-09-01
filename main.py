@@ -487,55 +487,80 @@ def check_m5_env():
 def handle_entry_logic(price_now: float):
     global entry_plan, h1_baseline_dir
 
+    # 0) ต้องมี baseline ก่อน
     if h1_baseline_dir is None:
         reset_h1_baseline()
         return
 
+    # 1) อ่านสภาพแวดล้อม M5 (แท่งปิดล่าสุด)
     env = check_m5_env()
     if not env or env['ema200'] is None or env['macd'] is None:
         return
 
-    m5_ts = env['ts']
+    m5_ts  = env['ts']
+    close  = env['close']
+    high   = env['high']
+    low    = env['low']
+    ema200 = env['ema200']
+    dif_p, dif_n, dea_p, dea_n = env['macd']
+
+    # กันซ้ำต่อแท่ง M5
     if entry_plan['m5_last_bar_ts'] == m5_ts:
-        return  # ยังแท่งเดิม
+        return
     entry_plan['m5_last_bar_ts'] = m5_ts
 
-    # ✅ ทุกครั้งที่ M5 ปิดแท่ง → อัปเดต H1 ใหม่
+    # 2) ทุกครั้งที่ M5 ปิดแท่ง → อัปเดต H1 (แท่งปิด) ทันที
     cur_dir, h1_ts, extra_h1 = get_h1_dir_closed()
     dbg("H1_UPDATE_ON_M5_CLOSE", cur_dir=cur_dir, ts=h1_ts, extra=extra_h1, baseline=h1_baseline_dir)
 
-    if cur_dir and (cur_dir != h1_baseline_dir):
-        entry_plan = {'h1_dir': cur_dir, 'h1_bar_ts': h1_ts, 'stage':'armed',
-                      'm5_last_bar_ts': m5_ts, 'm5_touch_ts': None, 'macd_initial': None}
-        send_once(f"h1cross:{h1_ts}:{cur_dir}",
-                  f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
-        
+    # 3) ถ้ายังไม่มีแผน → ตรวจ cross เทียบ baseline เพื่อ "ติดอาวุธ"
+    if entry_plan['stage'] == 'idle' or entry_plan['h1_dir'] is None:
+        if cur_dir and (cur_dir != h1_baseline_dir):
+            entry_plan = {
+                'h1_dir': cur_dir,
+                'h1_bar_ts': h1_ts,
+                'stage': 'armed',
+                'm5_last_bar_ts': m5_ts,
+                'm5_touch_ts': None,
+                'macd_initial': None
+            }
+            send_once(f"h1cross:{h1_ts}:{cur_dir}",
+                      f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
         else:
+            # ยังไม่ cross ⇒ รอต่อ
             return
-    if entry_plan['stage']=='idle' or entry_plan['h1_dir'] is None: return
+    else:
+        # 4) มีแผนอยู่แล้ว ⇒ ยืนยันว่าทาง H1 ยังตรงกับที่ต้องการ
+        want_now = entry_plan['h1_dir']
+        if (cur_dir is None) or (cur_dir != want_now):
+            send_telegram("🚧 EMA H1 เปลี่ยนสัญญาณ → ยกเลิกแผนเดิมและรอ cross ใหม่")
+            entry_plan.update({
+                'h1_dir': None,
+                'h1_bar_ts': None,
+                'stage': 'idle',
+                'm5_touch_ts': None,
+                'macd_initial': None
+            })
+            return
 
-    env = check_m5_env()
-    if not env or env['ema200'] is None or env['macd'] is None: return
-    m5_ts=env['ts']; close=env['close']; high=env['high']; low=env['low']; ema200=env['ema200']
-    dif_p,dif_n,dea_p,dea_n = env['macd']
-    if entry_plan['m5_last_bar_ts'] == m5_ts: return
-    entry_plan['m5_last_bar_ts'] = m5_ts
-
+    # 5) ถึงตรงนี้ต้องมีแผนแล้ว: ทำขั้น M5 ตาม logic
     want = entry_plan['h1_dir']
     plan_tag = f"{entry_plan['h1_bar_ts']}:{want}"
 
-    # step A: touch EMA200 + MACD initial
-    if entry_plan['stage']=='armed':
-        if want=='long':
-            touched = (low <= ema200); macd_initial_ok = (dif_n < dea_n)
+    # ขั้น A: รอแตะ/เลย EMA200 + MACD initial
+    if entry_plan['stage'] == 'armed':
+        if want == 'long':
+            touched = (low <= ema200)
+            macd_initial_ok = (dif_n < dea_n)
             dbg("M5_ARMED_CHECK", want=want, low=low, ema200=ema200, dif_now=dif_n, dea_now=dea_n,
                 touched=touched, macd_initial_ok=macd_initial_ok)
             if touched and macd_initial_ok:
                 entry_plan.update(stage='wait_macd_cross', m5_touch_ts=m5_ts, macd_initial='buy-<')
                 send_once(f"m5touch:{plan_tag}", "⏳ M5 แตะ/เลย EMA200 ลง → รอ DIF ตัดขึ้นเพื่อเข้า <b>LONG</b>")
                 return
-        else:
-            touched = (high >= ema200); macd_initial_ok = (dif_n > dea_n)
+        else:  # SHORT
+            touched = (high >= ema200)
+            macd_initial_ok = (dif_n > dea_n)
             dbg("M5_ARMED_CHECK", want=want, high=high, ema200=ema200, dif_now=dif_n, dea_now=dea_n,
                 touched=touched, macd_initial_ok=macd_initial_ok)
             if touched and macd_initial_ok:
@@ -543,22 +568,17 @@ def handle_entry_logic(price_now: float):
                 send_once(f"m5touch:{plan_tag}", "⏳ M5 แตะ/เลย EMA200 ขึ้น → รอ DIF ตัดลงเพื่อเข้า <b>SHORT</b>")
                 return
 
-    # step B: รอ MACD cross + ย้ำ H1 จาก "แท่งปิด"
-    elif entry_plan['stage']=='wait_macd_cross':
-        h1_dir_now, h1_ts_now, extra_h1 = get_h1_dir_closed()
-        if (h1_dir_now is None) or (h1_dir_now != want):
-            send_telegram("🚧 EMA H1 เปลี่ยนสัญญาณ → ยกเลิกแผนเดิมและเริ่มใช้สัญญาณใหม่")
-            dbg("H1_CANCEL_PLAN", want=want, now=h1_dir_now, ts=h1_ts_now, extra=extra_h1)
-            entry_plan={'h1_dir':h1_dir_now,'h1_bar_ts':h1_ts_now,'stage':'armed' if h1_dir_now else 'idle',
-                        'm5_last_bar_ts':None,'m5_touch_ts':None,'macd_initial':None}
-            return
-        crossed = macd_cross_up(dif_p,dif_n,dea_p,dea_n) if want=='long' else macd_cross_down(dif_p,dif_n,dea_p,dea_n)
+    # ขั้น B: รอ MACD cross เพื่อเข้า
+    elif entry_plan['stage'] == 'wait_macd_cross':
+        crossed = macd_cross_up(dif_p, dif_n, dea_p, dea_n) if want == 'long' \
+                  else macd_cross_down(dif_p, dif_n, dea_p, dea_n)
         dbg("M5_WAIT_MACD", want=want, crossed=crossed, dif_prev=dif_p, dif_now=dif_n, dea_prev=dea_p, dea_now=dea_n)
         if crossed:
             ok = open_market(want, price_now)
             dbg("OPEN_MARKET", side=want, ok=ok, price_now=price_now)
             entry_plan.update(stage='idle', m5_touch_ts=None, macd_initial=None)
-            if not ok: send_telegram("⛔ เปิดออเดอร์ไม่สำเร็จ")
+            if not ok:
+                send_telegram("⛔ เปิดออเดอร์ไม่สำเร็จ")
         
 # ================== Monitoring & Trailing ==================
 def monitor_position_and_trailing(price_now: float):
