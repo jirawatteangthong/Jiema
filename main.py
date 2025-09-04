@@ -451,24 +451,47 @@ def safe_close_position(reason: str = "") -> bool:
         return False
 
 def tighten_sl_for_new_signal(side: str, price_now: float):
-    """ถูกเรียกเมื่อ H1 สวนทางระหว่างถือโพซิชัน"""
+    """เมื่อมีสัญญาณ H1 ใหม่สวนฝั่งระหว่างถือโพซิชัน"""
     if NEW_SIGNAL_ACTION == 'close_now':
         try:
-            ok = safe_close_position(reason="H1 new opposite signal")
+            # 1) อ่าน H1 (แท่งปิด) เพื่อใช้เป็นทิศใหม่หลังปิด
+            new_dir, new_ts, extra_h1 = get_h1_dir_closed()
+
+            # 2) ปิดโพซิชันทันทีแบบ reduceOnly
+            ok = safe_close_position(reason="H1 new opposite signal (reduceOnly)")
             if ok:
                 send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → <b>ปิดโพซิชันทันที (reduceOnly)</b>")
-            return ok
+
+                # 3) ถ้ามีทิศ H1 ใหม่ชัดเจน → ติดอาวุธต่อทันที (ไม่ต้องรอ baseline/cross รอบใหม่)
+                if new_dir:
+                    global entry_plan
+                    entry_plan = {
+                        'h1_dir': new_dir,
+                        'h1_bar_ts': new_ts,
+                        'stage': 'armed',          # พร้อมรอ M5 แตะ EMA200 + MACD
+                        'm5_last_bar_ts': None,
+                        'm5_touch_ts': None,
+                        'macd_initial': None
+                    }
+                    send_telegram(
+                        f"🔄 ใช้สัญญาณ H1 ใหม่ต่อทันที → <b>{new_dir.upper()}</b>\n"
+                        f"รอ M5 แตะ EMA200 + MACD เพื่อเข้าออเดอร์"
+                    )
+                return True
+            else:
+                return False
         except Exception as e:
             logger.error(f"close_now error: {e}")
             send_telegram(f"🦠 close_now error: {e}")
             return False
     else:
+        # โหมดบีบ SL ใกล้ราคา
         new_sl = (price_now - NEW_SIGNAL_SL_OFFSET) if side=='long' else (price_now + NEW_SIGNAL_SL_OFFSET)
         ok = set_sl_close_position(side, new_sl)
         if ok:
             send_telegram("⛑️ ตรวจพบสัญญาณ H1 ใหม่ → บังคับ SL ใกล้ราคา")
         return ok
-
+        
 # ================== H1 (แท่งปิด) & Baseline ==================
 def get_h1_dir_closed() -> tuple[str | None, int | None, dict]:
     """คืน ('long'/'short'/None, bar_ts, extra) จากแท่งปิดล่าสุดของ H1"""
