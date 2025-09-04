@@ -557,12 +557,12 @@ def handle_entry_logic(price_now: float):
     """ไม่มีโพซิชัน → ใช้ baseline + H1 cross (แท่งปิด) → M5/EMA200 + MACD"""
     global entry_plan, h1_baseline_dir
 
-    # ต้องมี baseline ก่อน
+    # 0) ต้องมี baseline ก่อน
     if h1_baseline_dir is None:
         reset_h1_baseline()
         return
 
-    # อ่านสภาพแวดล้อม M5 (แท่งปิดล่าสุด)
+    # 1) อ่านสภาพแวดล้อม M5 (แท่งปิดล่าสุด)
     env = check_m5_env()
     if not env or env['ema200'] is None or env['macd'] is None:
         return
@@ -579,35 +579,45 @@ def handle_entry_logic(price_now: float):
         return
     entry_plan['m5_last_bar_ts'] = m5_ts
 
-    # ทุกครั้งที่ M5 ปิดแท่ง → อัปเดต H1 (แท่งปิด)
+    # 2) ทุกครั้งที่ M5 ปิดแท่ง → อัปเดต H1 (แท่งปิด)
     cur_dir, h1_ts, extra_h1 = get_h1_dir_closed()
     dbg("H1_UPDATE_ON_M5_CLOSE", cur_dir=cur_dir, ts=h1_ts, extra=extra_h1, baseline=h1_baseline_dir)
 
-    # ถ้ายังไม่มีแผน → ตรวจ cross เทียบ baseline เพื่อ "ติดอาวุธ"
+    # 3) ถ้ายังไม่มีแผน → ตรวจ cross เทียบ baseline เพื่อ "ติดอาวุธ"
     if entry_plan['stage'] == 'idle' or entry_plan['h1_dir'] is None:
-        if cur_dir and (cur_dir != h1_baseline_dir):
+        # ต้องมี baseline ชัดเจน และต้อง cross ไปฝั่งตรงข้ามเท่านั้น
+        if (h1_baseline_dir is None) or (cur_dir is None) or (cur_dir == h1_baseline_dir):
+            return  # ยังไม่ cross จาก baseline → รอต่อ
+        # cross จาก baseline จริง → ติดอาวุธ
+        entry_plan = {
+            'h1_dir': cur_dir, 'h1_bar_ts': h1_ts, 'stage': 'armed',
+            'm5_last_bar_ts': m5_ts, 'm5_touch_ts': None, 'macd_initial': None
+        }
+        send_once(f"h1cross:{h1_ts}:{cur_dir}",
+                  f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
+    else:
+        # 4) มีแผนอยู่แล้ว → หาก H1 เปลี่ยนฝั่งระหว่างรอ M5 ให้สลับไปใช้สัญญาณใหม่ 'ทันที'
+        want_now = entry_plan['h1_dir']
+        if (cur_dir is None):
+            # ทิศ H1 ไม่ชัดเจน → ยกเลิกแผนเพื่อรอความชัดเจน
+            entry_plan = {
+                'h1_dir': None, 'h1_bar_ts': None, 'stage': 'idle',
+                'm5_last_bar_ts': m5_ts, 'm5_touch_ts': None, 'macd_initial': None
+            }
+            send_telegram("🚧 EMA H1 ไม่ชัดเจน → ยกเลิกแผนชั่วคราวและรอสัญญาณใหม่")
+            return
+        if cur_dir != want_now:
+            # เปลี่ยนฝั่งระหว่างรอ M5 → ใช้สัญญาณใหม่ทันที (ไม่ต้องรอ cross ใหม่)
             entry_plan = {
                 'h1_dir': cur_dir, 'h1_bar_ts': h1_ts, 'stage': 'armed',
                 'm5_last_bar_ts': m5_ts, 'm5_touch_ts': None, 'macd_initial': None
             }
-            send_once(f"h1cross:{h1_ts}:{cur_dir}",
-                      f"🧭 H1 CROSS จาก baseline → <b>{cur_dir.upper()}</b>\nรอ M5 แตะ EMA200 + MACD")
-        else:
-            return
-    else:
-        # มีแผนอยู่แล้ว → ถ้า H1 เปลี่ยนฝั่ง ให้ใช้สัญญาณใหม่ 'ทันที' และติดอาวุธใหม่ (ไม่ต้องรอ cross อีก)
-        want_now = entry_plan['h1_dir']
-        if (cur_dir is None) or (cur_dir != want_now):
-            entry_plan = {
-                'h1_dir': cur_dir, 'h1_bar_ts': h1_ts,
-                'stage': 'armed' if cur_dir else 'idle',
-                'm5_last_bar_ts': m5_ts, 'm5_touch_ts': None, 'macd_initial': None
-            }
             send_telegram("🚧 EMA H1 เปลี่ยนสัญญาณ → ใช้สัญญาณใหม่และเริ่มหาเงื่อนไข M5 ต่อ")
-            if entry_plan['stage'] == 'idle':
-                return
 
-    # ถึงตรงนี้ต้องมีแผนแล้ว: ทำขั้น M5 ตาม logic
+    # 5) ถึงตรงนี้ต้องมีแผนแล้ว: ทำขั้น M5 ตาม logic
+    if entry_plan['stage'] == 'idle' or entry_plan['h1_dir'] is None:
+        return
+
     want = entry_plan['h1_dir']
     plan_tag = f"{entry_plan['h1_bar_ts']}:{want}"
 
@@ -643,7 +653,7 @@ def handle_entry_logic(price_now: float):
             entry_plan.update(stage='idle', m5_touch_ts=None, macd_initial=None)
             if not ok:
                 send_telegram("⛔ เปิดออเดอร์ไม่สำเร็จ")
-
+                
 # ================== Monitoring & Trailing ==================
 def monitor_position_and_trailing(price_now: float):
     global position, last_manual_tp_alert_ts, next_plan_after_forced_close
