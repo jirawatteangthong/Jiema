@@ -9,7 +9,7 @@ SECRET  = os.getenv('BINANCE_SECRET',    'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TES
 SYMBOL            = 'BTC/USDT:USDT'
 TIMEFRAME_H1      = '1h'
 TIMEFRAME_M5      = '5m'
-LEVERAGE          = 35
+LEVERAGE          = 34
 TARGET_POSITION_SIZE_FACTOR = 0.8     # ใช้ % ของ Free USDT
 MARGIN_BUFFER_USDT = 5                 # กันเงินไม่ใช้ทั้งหมด
 
