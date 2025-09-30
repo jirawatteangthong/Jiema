@@ -9,14 +9,14 @@ SECRET  = os.getenv('BINANCE_SECRET',    'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TES
 SYMBOL            = 'BTC/USDT:USDT'
 TIMEFRAME_H1      = '1h'
 TIMEFRAME_M5      = '5m'
-LEVERAGE          = 34
-TARGET_POSITION_SIZE_FACTOR = 0.8     # ใช้ % ของ Free USDT
+LEVERAGE          = 30
+TARGET_POSITION_SIZE_FACTOR = 0.5    # ใช้ % ของ Free USDT
 MARGIN_BUFFER_USDT = 5                 # กันเงินไม่ใช้ทั้งหมด
 
 # ---- EMA/MACD Parameters ----
 EMA_FAST_H1   = 10
 EMA_SLOW_H1   = 50
-EMA200_M5     = 200
+EMA_M5     = 100
 MACD_FAST     = 12
 MACD_SLOW     = 26
 MACD_SIGNAL   = 9
