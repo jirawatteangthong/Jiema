@@ -16,7 +16,7 @@ MARGIN_BUFFER_USDT = 5                 # กันเงินไม่ใช้
 # ---- EMA/MACD Parameters ----
 EMA_FAST_H1   = 10
 EMA_SLOW_H1   = 50
-EMA_M5     = 100
+EMA200_M5     = 100
 MACD_FAST     = 12
 MACD_SLOW     = 26
 MACD_SIGNAL   = 9
