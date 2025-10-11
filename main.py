@@ -9,8 +9,8 @@ SECRET  = os.getenv('BINANCE_SECRET',    'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TES
 SYMBOL            = 'BTC/USDT:USDT'
 TIMEFRAME_H1      = '1h'
 TIMEFRAME_M5      = '5m'
-LEVERAGE          = 30
-TARGET_POSITION_SIZE_FACTOR = 0.5    # ใช้ % ของ Free USDT
+LEVERAGE          = 25
+TARGET_POSITION_SIZE_FACTOR = 0.9   # ใช้ % ของ Free USDT
 MARGIN_BUFFER_USDT = 5                 # กันเงินไม่ใช้ทั้งหมด
 
 # ---- EMA/MACD Parameters ----
@@ -34,13 +34,13 @@ SL_EXTRA_POINTS     = 200.0
 MAX_INITIAL_SL_POINTS = 1234          # เพดาน SL เริ่มต้นห่างจาก entry
 
 # ---- Trailing SL Steps ----
-STEP1_TRIGGER   = 450.0
-STEP1_SL_OFFSET = -200.0               # LONG: entry-200 / SHORT: entry+200
-STEP2_TRIGGER   = 700.0
-STEP2_SL_OFFSET = +300.0               # LONG: entry+555 / SHORT: entry-555
-STEP3_TRIGGER   = 950.0
-STEP3_SL_OFFSET = +750.0               # LONG: entry+830 / SHORT: entry-830
-MANUAL_CLOSE_ALERT_TRIGGER = 1300.0
+STEP1_TRIGGER   = 700.0
+STEP1_SL_OFFSET = -250.0               # LONG: entry-200 / SHORT: entry+200
+STEP2_TRIGGER   = 1299.0
+STEP2_SL_OFFSET = +350.0               # LONG: entry+555 / SHORT: entry-555
+STEP3_TRIGGER   = 1399.0
+STEP3_SL_OFFSET = +1000.0               # LONG: entry+830 / SHORT: entry-830
+MANUAL_CLOSE_ALERT_TRIGGER = 1350.0
 AUTO_CLOSE_TRIGGER = 1400.0            # กำไรถึงเท่านี้ "ปิดอัตโนมัติ" ทันที (ถือเป็นปิดปกติ)
 
 # ---- สัญญาณ H1 ใหม่ระหว่างถือโพซิชัน (เมื่อสวนทิศ) ----
