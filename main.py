@@ -16,7 +16,7 @@ MARGIN_BUFFER_USDT = 5                 # กันเงินไม่ใช้
 # ---- EMA/MACD Parameters ----
 EMA_FAST_H1   = 10
 EMA_SLOW_H1   = 50
-EMA200_M5     = 100
+EMA200_M5     = 45
 MACD_FAST     = 12
 MACD_SLOW     = 26
 MACD_SIGNAL   = 9
@@ -30,14 +30,14 @@ DIAG_LOG_INTERVAL_SEC = 180  # log วินิจฉัยทุกกี่ว
 
 # ---- SL เริ่มต้นจาก Swing M5 ----
 SWING_LOOKBACK_M5   = 50
-SL_EXTRA_POINTS     = 200.0
+SL_EXTRA_POINTS     = 300
 MAX_INITIAL_SL_POINTS = 1234          # เพดาน SL เริ่มต้นห่างจาก entry
 
 # ---- Trailing SL Steps ----
 STEP1_TRIGGER   = 700.0
 STEP1_SL_OFFSET = -250.0               # LONG: entry-200 / SHORT: entry+200
 STEP2_TRIGGER   = 1299.0
-STEP2_SL_OFFSET = +350.0               # LONG: entry+555 / SHORT: entry-555
+STEP2_SL_OFFSET = +550.0               # LONG: entry+555 / SHORT: entry-555
 STEP3_TRIGGER   = 1399.0
 STEP3_SL_OFFSET = +1000.0               # LONG: entry+830 / SHORT: entry-830
 MANUAL_CLOSE_ALERT_TRIGGER = 1350.0
@@ -49,7 +49,7 @@ NEW_SIGNAL_SL_OFFSET = 100.0
 
 # ---- สวิตช์ยืนยัน H1 สวนกี่แท่งปิด (กันสัญญาณหลอก) ----
 # 1 = โหมดเดิม (สวน 1 แท่งปิดก็จัดการ), 2 = ต้องสวน 2 แท่งปิด เป็นต้น
-H1_OPP_CONFIRM_BARS = 2
+H1_OPP_CONFIRM_BARS = 1
 
 # ---- Snapshot logging (INFO) ----
 SNAPSHOT_LOG_INTERVAL_SEC = 30  # ออกรายงาน indicator ทุกกี่วินาที
@@ -475,7 +475,7 @@ def tighten_sl_for_new_signal(side: str, price_now: float):
                     }
                     send_telegram(
                         f"🔄 ใช้สัญญาณ H1 ใหม่ต่อทันที → <b>{new_dir.upper()}</b>\n"
-                        f"รอ M5 แตะ EMA200 + MACD เพื่อเข้าออเดอร์"
+                        f"รอ M5 แตะ EMA + MACD เพื่อเข้าออเดอร์"
                     )
                 return True
             else:
