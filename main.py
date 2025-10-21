@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-# Binance Futures (USDT-M, isolated, one-way)
+# Binance Futures (USDT-M, isolated, one-way) — ETH mode
 # SMC (H1 BOS/CHOCH) + Fibo Zone + M1 Pullback POC + SL Hierarchy
-# Entry C2: (M1 CHOCH OR MACD cross) on closed candle, same direction
-# TP1 -> TP2 (+ Emergency ONLY in TP2)
-# Fibo 0 moves on consecutive BOS if price hasn't pulled back to 33; Fibo 100 stays anchored.
+# Entry C2: (M1 CHOCH OR MACD cross) on closed candle, same trend
+# Fibo anchor rule: BOS ต่อเนื่องก่อนแตะ 33 → ขยับ Fibo0 (Fibo100 คงเดิม); แตะโซนแล้ว → Lock
+# TP1 (60%) → Fibo2 (100 = Fibo0(H1), 0 = pre-CHOCH swing on M1) → SL=78.6 → TP2=133–161.8
+# Emergency close เฉพาะ TP2 phase เท่านั้น
+# Anti-spam alerts + Safe Telegram
 
 import os, time, math, json, logging
 from datetime import datetime, timedelta
@@ -17,7 +19,7 @@ import pandas as pd
 API_KEY = os.getenv('BINANCE_API_KEY', 'YOUR_BINANCE_API_KEY_HERE_FOR_LOCAL_TESTING')
 SECRET  = os.getenv('BINANCE_SECRET',    'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING')
 
-SYMBOL            = 'ETH/USDT:USDT'
+SYMBOL            = 'ETH/USDT:USDT'   # ✔ ETH perp (USDT-M)
 TIMEFRAME_H1      = '1h'
 TIMEFRAME_M5      = '5m'
 TIMEFRAME_M1      = '1m'
@@ -53,7 +55,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID_HERE_FOR_LOCAL_TE
 
 # ================== LOGGING ==================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
-log = logging.getLogger('binance_smc_final')
+log = logging.getLogger('eth_smc_final')
 
 # ================== GLOBALS ==================
 exchange = None
@@ -74,6 +76,8 @@ state = {
     'entry_zone': None,    # (33..78.6)
     'poc_m1':  None,
     'touched_33_since_last_bos': True,
+    'fibo_locked': False,  # 🔒 lock when price enters zone
+    'last_fibo_shift_key': None,  # anti-spam per shift
 }
 
 monthly_stats = {'month_year': None, 'tp_count': 0, 'sl_count': 0, 'total_pnl': 0.0, 'trades': []}
@@ -205,24 +209,34 @@ def init_fibo_from_h1(ohlcv_h1, bias):
     return fibo100, fibo0, fib, (fib['33'], fib['78.6'])
 
 def update_fibo_on_bos_without_pullback_to_33(new_bos_price, bias):
-    if state['fibo100'] is None or state['fibo0'] is None: return
-    if state['touched_33_since_last_bos']: return
+    """Shift Fibo0 ONLY if: not locked, not touched 33 since last BOS, same-direction BOS."""
+    if state['fibo_locked']:
+        return
+    if state['fibo100'] is None or state['fibo0'] is None:
+        return
+    if state['touched_33_since_last_bos']:
+        return
     # shift only fibo0 (uptrend: raise; downtrend: lower)
+    shifted = False
     if bias == 'up' and new_bos_price > state['fibo0']:
-        state['fibo0'] = new_bos_price
+        state['fibo0'] = new_bos_price; shifted = True
     elif bias == 'down' and new_bos_price < state['fibo0']:
-        state['fibo0'] = new_bos_price
-    state['fibo'] = build_fibo(state['fibo100'], state['fibo0'])
-    state['entry_zone'] = (state['fibo']['33'], state['fibo']['78.6'])
-    alert_once(f"FIBO_SHIFT_{int(datetime.utcnow().timestamp())}",
-               "🧭 [FIBO] BOS ต่อเนื่องโดยยังไม่แตะ 33 → ขยับ Fibo 0 (100 คงเดิม)")
+        state['fibo0'] = new_bos_price; shifted = True
+    if shifted:
+        state['fibo'] = build_fibo(state['fibo100'], state['fibo0'])
+        state['entry_zone'] = (state['fibo']['33'], state['fibo']['78.6'])
+        # anti-spam per-shift key
+        key = f"FIBO_SHIFT_{int(state['fibo0'])}"
+        if key != state['last_fibo_shift_key']:
+            state['last_fibo_shift_key'] = key
+            alert_once(key, "🧭 [FIBO] BOS ต่อเนื่องโดยยังไม่แตะ 33 → ขยับ Fibo 0 (100 คงเดิม)")
 
 # ================== POC (M1 pullback subset) ==================
 def vp_poc_from_bars(bars):
     if not bars: return None
     prices=[(b[2]+b[3]+b[4])/3 for b in bars]; vols=[b[5] or 0.0 for b in bars]
     mn, mx = min(prices), max(prices)
-    width = max((mx-mn)/40.0, 0.5)
+    width = max((mx-mn)/40.0, 0.2)  # ETH ช่วงแคบกว่า ใช้บัคเก็ตเล็กลง
     bins = defaultdict(float)
     for p, v in zip(prices, vols):
         idx=int((p-mn)/width); center=mn+(idx+0.5)*width; bins[center]+=v
@@ -280,23 +294,23 @@ def get_equity():
     except Exception as e:
         log.error(f"get_equity error: {e}"); return 0.0
 
-def contract_size_btc():
-    cs=market_info.get('contractSize', 0.001)  # Binance BTC perp = 0.001 BTC
-    return float(cs or 0.001)
+def contract_size_coin():
+    # ETH perp contract size, typically 0.01 ETH on Binance
+    return float(market_info.get('contractSize', 0.01) or 0.01)
 
 def max_contracts_by_risk(equity, entry, sl):
     if sl is None: return 1
     dist=abs(entry-sl); 
     if dist<=0: return 1
-    risk_per_contract = dist * contract_size_btc()
+    risk_per_contract = dist * contract_size_coin()
     max_risk = equity * TARGET_RISK_PCT
     return int(max(1, math.floor(max_risk / max(1e-9, risk_per_contract))))
 
 def propose_contracts_from_equity(equity, entry):
     use_equity = max(0.0, equity) * TARGET_POSITION_SIZE_FACTOR
     target_notional = use_equity * LEVERAGE
-    target_btc = target_notional / max(1e-9, entry)
-    raw = target_btc / contract_size_btc()
+    target_coin = target_notional / max(1e-9, entry)
+    raw = target_coin / contract_size_coin()
     return max(1, int(round(raw)))
 
 def final_contracts(equity, entry, sl):
@@ -372,11 +386,27 @@ def derive_sl(fib, bias, poc_m1, price_now, m1=None):
     # 3) otherwise Fibo 80
     return fib['80']
 
+# ================== FIBO2 (M1) ==================
+def compute_fibo2(h1_fibo0, m1_pre_choch_swing, side):
+    """Return {'78.6', 'ext133', 'ext161.8'} using: 100=h1_fibo0, 0=m1_pre_choch."""
+    low = m1_pre_choch_swing
+    high = h1_fibo0
+    diff = high - low
+    if side == 'short':
+        # mirror for short
+        low, high = h1_fibo0, m1_pre_choch_swing
+        diff = high - low
+    return {
+        '78.6': low + 0.786*diff,
+        'ext133': low + 1.33*diff,
+        'ext161.8': low + 1.618*diff
+    }
+
 # ================== STATS ==================
 def add_trade_record(reason, pos_info, closed_price):
     try:
         entry=pos_info.get('entry_price',0.0); size=pos_info.get('contracts',0)
-        cs=contract_size_btc()
+        cs=contract_size_coin()
         pnl = (closed_price-entry)*size*cs if pos_info['side']=='long' else (entry-closed_price)*size*cs
         rec={'time':datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'), 'side':pos_info['side'],
              'entry':entry, 'closed':closed_price, 'size':size, 'pnl':pnl, 'reason':reason}
@@ -392,7 +422,7 @@ def add_trade_record(reason, pos_info, closed_price):
 def main_loop():
     global current_position, pending_trade, cooldown_until
 
-    send_telegram("🤖 บอทเริ่มทำงาน: Binance SMC+Fibo+POC (isolated, one-way, Mode B)")
+    send_telegram("🤖 เริ่มบอท: ETH SMC+Fibo+POC (isolated, one-way, Mode B)")
     while True:
         try:
             if cooldown_until and datetime.utcnow()<cooldown_until:
@@ -406,29 +436,35 @@ def main_loop():
             h1 = fetch_ohlcv_safe(SYMBOL, TIMEFRAME_H1, limit=180)
             latest, bias = latest_smc(h1)
 
+            # flag touched33
             if state['fibo'] and in_zone(price, state['fibo']['33'], state['fibo']['0']):
                 state['touched_33_since_last_bos'] = True
+                state['fibo_locked'] = True  # 🔒 lock once entered zone
 
+            # BOS handling (only if not locked)
             if latest and latest['sig']=='BOS' and bias:
                 if state['bias'] == bias:
                     update_fibo_on_bos_without_pullback_to_33(latest['p'], bias)
-                    state['touched_33_since_last_bos'] = False
+                    if not state['fibo_locked']:
+                        state['touched_33_since_last_bos'] = False
                 else:
-                    state['touched_33_since_last_bos'] = False
+                    if not state['fibo_locked']:
+                        state['touched_33_since_last_bos'] = False
 
             # ====== STEP MACHINE ======
             if not current_position:
-                # STEP1
+                # STEP1: need H1 SMC
                 if state['step']==1:
                     if not bias:
                         alert_once("STEP1_WAIT","🧭 [STEP1] รอ H1 SMC (BOS/CHOCH)"); time.sleep(CHECK_INTERVAL); continue
                     state['bias']=bias; state['latest_h1']=latest
                     f100,f0,fib,zone = init_fibo_from_h1(h1, bias)
-                    state.update({'fibo100':f100,'fibo0':f0,'fibo':fib,'entry_zone':zone,'touched_33_since_last_bos':False})
+                    state.update({'fibo100':f100,'fibo0':f0,'fibo':fib,'entry_zone':zone,
+                                  'touched_33_since_last_bos':False,'fibo_locked':False,'last_fibo_shift_key':None})
                     state['step']=2; reset_alerts()
                     alert_once("STEP1_OK", f"🧭 [STEP1→OK] H1 {latest['sig']} → Trend {bias.upper()} (ไป STEP2)")
 
-                # STEP2
+                # STEP2: zone + POC + H1 close filter
                 if state['step']==2:
                     fib=state['fibo']
                     poc_m1 = compute_m1_poc(fib, state['bias'])
@@ -440,12 +476,13 @@ def main_loop():
                         state['step']=1; time.sleep(CHECK_INTERVAL); continue
                     alert_once("STEP2_WAIT","⌛ [STEP2] รอราคาเข้าโซน Fibo 33–78.6")
                     if in_zone(price, state['entry_zone'][0], state['entry_zone'][1]):
+                        state['fibo_locked'] = True  # 🔒 lock here
                         reset_alerts("STEP2_"); alert_once("STEP2_INZONE","📍 [STEP2] ราคาเข้าโซน Fibo (H1) → ไป STEP3")
                         state['step']=3; reset_alerts()
                     else:
                         time.sleep(CHECK_INTERVAL); continue
 
-                # STEP3
+                # STEP3: Entry confirm (M1 CHOCH OR MACD cross) on closed candle
                 if state['step']==3:
                     alert_once("STEP3_WAIT","🧪 [STEP3] รอ M1 Confirm")
                     if not in_zone(price, state['entry_zone'][0], state['entry_zone'][1]):
@@ -472,7 +509,14 @@ def main_loop():
                             'tp1_price':tp1,
                             'sl_price':sl,
                             'trend':direction,
+                            'm1_pre_choch_swing': None,  # จะอัปเดตเมื่อ detect ตอนยืนยัน (ง่ายสุด: ใช้ last swing ใน m1)
                         }
+                        # เก็บ swing ก่อน CHOCH (ถ้าใช้ CHOCH เป็นตัว confirm)
+                        if choch_ok:
+                            # หา swing ก่อนหน้าสุดใน M1 (low สำหรับ long, high สำหรับ short)
+                            lows=[b[3] for b in m1[:-1]]; highs=[b[2] for b in m1[:-1]]
+                            if direction=='up' and lows: pending_trade['m1_pre_choch_swing'] = min(lows[-5:])  # โซนใกล้ ๆ
+                            if direction=='down' and highs: pending_trade['m1_pre_choch_swing'] = max(highs[-5:])
                         state['step']=99; reset_alerts()
                         send_telegram(f"🎯 SL เริ่มต้น: {sl:.2f} | TP1: {tp1:.2f}")
                         time.sleep(CHECK_INTERVAL); continue
@@ -493,7 +537,8 @@ def main_loop():
                             add_trade_record('SL', {'side':pending_trade['side'],'entry_price':pending_trade['entry_price'],'contracts':amt}, price)
                             cooldown_until = datetime.utcnow()+timedelta(hours=COOLDOWN_HOURS)
                             pending_trade=None; current_position=None
-                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,'entry_zone':None,'poc_m1':None})
+                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,
+                                          'entry_zone':None,'poc_m1':None,'touched_33_since_last_bos':True,'fibo_locked':False})
                             reset_alerts(); alert_once("STEP1_WAIT","🔁 [RESET] กลับ STEP1")
                             time.sleep(5); continue
                     # TP1
@@ -503,18 +548,16 @@ def main_loop():
                         close_amt = max(1, int(round(pending_trade['contracts']*TP1_CLOSE_PERCENT)))
                         if close_market(close_amt, pending_trade['side']):
                             send_telegram(f"✅ [TP1] ปิด {TP1_CLOSE_PERCENT*100:.0f}% @ {price:.2f}")
-                            # Fibo2
-                            m5 = fetch_ohlcv_safe(SYMBOL, TIMEFRAME_M5, limit=200)
-                            highs=[b[2] for b in m5]; lows=[b[3] for b in m5]
-                            base = tp1
-                            if pending_trade['side']=='long':
-                                hh = max(highs) if highs else base*1.03
-                                diff = hh-base
-                                fib2 = {'78.6': base + 0.786*diff, 'ext133': base + 1.33*diff, 'ext161.8': base + 1.618*diff}
-                            else:
-                                ll = min(lows) if lows else base*0.97
-                                diff = base-ll
-                                fib2 = {'78.6': base - 0.786*diff, 'ext133': base - 1.33*diff, 'ext161.8': base - 1.618*diff}
+                            # ---- FIBO2 ----
+                            h1_fibo0 = state['fibo']['0']
+                            pre = pending_trade.get('m1_pre_choch_swing')
+                            if pre is None:
+                                m1 = fetch_ohlcv_safe(SYMBOL, TIMEFRAME_M1, limit=300)
+                                lows=[b[3] for b in m1[:-1]]; highs=[b[2] for b in m1[:-1]]
+                                if pending_trade['side']=='long' and lows: pre = min(lows[-10:])
+                                if pending_trade['side']=='short' and highs: pre = max(highs[-10:])
+                            fib2 = compute_fibo2(h1_fibo0, pre if pre else (tp1*0.99 if pending_trade['side']=='long' else tp1*1.01),
+                                                 'long' if pending_trade['side']=='long' else 'short')
                             pending_trade['fibo2']=fib2
                             pending_trade['sl2']=fib2['78.6']
                             pending_trade['state']='TP1_HIT'
@@ -539,7 +582,8 @@ def main_loop():
                             add_trade_record('TP', {'side':pending_trade['side'],'entry_price':pending_trade['entry_price'],'contracts':remain}, price)
                             cooldown_until = datetime.utcnow()+timedelta(hours=COOLDOWN_HOURS)
                             pending_trade=None; current_position=None
-                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,'entry_zone':None,'poc_m1':None})
+                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,
+                                          'entry_zone':None,'poc_m1':None,'touched_33_since_last_bos':True,'fibo_locked':False})
                             reset_alerts(); alert_once("STEP1_WAIT","🔁 [RESET] กลับ STEP1")
                             time.sleep(5); continue
                     elif emergency:
@@ -549,7 +593,8 @@ def main_loop():
                             add_trade_record('Emergency Close', {'side':pending_trade['side'],'entry_price':pending_trade['entry_price'],'contracts':remain}, price)
                             cooldown_until = datetime.utcnow()+timedelta(hours=COOLDOWN_HOURS)
                             pending_trade=None; current_position=None
-                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,'entry_zone':None,'poc_m1':None})
+                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,
+                                          'entry_zone':None,'poc_m1':None,'touched_33_since_last_bos':True,'fibo_locked':False})
                             reset_alerts(); alert_once("STEP1_WAIT","🔁 [RESET] กลับ STEP1")
                             time.sleep(5); continue
                     # SL2
@@ -562,7 +607,8 @@ def main_loop():
                             add_trade_record('SL', {'side':pending_trade['side'],'entry_price':pending_trade['entry_price'],'contracts':remain}, price)
                             cooldown_until = datetime.utcnow()+timedelta(hours=COOLDOWN_HOURS)
                             pending_trade=None; current_position=None
-                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,'entry_zone':None,'poc_m1':None})
+                            state.update({'step':1,'bias':None,'latest_h1':None,'fibo100':None,'fibo0':None,'fibo':None,
+                                          'entry_zone':None,'poc_m1':None,'touched_33_since_last_bos':True,'fibo_locked':False})
                             reset_alerts(); alert_once("STEP1_WAIT","🔁 [RESET] กลับ STEP1")
                             time.sleep(5); continue
 
