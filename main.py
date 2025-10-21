@@ -17,7 +17,7 @@ import pandas as pd
 API_KEY = os.getenv('BINANCE_API_KEY', 'YOUR_BINANCE_API_KEY_HERE_FOR_LOCAL_TESTING')
 SECRET  = os.getenv('BINANCE_SECRET',    'YOUR_BINANCE_SECRET_HERE_FOR_LOCAL_TESTING')
 
-SYMBOL            = 'BTC/USDT:USDT'   # Binance USDT-M perpetual
+SYMBOL            = 'ETH/USDT:USDT'
 TIMEFRAME_H1      = '1h'
 TIMEFRAME_M5      = '5m'
 TIMEFRAME_M1      = '1m'
