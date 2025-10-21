@@ -86,20 +86,26 @@ monthly_stats = {'month_year': None, 'tp_count': 0, 'sl_count': 0.0, 'total_pnl'
 
 # ================== TELEGRAM ==================
 def send_telegram(msg: str):
-    token = TELEGRAM_TOKEN
-    chat_id = TELEGRAM_CHAT_ID
+    try:
+        token = TELEGRAM_TOKEN
+        chat_id = TELEGRAM_CHAT_ID
+    except NameError:
+        # กรณี interpreter ยังไม่เห็นตัวแปร
+        log.info("[TG-SKIP] Telegram variables not defined yet")
+        return
 
-    # หากยังไม่ตั้งค่า ENV → ไม่ส่ง telegram เพื่อกัน crash
-    if not token or token.startswith('YOUR_') or not chat_id or chat_id.startswith('YOUR_'):
-        log.info("[TG-SKIP] " + (msg[:120] if msg else ''))
+    # ถ้ายังไม่ตั้งค่าบน Railway → ให้ข้าม ไม่ส่ง
+    if not token or not chat_id or token.startswith("YOUR_") or chat_id.startswith("YOUR_"):
+        log.info("[TG-SKIP] " + (msg[:120] if msg else ""))
         return
 
     try:
         url = f'https://api.telegram.org/bot{token}/sendMessage'
         params = {'chat_id': chat_id, 'text': msg, 'parse_mode': 'HTML'}
         requests.get(url, params=params, timeout=10)
+        log.info("[TG] " + (msg[:120] if msg else ""))
     except Exception as e:
-        log.error(f"Telegram Error: {e}")
+        log.error(f"[TG-ERROR] {e}")
         
 def alert_once(key: str, message: str):
     if STEP_ALERT and key not in last_notices:
