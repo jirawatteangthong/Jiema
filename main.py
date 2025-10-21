@@ -89,7 +89,7 @@ def send_telegram(msg: str):
     token = TELEGRAM_TOKEN
     chat_id = TELEGRAM_CHAT_ID
 
-    # ถ้า user ยังไม่ใส่ token จริง → ไม่ต้องส่ง telegram ให้ skip
+    # หากยังไม่ตั้งค่า ENV → ไม่ส่ง telegram เพื่อกัน crash
     if not token or token.startswith('YOUR_') or not chat_id or chat_id.startswith('YOUR_'):
         log.info("[TG-SKIP] " + (msg[:120] if msg else ''))
         return
