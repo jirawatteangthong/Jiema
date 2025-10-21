@@ -86,22 +86,21 @@ monthly_stats = {'month_year': None, 'tp_count': 0, 'sl_count': 0.0, 'total_pnl'
 
 # ================== TELEGRAM ==================
 def send_telegram(msg: str):
-    tok = os.getenv('TELEGRAM_TOKEN', '')
-    chat = os.getenv('TELEGRAM_CHAT_ID', '')
-    token = tok if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith('YOUR_') else TELEGRAM_TOKEN
-    chat_id = chat if not TELEGRAM_CHAT_ID or TELEGRAM_CHAT_ID.startswith('YOUR_') else TELEGRAM_CHAT_ID
-    if not token or not chat_id or token.startswith('YOUR_') or chat_id.startswith('YOUR_'):
-        log.info("[TG] " + (msg[:120] if msg else ''))
-        return
-    try:
-        requests.get(
-            f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage',
-            params={'chat_id': TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'HTML'},
-            timeout=10
-        )
-    except Exception as e:
-        log.error(f"Telegram error: {e}")
+    token = TELEGRAM_TOKEN
+    chat_id = TELEGRAM_CHAT_ID
 
+    # ถ้า user ยังไม่ใส่ token จริง → ไม่ต้องส่ง telegram ให้ skip
+    if not token or token.startswith('YOUR_') or not chat_id or chat_id.startswith('YOUR_'):
+        log.info("[TG-SKIP] " + (msg[:120] if msg else ''))
+        return
+
+    try:
+        url = f'https://api.telegram.org/bot{token}/sendMessage'
+        params = {'chat_id': chat_id, 'text': msg, 'parse_mode': 'HTML'}
+        requests.get(url, params=params, timeout=10)
+    except Exception as e:
+        log.error(f"Telegram Error: {e}")
+        
 def alert_once(key: str, message: str):
     if STEP_ALERT and key not in last_notices:
         last_notices.add(key); send_telegram(message)
