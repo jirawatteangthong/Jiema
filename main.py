@@ -21,7 +21,7 @@ SYMBOL            = 'ETH/USDT:USDT'
 TIMEFRAME_H1      = '1h'
 TIMEFRAME_M5      = '5m'
 
-LEVERAGE          = 15
+LEVERAGE          = 10
 POSITION_MARGIN_PERCENT = 0.50   # ใช้ 50% ของ Free USDT เป็น margin ต่อไม้
 
 # EMA Filter (H1 close only)
