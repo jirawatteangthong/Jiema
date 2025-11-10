@@ -28,7 +28,7 @@ NW_BANDWIDTH = 8.0
 NW_MULT = 3.0
 NW_LOOKBACK = 500
 SL_POINTS = 300.0
-LOOP_SECONDS = 3
+LOOP_SECONDS = 10
 REPORT_HH, REPORT_MM = 23, 59
 LOG_FILE = "bot.log"
 STATS_FILE = "daily_stats.json"
@@ -236,13 +236,24 @@ def run():
     ex = BinanceFutures()
     ex.setup()
     pos_state = None
-    log.info("✅ Started Binance Futures EMA50/100 + Nadaraya Bot (with Daily Report)")
+    log.info("✅ Started Binance Futures EMA50/100 + Nadaraya Bot (10s loop + OHLCV cache)")
+    
+    # cache OHLCV เพื่อลดการยิง API ถี่เกินไป
+    ohlcv_cache = None
+    last_fetch_time = 0
+    
     while True:
         try:
             stats.roll_if_new_day()
             stats.send_report(force=False)
 
-            ohlcv = ex.fetch_ohlcv(TIMEFRAME, NW_LOOKBACK + 5)
+            now = time.time()
+            # ดึงแท่งใหม่ทุก 60 วินาทีเท่านั้น
+            if now - last_fetch_time > 60 or ohlcv_cache is None:
+                ohlcv_cache = ex.fetch_ohlcv(TIMEFRAME, NW_LOOKBACK + 5)
+                last_fetch_time = now
+            ohlcv = ohlcv_cache
+
             closes = [c[4] for c in ohlcv[:-1]]
             price = ex.ticker_last()
             trend = trend_from_ema(closes)
@@ -252,7 +263,7 @@ def run():
             live = ex.fetch_position()
             if live: pos_state = live
 
-            # manage open
+            # ===== Manage positions =====
             if pos_state and isinstance(pos_state, PositionState):
                 if pos_state.side == 'long' and price <= pos_state.sl_price:
                     ex.reduce_only_close()
@@ -277,7 +288,7 @@ def run():
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            # open new
+            # ===== Entry signals =====
             if not pos_state:
                 if trend == "buy" and price <= bands.lower:
                     pos = ex.open_market('long', ex.free_usdt(), price)
@@ -300,7 +311,7 @@ def run():
             break
         except Exception as e:
             log.exception(f"loop error: {e}")
-            time.sleep(2)
-
+            time.sleep(5)
+          
 if __name__ == "__main__":
     run()
