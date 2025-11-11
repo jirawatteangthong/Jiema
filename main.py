@@ -1,9 +1,9 @@
 # main.py
 # Binance Futures M15 Bot — EMA50/100 + Nadaraya-Watson Envelope
-# Loop 10s, OHLCV cache 60s
 # Entry uses last closed bar; TP/SL checked realtime each loop
-# SL lock after SL hit: wait for a closed bar inside zone to unlock
-# If EMA flips while in position → move TP to mid of band (keep SL from entry)
+# SL lock after SL hit: wait for price to touch mid zone to unlock (realtime)
+# Move SL to breakeven+100 when last closed close crosses mid zone (no TG)
+# Telegram only for daily summary (if there were trades that day)
 
 import os, time, json, logging, math, statistics
 from dataclasses import dataclass
@@ -26,8 +26,7 @@ TIMEFRAME = os.getenv('TIMEFRAME', "15m")
 LEVERAGE = int(os.getenv('LEVERAGE', "15"))
 POSITION_MARGIN_FRACTION = float(os.getenv('POSITION_MARGIN_FRACTION', "0.50"))  # 50% per position
 
-# Use touch mode default but ENTRY uses last closed bar per your rule
-ENTRY_MODE = os.getenv('ENTRY_MODE', 'touch').lower()
+ENTRY_MODE = os.getenv('ENTRY_MODE', 'touch').lower()  # default touch, but entry uses last closed bar per rule
 
 EMA_FAST = int(os.getenv('EMA_FAST', "50"))
 EMA_SLOW = int(os.getenv('EMA_SLOW', "100"))
@@ -37,6 +36,7 @@ NW_MULT = float(os.getenv('NW_MULT', "3.0"))
 NW_LOOKBACK = int(os.getenv('NW_LOOKBACK', "500"))
 
 SL_POINTS = float(os.getenv('SL_POINTS', "300.0"))  # fixed SL distance from entry
+BREAKEVEN_OFFSET = float(os.getenv('BREAKEVEN_OFFSET', "100.0"))  # +100 / -100
 
 LOOP_SECONDS = int(os.getenv('LOOP_SECONDS', "10"))
 OHLCV_CACHE_SECONDS = int(os.getenv('OHLCV_CACHE_SECONDS', "60"))
@@ -87,8 +87,10 @@ def nwe_non_repaint(closes, h, mult, win):
     lower = mid - mae
     return upper, lower, mid
 
+# ======== Telegram (only for daily report) ========
 def tg_send(text: str):
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith("YOUR") or not TELEGRAM_CHAT_ID:
+        # TG disabled — don't spam logs for each trade; keep daily summary via TG only
         log.info("[TG Disabled] " + text)
         return
     try:
@@ -97,7 +99,7 @@ def tg_send(text: str):
     except Exception as e:
         log.warning(f"TG error: {e}")
 
-# ======== Daily Stats ========
+# ======== Daily Stats (for daily TG summary) ========
 class DailyStats:
     def __init__(self, path=STATS_FILE):
         self.path = path
@@ -141,6 +143,7 @@ class DailyStats:
     def roll_if_new_day(self):
         today = datetime.now().strftime('%Y-%m-%d')
         if self.data.get('date') != today:
+            # send yesterday report then reset
             self.send_report(force=True)
             self.data = {'date': today, 'trades': [], 'pnl_usdt': 0.0}
             self._save()
@@ -154,8 +157,8 @@ class DailyStats:
             return
         trades = self.data.get('trades', [])
         total = float(self.data.get('pnl_usdt', 0.0))
+        # Only send report if there were trades today
         if not trades:
-            tg_send(f"📊 รายงานผลประจำวัน — {self.data['date']}\nไม่มีเทรดวันนี้")
             self.last_report_key = key
             return
 
@@ -326,6 +329,7 @@ class PositionState:
     entry_time: datetime
     sl_price: float
     tp_price: float  # current TP target (can be changed to mid on EMA flip)
+    sl_moved: bool = False  # flag if SL moved to breakeven+OFFSET
 
 def compute_sl_price(entry_price, side):
     return entry_price - SL_POINTS if side == 'long' else entry_price + SL_POINTS
@@ -356,13 +360,12 @@ def run():
     log.info(f"✅ Started Binance Futures Bot (ENTRY_MODE={ENTRY_MODE.upper()}, loop={LOOP_SECONDS}s)")
     pos_state: PositionState | None = None
     sl_lock_active = False
+    last_sl_side = None  # 'long' or 'short' for unlock logic
 
     # OHLCV cache
     ohlcv_cache = None
     last_ohlcv_fetch = 0
 
-    # previous closed close for entry detection (we use last closed close for entry)
-    # but we still keep price_prev in case needed
     price_prev = None
 
     while True:
@@ -376,7 +379,7 @@ def run():
                 if ohlcv_cache is None or (now - last_ohlcv_fetch) > OHLCV_CACHE_SECONDS:
                     ohlcv_cache = ex.fetch_ohlcv(TIMEFRAME, NW_LOOKBACK + 5)
                     last_ohlcv_fetch = now
-            except ccxt.base.errors.DDoSProtection as e:
+            except ccxt.base.errors.DDoSProtection:
                 log.warning("DDoSProtection / RateLimit when fetching OHLCV: sleeping 10s")
                 time.sleep(10)
                 continue
@@ -411,18 +414,22 @@ def run():
                                    tp_price=(bands.upper if live_pos['side']=='long' else bands.lower) if bands else 0.0)
                 pos_state = ps
                 sl_lock_active = False
+                last_sl_side = None
                 log.info("Synced existing position from exchange")
 
-            # If SL lock active -> check unlock condition using closed bar
+            # If locked due to SL previously -> unlock when price touches mid zone (realtime)
             if sl_lock_active:
-                # unlock only when last_closed_close is inside [lower, upper]
-                if bands and bands.lower <= last_closed_close <= bands.upper:
-                    sl_lock_active = False
-                    log.info("Unlocked from SL lock: a closed bar is inside envelope zone")
-                    tg_send("🔓 SL lock released — price closed inside envelope")
-                else:
-                    # still locked; do not open new positions
-                    # but continue to monitor existing pos (should be none)
+                if bands:
+                    mid_zone = (bands.upper + bands.lower) / 2
+                    if last_sl_side == 'long' and price_now > mid_zone:
+                        sl_lock_active = False
+                        last_sl_side = None
+                        log.info(f"Unlocked SL lock (price {price_now:.2f} > mid {mid_zone:.2f})")
+                    elif last_sl_side == 'short' and price_now < mid_zone:
+                        sl_lock_active = False
+                        last_sl_side = None
+                        log.info(f"Unlocked SL lock (price {price_now:.2f} < mid {mid_zone:.2f})")
+                if sl_lock_active:
                     time.sleep(LOOP_SECONDS)
                     price_prev = price_now
                     continue
@@ -435,9 +442,10 @@ def run():
                     pnl = (price_now - pos_state.entry) * pos_state.contracts
                     stats.add_trade('long', pos_state.entry, price_now, pos_state.contracts, pnl, 'SL', pos_state.entry_time)
                     log.info(f"SL HIT close LONG entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
-                    tg_send(f"🛑 SL HIT LONG {price_now:.2f} → PnL {pnl:+.2f} USDT")
-                    pos_state = None
+                    # set lock and remember side
+                    last_sl_side = 'long'
                     sl_lock_active = True
+                    pos_state = None
                     price_prev = price_now
                     time.sleep(LOOP_SECONDS)
                     continue
@@ -446,21 +454,20 @@ def run():
                     pnl = (pos_state.entry - price_now) * pos_state.contracts
                     stats.add_trade('short', pos_state.entry, price_now, pos_state.contracts, pnl, 'SL', pos_state.entry_time)
                     log.info(f"SL HIT close SHORT entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
-                    tg_send(f"🛑 SL HIT SHORT {price_now:.2f} → PnL {pnl:+.2f} USDT")
-                    pos_state = None
+                    last_sl_side = 'short'
                     sl_lock_active = True
+                    pos_state = None
                     price_prev = price_now
                     time.sleep(LOOP_SECONDS)
                     continue
 
-                # 2) check TP using latest bands (recomputed from closed bars)
+                # 2) check TP using current TP price (set at open or moved on EMA flip)
                 if bands:
                     if pos_state.side == 'long' and price_now >= pos_state.tp_price:
                         ok = ex.reduce_only_close()
                         pnl = (price_now - pos_state.entry) * pos_state.contracts
                         stats.add_trade('long', pos_state.entry, price_now, pos_state.contracts, pnl, 'TP', pos_state.entry_time)
                         log.info(f"TP HIT close LONG entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
-                        tg_send(f"✅ TP HIT LONG {price_now:.2f} → PnL {pnl:+.2f} USDT")
                         pos_state = None
                         price_prev = price_now
                         time.sleep(LOOP_SECONDS)
@@ -470,22 +477,29 @@ def run():
                         pnl = (pos_state.entry - price_now) * pos_state.contracts
                         stats.add_trade('short', pos_state.entry, price_now, pos_state.contracts, pnl, 'TP', pos_state.entry_time)
                         log.info(f"TP HIT close SHORT entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
-                        tg_send(f"✅ TP HIT SHORT {price_now:.2f} → PnL {pnl:+.2f} USDT")
                         pos_state = None
                         price_prev = price_now
                         time.sleep(LOOP_SECONDS)
                         continue
 
+                # 2.5) Move SL to breakeven+OFFSET if last closed close crosses mid zone (no TG)
+                if bands and not pos_state.sl_moved:
+                    mid_zone = (bands.upper + bands.lower) / 2
+                    if pos_state.side == 'long' and last_closed_close > mid_zone:
+                        pos_state.sl_price = pos_state.entry + BREAKEVEN_OFFSET
+                        pos_state.sl_moved = True
+                        log.info(f"Move SL to breakeven+{BREAKEVEN_OFFSET:.0f} → {pos_state.sl_price:.2f}")
+                    elif pos_state.side == 'short' and last_closed_close < mid_zone:
+                        pos_state.sl_price = pos_state.entry - BREAKEVEN_OFFSET
+                        pos_state.sl_moved = True
+                        log.info(f"Move SL to breakeven-{BREAKEVEN_OFFSET:.0f} → {pos_state.sl_price:.2f}")
+
                 # 3) EMA flip while in position -> change TP to mid (keep SL unchanged)
-                # We compute current trend from closed bars (trend variable already)
-                # If trend flips against the position side -> set TP to mid (if not already)
                 if bands:
                     if (pos_state.side == 'long' and trend == 'sell') or (pos_state.side == 'short' and trend == 'buy'):
-                        # set tp to mid of envelope
                         old_tp = pos_state.tp_price
                         pos_state.tp_price = bands.mid
                         log.info(f"EMA flip detected while in pos -> move TP from {old_tp:.2f} to mid {bands.mid:.2f}")
-                        tg_send(f"🔁 EMA flipped — moved TP -> mid {bands.mid:.2f} (SL unchanged)")
 
                 # no exit conditions met this loop
                 time.sleep(LOOP_SECONDS)
@@ -493,23 +507,20 @@ def run():
                 continue
 
             # NO position -> find entry using last closed bar (per your rule)
-            # Use trend computed from closed bars and last_closed_close
             signal = None
             if bands is None:
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            # only allow entry if not in SL lock (checked earlier)
-            # For ENTRY_MODE touch or zone: but per your rule use closed bar to decide entry
+            # Only allow entry if not in SL lock
             if trend == 'buy':
-                # want LONG when last_closed_close <= bands.lower (closed bar inside or at lower)
-                if last_closed_close <= bands.lower:
+                # want LONG when last_closed_close <= bands.lower
+                if last_closed_close <= bands.lower and not sl_lock_active:
                     signal = 'long'
             elif trend == 'sell':
-                if last_closed_close >= bands.upper:
+                if last_closed_close >= bands.upper and not sl_lock_active:
                     signal = 'short'
 
-            # If we have signal -> open market (one order at a time)
             if signal:
                 # double-check pos still empty on exchange
                 if ex.fetch_position():
@@ -519,14 +530,15 @@ def run():
                     if pos:
                         tp_initial = bands.upper if signal == 'long' else bands.lower
                         ps = PositionState(side=signal, entry=pos['entry'], contracts=pos['contracts'],
-                                           entry_time=datetime.now(), sl_price=compute_sl_price(pos['entry'], signal),
+                                           entry_time=datetime.now(),
+                                           sl_price=compute_sl_price(pos['entry'], signal),
                                            tp_price=tp_initial)
                         pos_state = ps
                         log.info(f"OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f} TP={ps.tp_price:.2f}")
-                        tg_send(f"✅ OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f} TP={ps.tp_price:.2f}")
+                        # No TG notify for entries (daily summary only)
                     else:
                         log.warning("Open market failed or not confirmed")
-            # loop housekeeping
+            # housekeeping
             price_prev = price_now
             time.sleep(LOOP_SECONDS)
 
