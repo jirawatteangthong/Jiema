@@ -1,14 +1,11 @@
 # main.py
 # Binance Futures M15 Bot — EMA50/100 + Nadaraya-Watson Envelope
-# Loop 10s, OHLCV cache 60s, ENTRY_MODE = touch|zone
-# Requires: ccxt, requests, python-dotenv
+# Loop 10s, OHLCV cache 60s
+# Entry uses last closed bar; TP/SL checked realtime each loop
+# SL lock after SL hit: wait for a closed bar inside zone to unlock
+# If EMA flips while in position → move TP to mid of band (keep SL from entry)
 
-import os
-import time
-import json
-import logging
-import math
-import statistics
+import os, time, json, logging, math, statistics
 from dataclasses import dataclass
 from datetime import datetime
 import requests
@@ -28,7 +25,9 @@ TIMEFRAME = os.getenv('TIMEFRAME', "15m")
 
 LEVERAGE = int(os.getenv('LEVERAGE', "15"))
 POSITION_MARGIN_FRACTION = float(os.getenv('POSITION_MARGIN_FRACTION', "0.50"))  # 50% per position
-ENTRY_MODE = os.getenv('ENTRY_MODE', 'touch').lower()  # 'touch' or 'zone'
+
+# Use touch mode default but ENTRY uses last closed bar per your rule
+ENTRY_MODE = os.getenv('ENTRY_MODE', 'touch').lower()
 
 EMA_FAST = int(os.getenv('EMA_FAST', "50"))
 EMA_SLOW = int(os.getenv('EMA_SLOW', "100"))
@@ -37,10 +36,10 @@ NW_BANDWIDTH = float(os.getenv('NW_BANDWIDTH', "8.0"))
 NW_MULT = float(os.getenv('NW_MULT', "3.0"))
 NW_LOOKBACK = int(os.getenv('NW_LOOKBACK', "500"))
 
-SL_POINTS = float(os.getenv('SL_POINTS', "300.0"))
+SL_POINTS = float(os.getenv('SL_POINTS', "300.0"))  # fixed SL distance from entry
 
-LOOP_SECONDS = int(os.getenv('LOOP_SECONDS', "10"))  # main loop every 10s
-OHLCV_CACHE_SECONDS = int(os.getenv('OHLCV_CACHE_SECONDS', "60"))  # fetch OHLCV every 60s
+LOOP_SECONDS = int(os.getenv('LOOP_SECONDS', "10"))
+OHLCV_CACHE_SECONDS = int(os.getenv('OHLCV_CACHE_SECONDS', "60"))
 
 REPORT_HH = int(os.getenv('REPORT_HH', "23"))
 REPORT_MM = int(os.getenv('REPORT_MM', "59"))
@@ -88,7 +87,6 @@ def nwe_non_repaint(closes, h, mult, win):
     lower = mid - mae
     return upper, lower, mid
 
-# ======== Telegram ========
 def tg_send(text: str):
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith("YOUR") or not TELEGRAM_CHAT_ID:
         log.info("[TG Disabled] " + text)
@@ -143,7 +141,6 @@ class DailyStats:
     def roll_if_new_day(self):
         today = datetime.now().strftime('%Y-%m-%d')
         if self.data.get('date') != today:
-            # send yesterday report then reset
             self.send_report(force=True)
             self.data = {'date': today, 'trades': [], 'pnl_usdt': 0.0}
             self._save()
@@ -158,7 +155,6 @@ class DailyStats:
         trades = self.data.get('trades', [])
         total = float(self.data.get('pnl_usdt', 0.0))
         if not trades:
-            # send lightweight report if wanted
             tg_send(f"📊 รายงานผลประจำวัน — {self.data['date']}\nไม่มีเทรดวันนี้")
             self.last_report_key = key
             return
@@ -241,7 +237,6 @@ class BinanceFutures:
             bal = self.ex.fetch_balance({'type': 'future'})
             v = (bal.get('USDT') or {}).get('free')
             if v is None:
-                # fallback to info structure
                 for a in (bal.get('info', {}) or {}).get('assets', []):
                     if a.get('asset') == 'USDT':
                         v = a.get('availableBalance')
@@ -261,7 +256,6 @@ class BinanceFutures:
         try:
             ps = self.ex.fetch_positions([SYMBOL])
             for p in ps:
-                # ccxt might return different keys; try common ones
                 sym = p.get('symbol') or p.get('info', {}).get('symbol')
                 contracts = float(p.get('contracts') or p.get('contract') or 0)
                 if (sym == SYMBOL or sym == (self.market and self.market.get('symbol'))) and contracts != 0:
@@ -331,6 +325,7 @@ class PositionState:
     contracts: float
     entry_time: datetime
     sl_price: float
+    tp_price: float  # current TP target (can be changed to mid on EMA flip)
 
 def compute_sl_price(entry_price, side):
     return entry_price - SL_POINTS if side == 'long' else entry_price + SL_POINTS
@@ -360,11 +355,14 @@ def run():
     ex.setup()
     log.info(f"✅ Started Binance Futures Bot (ENTRY_MODE={ENTRY_MODE.upper()}, loop={LOOP_SECONDS}s)")
     pos_state: PositionState | None = None
+    sl_lock_active = False
 
     # OHLCV cache
     ohlcv_cache = None
     last_ohlcv_fetch = 0
 
+    # previous closed close for entry detection (we use last closed close for entry)
+    # but we still keep price_prev in case needed
     price_prev = None
 
     while True:
@@ -384,7 +382,6 @@ def run():
                 continue
             except Exception as e:
                 log.warning(f"ohlcv fetch error: {e}")
-                # don't crash; try later
                 time.sleep(5)
                 continue
 
@@ -392,7 +389,9 @@ def run():
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            closes_closed = [c[4] for c in ohlcv_cache[:-1]]  # exclude current live bar
+            # closed bars: exclude the current live bar (we use closed for entry and bands/EMA)
+            closes_closed = [c[4] for c in ohlcv_cache[:-1]]
+            last_closed_close = closes_closed[-1]
             bands = compute_bands(closes_closed)
             trend = trend_from_ema(closes_closed)
             price_now = ex.ticker_last()
@@ -400,27 +399,45 @@ def run():
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            # sync live position (always check exchange)
+            # Sync live position from exchange (always check)
             live_pos = ex.fetch_position()
             if live_pos and (pos_state is None):
-                # sync local state from exchange
+                # sync local state from exchange (best-effort)
                 ps = PositionState(side=live_pos['side'],
                                    entry=live_pos['entry'],
                                    contracts=live_pos['contracts'],
                                    entry_time=datetime.now(),
-                                   sl_price=compute_sl_price(live_pos['entry'], live_pos['side']))
+                                   sl_price=compute_sl_price(live_pos['entry'], live_pos['side']),
+                                   tp_price=(bands.upper if live_pos['side']=='long' else bands.lower) if bands else 0.0)
                 pos_state = ps
+                sl_lock_active = False
                 log.info("Synced existing position from exchange")
 
+            # If SL lock active -> check unlock condition using closed bar
+            if sl_lock_active:
+                # unlock only when last_closed_close is inside [lower, upper]
+                if bands and bands.lower <= last_closed_close <= bands.upper:
+                    sl_lock_active = False
+                    log.info("Unlocked from SL lock: a closed bar is inside envelope zone")
+                    tg_send("🔓 SL lock released — price closed inside envelope")
+                else:
+                    # still locked; do not open new positions
+                    # but continue to monitor existing pos (should be none)
+                    time.sleep(LOOP_SECONDS)
+                    price_prev = price_now
+                    continue
+
+            # If we have a position -> manage exits (SL based on entry; TP based on bands)
             if pos_state:
-                # CHECK SL (from entry) every loop
+                # 1) check SL (absolute from entry) using realtime price
                 if pos_state.side == 'long' and price_now <= pos_state.sl_price:
-                    # SL hit
                     ok = ex.reduce_only_close()
                     pnl = (price_now - pos_state.entry) * pos_state.contracts
                     stats.add_trade('long', pos_state.entry, price_now, pos_state.contracts, pnl, 'SL', pos_state.entry_time)
                     log.info(f"SL HIT close LONG entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
+                    tg_send(f"🛑 SL HIT LONG {price_now:.2f} → PnL {pnl:+.2f} USDT")
                     pos_state = None
+                    sl_lock_active = True
                     price_prev = price_now
                     time.sleep(LOOP_SECONDS)
                     continue
@@ -429,68 +446,87 @@ def run():
                     pnl = (pos_state.entry - price_now) * pos_state.contracts
                     stats.add_trade('short', pos_state.entry, price_now, pos_state.contracts, pnl, 'SL', pos_state.entry_time)
                     log.info(f"SL HIT close SHORT entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
+                    tg_send(f"🛑 SL HIT SHORT {price_now:.2f} → PnL {pnl:+.2f} USDT")
                     pos_state = None
+                    sl_lock_active = True
                     price_prev = price_now
                     time.sleep(LOOP_SECONDS)
                     continue
 
-                # CHECK TP every loop: use latest bands
+                # 2) check TP using latest bands (recomputed from closed bars)
                 if bands:
-                    if pos_state.side == 'long' and price_now >= bands.upper:
-                        # TP hit
+                    if pos_state.side == 'long' and price_now >= pos_state.tp_price:
                         ok = ex.reduce_only_close()
                         pnl = (price_now - pos_state.entry) * pos_state.contracts
                         stats.add_trade('long', pos_state.entry, price_now, pos_state.contracts, pnl, 'TP', pos_state.entry_time)
                         log.info(f"TP HIT close LONG entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
+                        tg_send(f"✅ TP HIT LONG {price_now:.2f} → PnL {pnl:+.2f} USDT")
                         pos_state = None
                         price_prev = price_now
                         time.sleep(LOOP_SECONDS)
                         continue
-                    if pos_state.side == 'short' and price_now <= bands.lower:
+                    if pos_state.side == 'short' and price_now <= pos_state.tp_price:
                         ok = ex.reduce_only_close()
                         pnl = (pos_state.entry - price_now) * pos_state.contracts
                         stats.add_trade('short', pos_state.entry, price_now, pos_state.contracts, pnl, 'TP', pos_state.entry_time)
                         log.info(f"TP HIT close SHORT entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
+                        tg_send(f"✅ TP HIT SHORT {price_now:.2f} → PnL {pnl:+.2f} USDT")
                         pos_state = None
                         price_prev = price_now
                         time.sleep(LOOP_SECONDS)
                         continue
 
-                # no SL/TP hit -> just continue monitoring
+                # 3) EMA flip while in position -> change TP to mid (keep SL unchanged)
+                # We compute current trend from closed bars (trend variable already)
+                # If trend flips against the position side -> set TP to mid (if not already)
+                if bands:
+                    if (pos_state.side == 'long' and trend == 'sell') or (pos_state.side == 'short' and trend == 'buy'):
+                        # set tp to mid of envelope
+                        old_tp = pos_state.tp_price
+                        pos_state.tp_price = bands.mid
+                        log.info(f"EMA flip detected while in pos -> move TP from {old_tp:.2f} to mid {bands.mid:.2f}")
+                        tg_send(f"🔁 EMA flipped — moved TP -> mid {bands.mid:.2f} (SL unchanged)")
+
+                # no exit conditions met this loop
                 time.sleep(LOOP_SECONDS)
+                price_prev = price_now
                 continue
 
-            # NO position -> check entry
+            # NO position -> find entry using last closed bar (per your rule)
+            # Use trend computed from closed bars and last_closed_close
             signal = None
             if bands is None:
                 time.sleep(LOOP_SECONDS)
                 continue
 
-            if ENTRY_MODE == 'touch':
-                # need previous price to detect cross
-                if price_prev is not None:
-                    if trend == 'buy' and price_prev > bands.lower and price_now <= bands.lower:
-                        signal = 'long'
-                    elif trend == 'sell' and price_prev < bands.upper and price_now >= bands.upper:
-                        signal = 'short'
-            else:  # zone mode
-                if trend == 'buy' and price_now <= bands.lower:
+            # only allow entry if not in SL lock (checked earlier)
+            # For ENTRY_MODE touch or zone: but per your rule use closed bar to decide entry
+            if trend == 'buy':
+                # want LONG when last_closed_close <= bands.lower (closed bar inside or at lower)
+                if last_closed_close <= bands.lower:
                     signal = 'long'
-                elif trend == 'sell' and price_now >= bands.upper:
+            elif trend == 'sell':
+                if last_closed_close >= bands.upper:
                     signal = 'short'
 
+            # If we have signal -> open market (one order at a time)
             if signal:
-                pos = ex.open_market('long' if signal == 'long' else 'short', price_now)
-                if pos:
-                    ps = PositionState(side=signal, entry=pos['entry'], contracts=pos['contracts'],
-                                       entry_time=datetime.now(), sl_price=compute_sl_price(pos['entry'], signal))
-                    pos_state = ps
-                    log.info(f"OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f}")
-                    tg_send(f"✅ OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f}")
-                    # After opening, we do NOT place TP orders on exchange; we monitor TP via bands each loop
+                # double-check pos still empty on exchange
+                if ex.fetch_position():
+                    log.info("Exchange reports a position exists — skipping open to avoid duplicate")
                 else:
-                    log.warning("Open market returned no position")
-            # update prev price
+                    pos = ex.open_market(signal, price_now)
+                    if pos:
+                        tp_initial = bands.upper if signal == 'long' else bands.lower
+                        ps = PositionState(side=signal, entry=pos['entry'], contracts=pos['contracts'],
+                                           entry_time=datetime.now(), sl_price=compute_sl_price(pos['entry'], signal),
+                                           tp_price=tp_initial)
+                        pos_state = ps
+                        log.info(f"OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f} TP={ps.tp_price:.2f}")
+                        tg_send(f"✅ OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f} TP={ps.tp_price:.2f}")
+                    else:
+                        log.warning("Open market failed or not confirmed")
+            # loop housekeeping
             price_prev = price_now
             time.sleep(LOOP_SECONDS)
 
@@ -499,7 +535,6 @@ def run():
             break
         except Exception as e:
             log.exception(f"Main loop error: {e}")
-            # if ccxt rate limit / ddos, wait a bit longer
             time.sleep(5)
 
 if __name__ == "__main__":
