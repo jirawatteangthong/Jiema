@@ -24,7 +24,7 @@ SL_DISTANCE = 300           # SL จาก entry (USD)
 BE_OFFSET = 100             # ระยะ SL กันทุน (USD)
 NW_H = 8.0
 NW_MULT = 3.0
-#NW_FACTOR = 1.55            # ความกว้าง band ให้ตรง LuxAlgo
+NW_FACTOR = 1.50           # ความกว้าง band ให้ตรง LuxAlgo
 UPDATE_FRACTION = 0.5       # อัปเดต band ทุกครึ่ง TF
 CHECK_INTERVAL = 10         # เช็กสัญญาณทุก 10 วินาที
 DAILY_HOUR = 23             # ส่งรายงานเวลา 23:00
@@ -57,24 +57,24 @@ def report_daily(stats):
         open(STATS_FILE, "w").write(json.dumps([]))
 
 # ========== LUXALGO NADARAYA-WATSON ==========
-def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
+def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0, factor=1.5):
     n=len(closes)
-    if n<100: return None, None, None
+    if n<100: return None,None,None
     win=min(499,n-1)
     coefs=[math.exp(-(i**2)/(2*(h**2))) for i in range(win)]
     den=sum(coefs)
-    out_series=[]
+    out=[]
     for idx in range(win,n):
         num=sum(closes[idx-j]*coefs[j] for j in range(win))
-        out_series.append(num/den)
-    if not out_series: return None,None,None
-    mean=out_series[-1]
+        out.append(num/den)
+    if not out: return None,None,None
+    mean=out[-1]
     win_s=int(h*10)
-    if win_s>len(out_series): win_s=len(out_series)
-    diffs=[abs(closes[-i]-out_series[-i]) for i in range(1,win_s+1)]
-    mae=(sum(diffs)/len(diffs))*mult*1.49  # ✅ ปรับ calibration กว้างขึ้น
-    upper=mean+mae;lower=mean-mae
-    return upper,lower,mean
+    if win_s>len(out): win_s=len(out)
+    diffs=[abs(closes[-i]-out[-i]) for i in range(1,win_s+1)]
+    mae=(sum(diffs)/len(diffs))*mult*factor
+    return mean+mae, mean-mae, mean
+    
 # ========== EXCHANGE ==========
 def setup_exchange():
     ex=ccxt.binance({
@@ -116,10 +116,10 @@ def main():
     while True:
         try:
             # -------- ดึงข้อมูล --------
-            ohlcv=ex.fetch_ohlcv(SYMBOL,TIMEFRAME,limit=505)
-            df=pd.DataFrame(ohlcv,columns=["time","open","high","low","close","vol"])
-            closes=df["close"].tolist()
-            close=df["close"].iloc[-1]
+            ohlcv = ex.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=600)
+            df = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","vol"])
+            closes = df["close"].iloc[:-1].tolist()  # ใช้เฉพาะแท่งปิด
+            upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT, 1.55)
 
             # -------- กำหนดเวลาอัปเดต NW band --------
             tf_minutes=1
