@@ -1,17 +1,5 @@
 # main.py
-# Binance Futures Bot — EMA50/100 + LuxAlgo-like Nadaraya-Watson Envelope (Touch)
-# Features:
-# - Precision Nadaraya (smoothed) tuned to be very close to LuxAlgo
-# - Uses live/latest candle (touch mode)
-# - EMA trend filter (EMA50/EMA100)
-# - SL fixed points, TP at band opposite side, move SL to breakeven+100 on closed bar crossing mid
-# - SL-lock after SL hit; unlock when price touches mid (realtime)
-# - Auto-scale normalization (fixes x10/x0.1 issues)
-# - Debug switch
-# - Daily summary (light mode) saved to daily_stats.json and sent via Telegram once/day if trades occurred
-# Requires: ccxt, requests, python-dotenv (optional for env)
-# Put BINANCE_API_KEY, BINANCE_SECRET, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID in .env if used.
-
+# (Same header as previous) — updated: sync price scale between OHLCV closes and ticker_last
 import os, time, math, statistics, json, logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-# ================= CONFIG =================
+# ============ CONFIG (same as before) ============
 API_KEY = os.getenv('BINANCE_API_KEY', '')
 SECRET  = os.getenv('BINANCE_SECRET', '')
 
@@ -29,12 +17,11 @@ SYMBOL = os.getenv('SYMBOL', "BTC/USDT:USDT")
 TIMEFRAME = os.getenv('TIMEFRAME', "15m")
 
 LEVERAGE = int(os.getenv('LEVERAGE', "15"))
-POSITION_MARGIN_FRACTION = float(os.getenv('POSITION_MARGIN_FRACTION', "0.5"))  # 50% per position
+POSITION_MARGIN_FRACTION = float(os.getenv('POSITION_MARGIN_FRACTION', "0.5"))
 
 EMA_FAST = int(os.getenv('EMA_FAST', "50"))
 EMA_SLOW = int(os.getenv('EMA_SLOW', "100"))
 
-# Nadaraya tuning (precision to match LuxAlgo-like behavior)
 NW_BANDWIDTH = float(os.getenv('NW_BANDWIDTH', "4.5"))
 NW_MULT = float(os.getenv('NW_MULT', "2.5"))
 NW_LOOKBACK = int(os.getenv('NW_LOOKBACK', "400"))
@@ -45,7 +32,6 @@ BREAKEVEN_OFFSET = float(os.getenv('BREAKEVEN_OFFSET', "100.0"))
 LOOP_SECONDS = int(os.getenv('LOOP_SECONDS', "10"))
 OHLCV_CACHE_SECONDS = int(os.getenv('OHLCV_CACHE_SECONDS', "60"))
 
-# Daily report time (24h)
 REPORT_HH = int(os.getenv('REPORT_HH', "23"))
 REPORT_MM = int(os.getenv('REPORT_MM', "59"))
 
@@ -54,7 +40,7 @@ STATS_FILE = os.getenv('STATS_FILE', "daily_stats.json")
 
 DEBUG_MODE = os.getenv('DEBUG_MODE', "True").lower() in ("1", "true", "yes")
 
-# ================= Logging =================
+# ============ Logging ============
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s",
                     handlers=[logging.StreamHandler(), logging.FileHandler(LOG_FILE, encoding="utf-8")])
@@ -64,13 +50,12 @@ def dlog(msg: str):
     if DEBUG_MODE:
         log.info("[DEBUG] " + msg)
 
-# ================= Telegram (daily only) =================
+# ============ Telegram (daily only) ============
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
 def tg_send(text: str):
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith("YOUR") or not TELEGRAM_CHAT_ID:
-        # TG disabled — log instead
         log.info("[TG Disabled] " + text)
         return
     try:
@@ -79,7 +64,7 @@ def tg_send(text: str):
     except Exception as e:
         log.warning(f"TG error: {e}")
 
-# ================= Daily Stats (light mode) =================
+# ============ Daily Stats ============
 class DailyStats:
     def __init__(self, path=STATS_FILE):
         self.path = path
@@ -107,7 +92,6 @@ class DailyStats:
     def roll_if_new_day(self):
         today = datetime.now().strftime('%Y-%m-%d')
         if self.data.get('date') != today:
-            # send yesterday report then reset
             self.send_report(force=True)
             self.data = {'date': today, 'trades': [], 'pnl_usdt': 0.0}
             self._save()
@@ -155,7 +139,7 @@ class DailyStats:
 
 stats = DailyStats()
 
-# ================= Indicators / Nadaraya (precision) =================
+# ============ Indicators / Nadaraya ============
 def ema_series(values, n):
     n = int(n)
     if len(values) < n:
@@ -167,14 +151,12 @@ def ema_series(values, n):
     return e
 
 def nwe_non_repaint(closes, h, mult, win):
-    # precision Nadaraya-like with extra smoothing to mimic LuxAlgo's smoothing
     if len(closes) < win + 1:
         return None, None, None
     coefs = [math.exp(-(i ** 2) / (2 * h ** 2)) for i in range(win)]
     den = sum(coefs)
     weighted_sum = sum(closes[-1 - i] * coefs[i] for i in range(win))
     mid = weighted_sum / den
-    # small smoothing layer (simulate EMA smoothing)
     smooth_mid = (mid + statistics.fmean(closes[-3:])) / 2
     diffs = [abs(closes[-1 - i] - smooth_mid) for i in range(1, win + 1)]
     mae = (sum(diffs) / win) * mult
@@ -189,7 +171,7 @@ def trend_from_ema(closes):
         return "none", e50, e100
     return ("buy" if e50 > e100 else "sell"), e50, e100
 
-# ================= Exchange wrapper =================
+# ============ Exchange wrapper ============
 class BinanceFutures:
     def __init__(self):
         self.ex = None
@@ -305,7 +287,7 @@ class BinanceFutures:
             log.warning(f"reduce_only_close err: {e}")
             return False
 
-# ================= Data classes =================
+# ============ Data classes ============
 @dataclass
 class PositionState:
     side: str
@@ -316,13 +298,11 @@ class PositionState:
     tp_price: float
     sl_moved: bool = False
 
-# ================= Utility: normalize scale =================
+# ============ Utility: scale sync ============
 def normalize_closes_scale(closes):
-    # Ensure prices in realistic scale for BTC/USDT (~ > 10k). If too small, multiply by 10 until reasonable.
     if not closes:
         return closes
     maxv = max(closes)
-    # If maxv is less than 1000, multiply repeatedly (covers various scale problems)
     attempts = 0
     while maxv < 10000 and attempts < 5:
         closes = [c * 10 for c in closes]
@@ -330,7 +310,7 @@ def normalize_closes_scale(closes):
         attempts += 1
     return closes
 
-# ================= Main loop =================
+# ============ MAIN LOOP ============
 def run():
     ex = BinanceFutures()
     ex.setup()
@@ -346,18 +326,16 @@ def run():
 
     while True:
         try:
-            # daily roll
             stats.roll_if_new_day()
             stats.send_report(force=False)
 
             now = time.time()
-            # fetch OHLCV with caching
             try:
                 if ohlcv_cache is None or (now - last_ohlcv_fetch) > OHLCV_CACHE_SECONDS:
                     ohlcv_cache = ex.fetch_ohlcv(TIMEFRAME, NW_LOOKBACK + 5)
                     last_ohlcv_fetch = now
             except ccxt.base.errors.DDoSProtection:
-                log.warning("Rate limit / DDoSProtection when fetching OHLCV, sleep 10s")
+                log.warning("Rate limit when fetching OHLCV, sleep 10s")
                 time.sleep(10); continue
             except Exception as e:
                 log.warning(f"ohlcv fetch err: {e}")
@@ -366,28 +344,54 @@ def run():
             if not ohlcv_cache or len(ohlcv_cache) < NW_LOOKBACK + 2:
                 time.sleep(LOOP_SECONDS); continue
 
-            # use latest candle (touch mode)
+            # raw closes and raw ticker
             closes_raw = [float(c[4]) for c in ohlcv_cache]
-            # normalize scale if necessary
-            closes = normalize_closes_scale(closes_raw)
+            price_raw = ex.ticker_last()
+
+            # debug: show raw relationship
+            dlog(f"raw last_close={closes_raw[-1]:.6f} price_raw={price_raw:.6f}")
+
+            # prefer syncing scale by comparing last OHLCV close and ticker last
+            closes = list(closes_raw)  # copy
+            try:
+                if price_raw and closes_raw[-1] > 0:
+                    scale = price_raw / closes_raw[-1]
+                    # only apply scale if reasonable (avoid insane multiplicative error)
+                    if 0.1 < scale < 10:
+                        closes = [c * scale for c in closes_raw]
+                        dlog(f"Applied scale factor from ticker: {scale:.6f}")
+                    else:
+                        # fallback normalization if scale is weird
+                        closes = normalize_closes_scale(closes_raw)
+                        dlog("Scale factor unreasonable, used normalize_closes_scale()")
+                else:
+                    closes = normalize_closes_scale(closes_raw)
+                    dlog("No price_raw or last_close zero -> normalize_closes_scale() used")
+            except Exception as e:
+                closes = normalize_closes_scale(closes_raw)
+                dlog(f"Scale sync exception -> normalize_closes_scale(): {e}")
+
             last_close = closes[-1]
 
+            # compute bands
             bands_res = nwe_non_repaint(closes, NW_BANDWIDTH, NW_MULT, NW_LOOKBACK)
             if bands_res is None:
                 time.sleep(LOOP_SECONDS); continue
             upper, lower, mid = bands_res
 
+            # compute EMA trend on scaled closes
             trend, e50, e100 = trend_from_ema(closes)
-            price_now = ex.ticker_last()
+            price_now = price_raw  # use raw ticker (we already scaled closes to match price if possible)
             if price_now is None:
                 time.sleep(LOOP_SECONDS); continue
 
-            # debug logs
+            # debug logs showing both raw and scaled
             if e50 is not None and e100 is not None:
                 dlog(f"EMA50={e50:.2f}, EMA100={e100:.2f}, Trend={trend.upper()}")
             dlog(f"Close={last_close:.2f}, Upper={upper:.2f}, Lower={lower:.2f}, Mid={mid:.2f}")
+            dlog(f"Ticker price={price_now:.2f}")
 
-            # unlock sl_lock based on price touching mid (realtime)
+            # unlock sl lock if touched mid
             if sl_lock_active:
                 if last_sl_side == 'long' and price_now > mid:
                     sl_lock_active = False; last_sl_side = None
@@ -398,23 +402,20 @@ def run():
                 else:
                     time.sleep(LOOP_SECONDS); continue
 
-            # sync with exchange if there's a live pos but local pos_state is None
+            # sync existing exchange pos if any
             live_pos = ex.fetch_position()
             if live_pos and pos_state is None:
-                # best-effort sync
                 ps = PositionState(side=live_pos['side'], entry=live_pos['entry'], contracts=live_pos['contracts'],
-                                   entry_time=datetime.now(), sl_price=compute_sl(live_pos['entry'], live_pos['side']),
+                                   entry_time=datetime.now(), sl_price=(live_pos['entry'] - SL_POINTS if live_pos['side']=='long' else live_pos['entry'] + SL_POINTS),
                                    tp_price=(upper if live_pos['side']=='long' else lower))
                 pos_state = ps
                 sl_lock_active = False
                 last_sl_side = None
                 log.info("Synced existing position from exchange")
 
-            # if we have a position -> manage exits/SL-move/EMA flip
+            # manage position (SL/TP/SL-move/EMA flip)
             if pos_state:
-                # check SL (touch)
                 if pos_state.side == 'long' and price_now <= pos_state.sl_price:
-                    # close all
                     ex.reduce_only_close()
                     pnl = (price_now - pos_state.entry) * pos_state.contracts
                     stats.add_trade('long', pos_state.entry, price_now, pos_state.contracts, pnl, 'SL')
@@ -429,7 +430,6 @@ def run():
                     last_sl_side = 'short'; sl_lock_active = True; pos_state = None
                     time.sleep(LOOP_SECONDS); continue
 
-                # check TP (touch)
                 if pos_state.side == 'long' and price_now >= pos_state.tp_price:
                     ex.reduce_only_close()
                     pnl = (price_now - pos_state.entry) * pos_state.contracts
@@ -443,7 +443,6 @@ def run():
                     log.info(f"TP HIT SHORT entry={pos_state.entry:.2f} last={price_now:.2f} pnl={pnl:+.2f}")
                     pos_state = None; time.sleep(LOOP_SECONDS); continue
 
-                # move SL to breakeven+OFFSET when last closed crosses mid (no TG)
                 if not pos_state.sl_moved:
                     if pos_state.side == 'long' and last_close > mid:
                         pos_state.sl_price = pos_state.entry + BREAKEVEN_OFFSET
@@ -454,30 +453,25 @@ def run():
                         pos_state.sl_moved = True
                         log.info(f"Move SL to breakeven-{BREAKEVEN_OFFSET:.0f} -> {pos_state.sl_price:.2f}")
 
-                # EMA flip while in pos -> move TP to mid (keep SL)
-                if trend in ("buy","sell"):
-                    if (pos_state.side == 'long' and trend == 'sell') or (pos_state.side == 'short' and trend == 'buy'):
-                        old_tp = pos_state.tp_price
-                        pos_state.tp_price = mid
-                        log.info(f"EMA flip in-pos -> move TP {old_tp:.2f} -> mid {mid:.2f}")
+                if (pos_state.side == 'long' and trend == 'sell') or (pos_state.side == 'short' and trend == 'buy'):
+                    old_tp = pos_state.tp_price
+                    pos_state.tp_price = mid
+                    log.info(f"EMA flip in-pos -> move TP {old_tp:.2f} -> mid {mid:.2f}")
 
                 time.sleep(LOOP_SECONDS); continue
 
-            # No position -> look for entries (touch, using latest candle close)
+            # entries (touch using latest close)
             signal = None
             if trend == 'buy' and last_close <= lower and not sl_lock_active:
-                signal = 'long'
-                dlog("Entry condition met -> LONG (close <= lower)")
+                signal = 'long'; dlog("Entry -> LONG (close <= lower)")
             elif trend == 'sell' and last_close >= upper and not sl_lock_active:
-                signal = 'short'
-                dlog("Entry condition met -> SHORT (close >= upper)")
+                signal = 'short'; dlog("Entry -> SHORT (close >= upper)")
             else:
                 diff_up = upper - last_close
                 diff_lo = last_close - lower
                 dlog(f"No entry: sl_lock={sl_lock_active}, Δupper={diff_up:.1f}, Δlower={diff_lo:.1f}")
 
             if signal:
-                # double-check no live pos on exchange to avoid duplicate
                 if ex.fetch_position():
                     log.info("Exchange reports a position exists — skipping open")
                 else:
@@ -485,14 +479,15 @@ def run():
                     if pos:
                         tp_init = upper if signal == 'long' else lower
                         ps = PositionState(side=signal, entry=pos['entry'], contracts=pos['contracts'],
-                                           entry_time=datetime.now(), sl_price=compute_sl(pos['entry'], signal),
+                                           entry_time=datetime.now(),
+                                           sl_price=(pos['entry'] - SL_POINTS if signal=='long' else pos['entry'] + SL_POINTS),
                                            tp_price=tp_init)
                         pos_state = ps
                         log.info(f"OPEN {signal.upper()} entry={ps.entry:.2f} size={ps.contracts:.6f} SL={ps.sl_price:.2f} TP={ps.tp_price:.2f}")
                     else:
                         log.warning("Open market failed or not confirmed")
 
-            # periodic snapshot log
+            # periodic snapshot
             nowt = time.time()
             if nowt - last_snapshot > 60:
                 last_snapshot = nowt
@@ -506,7 +501,6 @@ def run():
         except Exception as e:
             log.exception(f"Main loop error: {e}")
             time.sleep(5)
-
 
 if __name__ == "__main__":
     run()
