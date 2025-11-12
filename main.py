@@ -42,11 +42,17 @@ logging.basicConfig(
 )
 
 # ========== LUXALGO NADARAYA-WATSON ==========
-def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0, win=499):
+def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
     n = len(closes)
-    if n < win:
+    if n < 2:
         return None, None, None
+
+    # ใช้ Gaussian สองด้านเหมือน LuxAlgo
+    win = int(h * 3)
+    if win < 5:
+        win = 5
     last_idx = n - 1
+
     sum_y, sum_w = 0.0, 0.0
     for j in range(max(0, last_idx - win), min(n, last_idx + win)):
         x = j - last_idx
@@ -54,8 +60,14 @@ def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0, win=499):
         sum_y += closes[j] * w
         sum_w += w
     mean = sum_y / sum_w
-    mae = sum(abs(closes[j] - mean) for j in range(max(0, last_idx - win), min(n, last_idx))) / win * mult
-    return mean + mae, mean - mae, mean
+
+    # คำนวณ mae เฉพาะช่วงสั้นรอบ ๆ แท่งสุดท้าย
+    local_closes = closes[-win:]
+    mae = sum(abs(c - mean) for c in local_closes) / len(local_closes) * mult
+
+    upper = mean + mae
+    lower = mean - mae
+    return upper, lower, mean
 
 def get_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
