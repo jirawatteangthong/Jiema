@@ -17,14 +17,14 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # ========== CONFIG ==========
 SYMBOL = "BTC/USDT:USDT"
 TIMEFRAME = "15m"           # ตัวอย่าง: "15m", "1h"
-LEVERAGE = 15
-POSITION_MARGIN_FRACTION = 0.80
+LEVERAGE = 12
+POSITION_MARGIN_FRACTION = 0.60
 
 SL_DISTANCE = 300           # SL จาก entry (USD)
 BE_OFFSET = 100             # ระยะ SL กันทุน (USD)
 NW_H = 8.0
 NW_MULT = 3.0
-NW_FACTOR = 1.50           # ความกว้าง band ให้ตรง LuxAlgo
+NW_FACTOR = 1.48           # ความกว้าง band ให้ตรง LuxAlgo
 UPDATE_FRACTION = 0.5       # อัปเดต band ทุกครึ่ง TF
 CHECK_INTERVAL = 10         # เช็กสัญญาณทุก 10 วินาที
 DAILY_HOUR = 23             # ส่งรายงานเวลา 23:00
