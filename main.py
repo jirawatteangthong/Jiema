@@ -17,7 +17,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # ========== CONFIG ==========
 SYMBOL = "BTC/USDT:USDT"
 TIMEFRAME = "15m"           # ตัวอย่าง: "15m", "1h"
-LEVERAGE = 12
+LEVERAGE = 15
 POSITION_MARGIN_FRACTION = 0.60
 
 SL_DISTANCE = 300           # SL จาก entry (USD)
