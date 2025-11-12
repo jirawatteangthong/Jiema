@@ -69,7 +69,7 @@ def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
     # mae = ta.sma(abs(src - out), win_s)
     win_s = max(5, int(h * 2))
     diffs = [abs(closes[-i] - out_series[-i]) for i in range(1, min(len(out_series), win_s) + 1)]
-    mae = (sum(diffs) / len(diffs)) * mult
+    mae = (sum(diffs) / len(diffs)) * mult * 1.08
 
     upper = mean + mae
     lower = mean - mae
