@@ -44,31 +44,25 @@ logging.basicConfig(
 # ========== LUXALGO NADARAYA-WATSON ==========
 def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
     n = len(closes)
-    if n < 2:
+    if n < 10:
         return None, None, None
 
-    # ใช้ Gaussian สองด้านเหมือน LuxAlgo
-    win = int(h * 3)
-    if win < 5:
-        win = 5
-    last_idx = n - 1
+    win = int(h * 60)  # ใช้ช่วงคำนวณยาวขึ้น เหมือน TradingView smoothing
+    if win > n:
+        win = n
 
-    sum_y, sum_w = 0.0, 0.0
-    for j in range(max(0, last_idx - win), min(n, last_idx + win)):
-        x = j - last_idx
-        w = math.exp(-(x ** 2) / (2 * (h ** 2)))
-        sum_y += closes[j] * w
-        sum_w += w
-    mean = sum_y / sum_w
+    # Gaussian weight แบบ LuxAlgo (ถ่วงน้ำหนักจากอดีต)
+    weights = [math.exp(-(i ** 2) / (2 * (h ** 2))) for i in range(win)]
+    sum_w = sum(weights)
+    mean = sum(closes[-i - 1] * weights[i] for i in range(win)) / sum_w
 
-    # คำนวณ mae เฉพาะช่วงสั้นรอบ ๆ แท่งสุดท้าย
-    local_closes = closes[-win:]
-    mae = sum(abs(c - mean) for c in local_closes) / len(local_closes) * mult
+    # คำนวณ mae แบบ normalized
+    mae = sum(abs(closes[-i - 1] - mean) for i in range(win)) / win * mult
 
     upper = mean + mae
     lower = mean - mae
     return upper, lower, mean
-
+    
 def get_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
