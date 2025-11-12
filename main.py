@@ -19,15 +19,13 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'YOUR_CHAT_ID')
 SYMBOL = "BTC/USDT:USDT"
 TIMEFRAME = "15m"
 LEVERAGE = 15
-POSITION_MARGIN_FRACTION = 0.80  # ใช้ 80% ของ Free USDT เป็น margin
+POSITION_MARGIN_FRACTION = 0.80
 CHECK_INTERVAL = 10  # วินาที
 
 # Nadaraya-Watson Envelope (LuxAlgo)
 NW_H = 8.0
 NW_MULT = 3.0
 NW_WIN = 499
-
-# Daily Report
 REPORT_HOUR = 23
 
 # ========== SETUP ==========
@@ -43,16 +41,21 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# ========== HELPERS ==========
-def nwe_luxalgo_exact(closes, h=8.0, mult=3.0, win=499):
-    if len(closes) < win:
+# ========== LUXALGO NADARAYA-WATSON ==========
+def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0, win=499):
+    n = len(closes)
+    if n < win:
         return None, None, None
-    weights = [math.exp(-(i ** 2) / (2 * h ** 2)) for i in range(win)]
-    den = sum(weights)
-    out = sum(closes[-1 - i] * weights[i] for i in range(win)) / den
-    mae_vals = [abs(closes[-1 - i] - out) for i in range(win)]
-    mae = sum(mae_vals) / len(mae_vals) * mult
-    return out + mae, out - mae, out
+    last_idx = n - 1
+    sum_y, sum_w = 0.0, 0.0
+    for j in range(max(0, last_idx - win), min(n, last_idx + win)):
+        x = j - last_idx
+        w = math.exp(-(x ** 2) / (2 * (h ** 2)))
+        sum_y += closes[j] * w
+        sum_w += w
+    mean = sum_y / sum_w
+    mae = sum(abs(closes[j] - mean) for j in range(max(0, last_idx - win), min(n, last_idx))) / win * mult
+    return mean + mae, mean - mae, mean
 
 def get_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
@@ -69,8 +72,7 @@ def fetch_candles(symbol, timeframe):
 def get_free_usdt():
     try:
         bal = exchange.fetch_balance({'type': 'future'})
-        v = (bal.get('USDT') or {}).get('free')
-        return float(v) if v else 0.0
+        return float(bal['USDT']['free'])
     except:
         return 0.0
 
@@ -83,7 +85,7 @@ def send_telegram(msg):
     except:
         pass
 
-# ========== ORDER FUNCTIONS ==========
+# ========== ORDER SYSTEM ==========
 def calc_order_size(price):
     free = get_free_usdt()
     margin = free * POSITION_MARGIN_FRACTION
@@ -124,7 +126,7 @@ def close_position(reason=""):
 
 # ========== MAIN LOOP ==========
 def main():
-    logging.info("✅ Started Binance Futures NW Bot (Touch Mode, Margin 80%)")
+    logging.info("✅ Started Binance Futures NW Bot (LuxAlgo Repaint Mode, 80% Margin)")
     sl_lock = False
     pos_state = None
     last_report_date = None
@@ -139,12 +141,12 @@ def main():
         ema50 = get_ema(df["close"], 50).iloc[-1]
         ema100 = get_ema(df["close"], 100).iloc[-1]
         close = closes[-1]
-        upper, lower, mid = nwe_luxalgo_exact(closes, NW_H, NW_MULT, NW_WIN)
+        upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT, NW_WIN)
         trend = "BUY" if ema50 > ema100 else "SELL"
 
         logging.info(f"[DEBUG] Close={close:.2f}, Upper={upper:.2f}, Lower={lower:.2f}, Mid={mid:.2f}, Trend={trend}")
 
-        # ---------- Unlock from SL Lock ----------
+        # ---------- Unlock SL Lock ----------
         if sl_lock:
             if (trend == "BUY" and close > mid) or (trend == "SELL" and close < mid):
                 sl_lock = False
