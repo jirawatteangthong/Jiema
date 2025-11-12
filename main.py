@@ -70,10 +70,6 @@ stats=DailyStats()
 
 # ========== LUXALGO NWE ==========
 def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
-    """
-    ✅ LuxAlgo Nadaraya-Watson Envelope (Repaint Mode Clone)
-    ตรงกับ TradingView ±0.02%
-    """
     n=len(closes)
     if n<100: return None, None, None
     win=min(499,n-1)
@@ -88,10 +84,10 @@ def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
     win_s=int(h*10)
     if win_s>len(out_series): win_s=len(out_series)
     diffs=[abs(closes[-i]-out_series[-i]) for i in range(1,win_s+1)]
-    mae=(sum(diffs)/len(diffs))*mult*1.10
+    mae=(sum(diffs)/len(diffs))*mult*1.45  # ✅ ปรับ calibration กว้างขึ้น
     upper=mean+mae;lower=mean-mae
     return upper,lower,mean
-
+  
 # ========== EXCHANGE ==========
 def setup_exchange():
     ex=ccxt.binance({
