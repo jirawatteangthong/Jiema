@@ -43,25 +43,29 @@ logging.basicConfig(
 
 # ========== LUXALGO NADARAYA-WATSON ==========
 def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0):
+    """
+    Nadaraya-Watson Envelope (LuxAlgo Clone)
+    Repaint-like mode: ใช้อนาคต (non-symmetric Gaussian) และใช้ mae smoothing สั้น
+    """
     n = len(closes)
-    if n < 10:
+    if n < 100:
         return None, None, None
 
-    win = int(h * 60)  # ใช้ช่วงคำนวณยาวขึ้น เหมือน TradingView smoothing
-    if win > n:
-        win = n
+    win = 499 if n >= 500 else n - 1
 
-    # Gaussian weight แบบ LuxAlgo (ถ่วงน้ำหนักจากอดีต)
-    weights = [math.exp(-(i ** 2) / (2 * (h ** 2))) for i in range(win)]
-    sum_w = sum(weights)
-    mean = sum(closes[-i - 1] * weights[i] for i in range(win)) / sum_w
+    # Step 1: Gaussian smoothing (ใช้ทิศทางเดียว เหมือน Pine)
+    coefs = [math.exp(-(i ** 2) / (2 * (h ** 2))) for i in range(win)]
+    den = sum(coefs)
+    out = sum(closes[-i - 1] * coefs[i] for i in range(win)) / den
 
-    # คำนวณ mae แบบ normalized
-    mae = sum(abs(closes[-i - 1] - mean) for i in range(win)) / win * mult
+    # Step 2: mae แบบ ta.sma(abs(src - out), win_s)
+    win_s = max(5, int(h * 5))  # smoothing window สั้นลง
+    diffs = [abs(c - out) for c in closes[-win_s:]]
+    mae = (sum(diffs) / len(diffs)) * mult
 
-    upper = mean + mae
-    lower = mean - mae
-    return upper, lower, mean
+    upper = out + mae
+    lower = out - mae
+    return upper, lower, out
     
 def get_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
