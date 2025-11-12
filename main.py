@@ -153,7 +153,7 @@ def main():
         ema50 = get_ema(df["close"], 50).iloc[-1]
         ema100 = get_ema(df["close"], 100).iloc[-1]
         close = closes[-1]
-        upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT, NW_WIN)
+        upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT)
         trend = "BUY" if ema50 > ema100 else "SELL"
 
         logging.info(f"[DEBUG] Close={close:.2f}, Upper={upper:.2f}, Lower={lower:.2f}, Mid={mid:.2f}, Trend={trend}")
