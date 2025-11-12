@@ -24,7 +24,7 @@ SL_DISTANCE = 300          # SL จาก entry (USD)
 BE_OFFSET = 100            # ระยะ SL กันทุน (USD)
 NW_H = 8.0
 NW_MULT = 3.0
-NW_FACTOR = 1.49           # ขยาย band LuxAlgo (1.45-1.55 ตรงที่สุด)
+NW_FACTOR = 1.50          # ขยาย band LuxAlgo (1.45-1.55 ตรงที่สุด)
 CHECK_INTERVAL = 10        # เช็กทุก 10 วินาที
 
 # ========== LOG ==========
