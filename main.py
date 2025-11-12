@@ -19,7 +19,7 @@ SYMBOL = "BTC/USDT:USDT"
 TIMEFRAME = "15m"          # ตั้ง TF เช่น "15m" "1h"
 LEVERAGE = 15
 POSITION_MARGIN_FRACTION = 0.80
-
+UPDATE_FRACTION = 0.5   # คำนวณ NW band ทุกครึ่ง TF
 SL_DISTANCE = 300          # SL จาก entry (USD)
 BE_OFFSET = 100            # ระยะ SL กันทุน (USD)
 NW_H = 8.0
@@ -54,7 +54,23 @@ def report_daily(stats):
             msg.append(f"{t['side']} | {t['entry']:.2f}→{t['exit']:.2f} | {t['pnl']:+.2f} ({t['reason']})")
         tg_send("\n".join(msg))
         open(STATS_FILE, "w").write(json.dumps([]))
+# ========== Determine NW update timing ==========
+tf_minutes = 1
+if "m" in TIMEFRAME:
+    tf_minutes = int(TIMEFRAME.replace("m",""))
+elif "h" in TIMEFRAME:
+    tf_minutes = int(TIMEFRAME.replace("h","")) * 60
 
+tf_seconds = tf_minutes * 60
+now_ts = time.time()
+
+# ถ้ายังไม่ถึงเวลาครึ่ง TF -> ใช้ค่าก่อนหน้า
+if now_ts - last_nw_update < tf_seconds * UPDATE_FRACTION and all(x is not None for x in [upper, lower, mid]):
+    log.info(f"[DEBUG] Using previous NW band (frozen half TF)")
+else:
+    upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT, NW_FACTOR)
+    last_nw_update = now_ts
+    
 # ========== LUXALGO NADARAYA-WATSON ==========
 def nwe_luxalgo_repaint(closes, h=8.0, mult=3.0, factor=1.5):
     n = len(closes)
@@ -106,12 +122,14 @@ def calc_order_size(ex, price):
 
 # ========== MAIN LOOP ==========
 def main():
+    last_nw_update = 0
+    upper = lower = mid = None
     ex = setup_exchange()
     log.info(f"✅ Started Binance Futures LuxAlgo Bot ({TIMEFRAME}, repaint mode)")
     sl_lock = False
     position = None
     stats = json.load(open(STATS_FILE)) if os.path.exists(STATS_FILE) else []
-
+    
     while True:
         try:
             # ดึงข้อมูลล่าสุดตาม TF จริง
