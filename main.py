@@ -118,23 +118,25 @@ def main():
             # -------- ดึงข้อมูล --------
             ohlcv = ex.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=600)
             df = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","vol"])
-            closes = df["close"].iloc[:-1].tolist()  # ใช้เฉพาะแท่งปิด
-            upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT, 1.55)
+            closes = df["close"].iloc[:-1].tolist()  # ใช้แท่งปิดเท่านั้น
+            close = df["close"].iloc[-1]             # ✅ กำหนดค่าก่อนใช้ทุกครั้ง
 
             # -------- กำหนดเวลาอัปเดต NW band --------
-            tf_minutes=1
-            if "m" in TIMEFRAME: tf_minutes=int(TIMEFRAME.replace("m",""))
-            elif "h" in TIMEFRAME: tf_minutes=int(TIMEFRAME.replace("h",""))*60
-            tf_seconds=tf_minutes*60
-            now_ts=time.time()
+            tf_minutes = 1
+            if "m" in TIMEFRAME:
+                tf_minutes = int(TIMEFRAME.replace("m", ""))
+            elif "h" in TIMEFRAME:
+                tf_minutes = int(TIMEFRAME.replace("h", "")) * 60
+            tf_seconds = tf_minutes * 60
+            now_ts = time.time()
 
-            if now_ts-last_nw_update<tf_seconds*UPDATE_FRACTION and all(x is not None for x in [upper,lower,mid]):
+            if now_ts - last_nw_update < tf_seconds * UPDATE_FRACTION and all(x is not None for x in [upper, lower, mid]):
                 log.info("[DEBUG] Using previous NW band (frozen half TF)")
             else:
-                upper,lower,mid=nwe_luxalgo_repaint(closes,NW_H,NW_MULT,NW_FACTOR)
-                last_nw_update=now_ts
+                upper, lower, mid = nwe_luxalgo_repaint(closes, NW_H, NW_MULT, NW_FACTOR)
+                last_nw_update = now_ts
                 log.info("[DEBUG] Recalculated NW band (half TF update)")
-
+    
             if None in (upper,lower,mid):
                 time.sleep(CHECK_INTERVAL); continue
 
