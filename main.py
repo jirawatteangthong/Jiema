@@ -26,7 +26,7 @@ EMA_SLOW = 100
 
 NW_BANDWIDTH = 8.0
 NW_MULT = 3.0
-NW_FACTOR = 1.60
+NW_FACTOR = 1.50
 UPDATE_FRACTION = 0.50               # freeze NW ครึ่ง TF
 
 SL_DISTANCE = 599
