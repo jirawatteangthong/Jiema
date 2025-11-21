@@ -29,7 +29,7 @@ NW_MULT = 3.0                            # ค่า mult ของ MAE baseline
 NW_FACTOR = 1.5                          # ตัวคูณปรับความกว้างเพิ่มเติม (คุณปรับแล้วตรง)
 UPDATE_FRACTION = 0.50                   # คำนวณ NW band ทุก 50% ของ TF (half-TF freeze)
 
-SL_DISTANCE = 599                        # SL คงที่จาก entry (แต้ม/ดอลลาร์)
+SL_DISTANCE = 2000                        # SL คงที่จาก entry (แต้ม/ดอลลาร์)
 USE_BREAKEVEN = True                     # เปิดระบบกันทุน (True/False)
 BREAKEVEN_OFFSET = 100                   # SL กันทุน +100 จาก entry
 
