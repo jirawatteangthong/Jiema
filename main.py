@@ -26,7 +26,7 @@ EMA_SLOW = 100                           # EMA ช้า
 
 NW_BANDWIDTH = 8.0                       # ค่า h ของ Gaussian (LuxAlgo ใช้ 8)
 NW_MULT = 3.0                            # ค่า mult ของ MAE baseline
-NW_FACTOR = 1.5                          # ตัวคูณปรับความกว้างเพิ่มเติม (คุณปรับแล้วตรง)
+NW_FACTOR = 1.8                          # ตัวคูณปรับความกว้างเพิ่มเติม (คุณปรับแล้วตรง)
 UPDATE_FRACTION = 0.50                   # คำนวณ NW band ทุก 50% ของ TF (half-TF freeze)
 
 SL_DISTANCE = 2000                       # SL คงที่จาก entry (แต้ม/ดอลลาร์)
