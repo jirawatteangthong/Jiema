@@ -29,7 +29,9 @@ NW_MULT = 3.0                            # ค่า mult ของ MAE baseline
 NW_FACTOR = 1.5                          # ตัวคูณปรับความกว้างเพิ่มเติม (คุณปรับแล้วตรง)
 UPDATE_FRACTION = 0.50                   # คำนวณ NW band ทุก 50% ของ TF (half-TF freeze)
 
-SL_DISTANCE = 2000                        # SL คงที่จาก entry (แต้ม/ดอลลาร์)
+SL_DISTANCE = 2000                       # SL คงที่จาก entry (แต้ม/ดอลลาร์)
+TP_OFFSET = 100                          # ระยะห่างก่อนถึง upper/lower ที่จะปิดทำกำไร (LONG: upper-TP_OFFSET, SHORT: lower+TP_OFFSET)
+
 USE_BREAKEVEN = True                     # เปิดระบบกันทุน (True/False)
 BREAKEVEN_OFFSET = 100                   # SL กันทุน +100 จาก entry
 
@@ -238,16 +240,19 @@ def try_send_daily_report(stats):
         return
 
     total_pnl = stats["pnl"]
+    trades = stats["trades"]
+    tp_count = sum(1 for t in trades if str(t.get("reason","")).upper().startswith("TP"))
+    sl_count = sum(1 for t in trades if t.get("reason") == "SL")
+    be_count = sum(1 for t in trades if t.get("reason") == "BE")
+
     lines = [
         f"📊 สรุปผลรายวัน {stats['date']}",
-        f"Σ PnL: {total_pnl:+.2f} USDT",
-        "────────────"
+        f"TP : {tp_count} ครั้ง",
+        f"SL : {sl_count} ครั้ง",
+        f"BE : {be_count} ครั้ง",
+        "────────────",
+        f"Σ PnL: {total_pnl:+.2f} USDT"
     ]
-    for t in stats["trades"][-15:]:
-        lines.append(
-            f"{t['time']} | {t['side']} | {t['entry']:.2f}→{t['exit']:.2f} | "
-            f"{t['pnl']:+.2f} ({t['reason']})"
-        )
     tg("\n".join(lines))
     mark_sent_today()
     log.info("📨 Daily report sent.")
@@ -342,41 +347,43 @@ def main():
                 entry = position["entry"]
                 sl = position["sl"]
 
-                # SL Touch
+                # SL Touch (แยก reason SL / BE)
                 if side=="long" and last_price <= sl:
                     pnl = (last_price-entry)*amt
                     stats["pnl"] += pnl
+                    reason = "BE" if (USE_BREAKEVEN and sl >= entry + BREAKEVEN_OFFSET) else "SL"
                     stats["trades"].append({
                         "time": datetime.now().strftime("%H:%M:%S"),
                         "side": "LONG",
                         "entry": entry,
                         "exit": last_price,
                         "pnl": pnl,
-                        "reason": "SL"
+                        "reason": reason
                     })
                     ex.create_market_order(SYMBOL,"sell",amt,params={"reduceOnly":True})
-                    tg(f"🔴 LONG SL {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                    tg(f"💡 LONG {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
                     position=None; sl_lock=True
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
                 if side=="short" and last_price >= sl:
                     pnl = (entry-last_price)*amt
                     stats["pnl"] += pnl
+                    reason = "BE" if (USE_BREAKEVEN and sl <= entry - BREAKEVEN_OFFSET) else "SL"
                     stats["trades"].append({
                         "time": datetime.now().strftime("%H:%M:%S"),
                         "side": "SHORT",
                         "entry": entry,
                         "exit": last_price,
                         "pnl": pnl,
-                        "reason": "SL"
+                        "reason": reason
                     })
                     ex.create_market_order(SYMBOL,"buy",amt,params={"reduceOnly":True})
-                    tg(f"🔴 SHORT SL {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                    tg(f"💡 SHORT {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
                     position=None; sl_lock=True
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                # TP จาก Upper/Lower
-                if side=="long" and last_price >= upper:
+                # TP จาก Upper/Lower (เข้าเป้าก่อนถึง band ตาม TP_OFFSET)
+                if side=="long" and last_price >= upper - TP_OFFSET:
                     pnl = (last_price-entry)*amt
                     stats["pnl"] += pnl
                     stats["trades"].append({
@@ -388,11 +395,11 @@ def main():
                         "reason": "TP_upper"
                     })
                     ex.create_market_order(SYMBOL,"sell",amt,params={"reduceOnly":True})
-                    tg(f"✅ LONG TP Upper @ {last_price:.2f} PnL={pnl:+.2f}")
+                    tg(f"✅ LONG TP Upper-Offset @ {last_price:.2f} PnL={pnl:+.2f}")
                     position=None
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                if side=="short" and last_price <= lower:
+                if side=="short" and last_price <= lower + TP_OFFSET:
                     pnl = (entry-last_price)*amt
                     stats["pnl"] += pnl
                     stats["trades"].append({
@@ -404,7 +411,7 @@ def main():
                         "reason": "TP_lower"
                     })
                     ex.create_market_order(SYMBOL,"buy",amt,params={"reduceOnly":True})
-                    tg(f"✅ SHORT TP Lower @ {last_price:.2f} PnL={pnl:+.2f}")
+                    tg(f"✅ SHORT TP Lower-Offset @ {last_price:.2f} PnL={pnl:+.2f}")
                     position=None
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
@@ -445,7 +452,7 @@ def main():
                         position=None
                         save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                # Breakeven / Trailing
+                # Breakeven / Trailing (ใช้แบบโค้ดเดิม)
                 if USE_BREAKEVEN and not sl_lock:
                     if side=="long" and last_close > mid and position["sl"] < entry + BREAKEVEN_OFFSET:
                         position["sl"] = entry + BREAKEVEN_OFFSET
