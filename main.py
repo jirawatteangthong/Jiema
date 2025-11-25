@@ -1,52 +1,53 @@
 # -*- coding: utf-8 -*-
-# Binance Futures – NW Envelope + MACD Confirm (TF ย่อย)
-# พร้อมระบบ SL Lock, Breakeven, Daily Report แบบย่อ, NW Freeze Half TF
-# EMA Trend ใช้เป็นตัวเลือกเปิด/ปิดได้
+# Binance Futures – EMA50/100 + Nadaraya-Watson Envelope + MACD Confirm (TF ย่อย)
+# ปรับเพิ่ม: TP buffer, BE via MACD (ทดลอง), EMA on/off, daily summary counts (TP/SL/BE)
 
 import ccxt, time, json, math, logging, os, requests
 from datetime import datetime
 
 # ============================================================
-# CONFIG (ปรับได้ทุกค่า พร้อมคำอธิบายท้ายบรรทัด)
+# CONFIG (ปรับค่าได้)
 # ============================================================
+API_KEY = os.getenv("BINANCE_API_KEY", "YOUR_BINANCE_API_KEY")
+SECRET  = os.getenv("BINANCE_SECRET",    "YOUR_BINANCE_SECRET")
 
-API_KEY = os.getenv("BINANCE_API_KEY", "YOUR_BINANCE_API_KEY")     # API Binance Futures
-SECRET  = os.getenv("BINANCE_SECRET",    "YOUR_BINANCE_SECRET")    # Secret Binance
+SYMBOL = "BTC/USDT:USDT"
+TIMEFRAME = "15m"
+MACD_TF = "5m"               # TF ย่อย สำหรับ confirm entry และ (option) BE check
+MACD_ENABLED = True
+USE_REPAINT = True
 
-SYMBOL = "BTC/USDT:USDT"                 # คู่เทรด Futures
-TIMEFRAME = "15m"                        # TF หลักของ Nadaraya (เช่น 5m, 15m, 1h)
-MACD_TF = "5m"                           # TF ย่อยใช้ MACD confirm (เช่น 1m/3m/5m)
-MACD_ENABLED = True                      # เปิดปิดการใช้ MACD confirm (True/False)
-USE_REPAINT = True                       # เผื่อแยกโหมดในอนาคต
+LEVERAGE = 15
+POSITION_MARGIN_FRACTION = 0.65
 
-LEVERAGE = 15                            # เลเวอเรจ
-POSITION_MARGIN_FRACTION = 0.65          # % Margin ต่อไม้ (0.65 = ใช้ 65% ของ free USDT ต่อไม้)
+EMA_FAST = 50
+EMA_SLOW = 100
+EMA_ENABLED = False          # A ปิด (ตามที่สั่ง) — ถ้า False จะใช้ last_close vs mid เพื่อกำหนด trend
 
-# ----- EMA Trend Filter (เปิด/ปิดได้) -----
-USE_EMA_TREND = False                    # False = ไม่ใช้ EMA filter, Long/Short ตาม lower/upper + MACD
-EMA_FAST = 50                            # EMA เร็ว
-EMA_SLOW = 100                           # EMA ช้า
+NW_BANDWIDTH = 8.0
+NW_MULT = 3.0
+NW_FACTOR = 1.5
+UPDATE_FRACTION = 0.50
 
-# ----- Nadaraya-Watson -----
-NW_BANDWIDTH = 8.0                       # ค่า h ของ Gaussian (LuxAlgo ใช้ 8)
-NW_MULT = 3.0                            # ค่า mult ของ MAE baseline
-NW_FACTOR = 1.5                          # ตัวคูณปรับความกว้างเพิ่มเติม
-UPDATE_FRACTION = 0.50                   # คำนวณ NW band ทุก 50% ของ TF (half-TF freeze)
+SL_DISTANCE = 2000
 
-# ----- SL / TP / BE -----
-SL_DISTANCE = 2000                       # SL คงที่จาก entry (แต้ม/ดอลลาร์)
-TP_OFFSET = 100.0                        # ระยะ “ก่อนถึง” upper/lower สำหรับปิด TP (เช่น 100 เหรียญ)
-USE_BREAKEVEN = True                     # เปิดระบบกันทุน (True/False)
-BREAKEVEN_OFFSET = 100                   # SL กันทุน = entry ± OFFSET (กำไรเล็กน้อย)
+# Breakeven settings
+USE_BREAKEVEN = True
+BREAKEVEN_OFFSET = 100
+BREAKEVEN_USE_MACD = True   # ถ้า True จะใช้ MACD (MACD_TF) ตามข้อทดลองที่ขอ (ปิดได้)
+MACD_FOR_BREAKEVEN_TF = "5m"  # TF ที่ใช้สำหรับตัด BE แบบ MACD (ตามที่ขอทดลอง)
 
-# Daily report (ครั้งเดียว/วัน)
-DAILY_REPORT_HH = 23                     # ชั่วโมงที่จะส่งรายงาน
-DAILY_REPORT_MM = 59                     # นาทีที่จะส่งรายงาน
-STATS_FILE = "daily_pnl.json"            # เก็บสถิติรายวัน
-REPORT_SENT_FILE = "daily_report_sent.txt"  # flag ใช้เช็กว่าส่งรายงานวันนี้ไปแล้วหรือยัง
+# TP buffer: ปิดก่อนถึง upper/lower เท่าไร (ค่าที่ขอ: 100)
+TP_BUFFER = 100
 
-LOOP_SEC = 10                            # Loop เช็คราคา/SL/TP ทุก 10 วินาที
-LOG_LEVEL = logging.INFO                 # DEBUG/INFO/WARNING
+# Daily report (ครั้งเดียว/วัน) — สรุปเฉพาะ Count TP/SL/BE และ PnL
+DAILY_REPORT_HH = 23
+DAILY_REPORT_MM = 59
+STATS_FILE = "daily_pnl.json"
+REPORT_SENT_FILE = "daily_report_sent.txt"
+
+LOOP_SEC = 10
+LOG_LEVEL = logging.INFO
 
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "YOUR_TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID")
@@ -62,7 +63,7 @@ logging.basicConfig(
 log = logging.getLogger("main")
 
 # ============================================================
-# Telegram
+# Telegram helper
 # ============================================================
 def tg(msg):
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN.startswith("YOUR"):
@@ -104,12 +105,7 @@ def ema(series, period):
         e = v * k + e * (1 - k)
     return e
 
-# ---------- Nadaraya-Watson (LuxAlgo Style Repaint-ish) ----------
 def nwe_luxalgo_repaint(closes, h=NW_BANDWIDTH, mult=NW_MULT, factor=NW_FACTOR):
-    """
-    ใช้ closes (list ของราคาปิด TF หลัก)
-    คืนค่า (upper, lower, mid)
-    """
     n = len(closes)
     if n < 200:
         return None, None, None
@@ -118,11 +114,9 @@ def nwe_luxalgo_repaint(closes, h=NW_BANDWIDTH, mult=NW_MULT, factor=NW_FACTOR):
     coefs = [math.exp(-(i * i) / (2 * (h ** 2))) for i in range(win)]
     den = sum(coefs)
 
-    # endpoint mean (ใช้แท่งล่าสุด)
     num = sum(closes[-1 - j] * coefs[j] for j in range(win))
     mean = num / den
 
-    # MAE แบบ dynamic (simple version)
     win_s = int(h * 10)
     win_s = min(win_s, win - 1)
 
@@ -131,12 +125,10 @@ def nwe_luxalgo_repaint(closes, h=NW_BANDWIDTH, mult=NW_MULT, factor=NW_FACTOR):
 
     return mean + mae, mean - mae, mean
 
-# ---------- MACD ----------
 def macd(closes, fast=12, slow=26, signal=9):
     if len(closes) < slow + signal + 5:
         return None
 
-    # fast EMA
     kf = 2 / (fast + 1)
     e = sum(closes[:fast]) / fast
     ef = [None]*(fast-1) + [e]
@@ -144,7 +136,6 @@ def macd(closes, fast=12, slow=26, signal=9):
         e = v*kf + e*(1-kf)
         ef.append(e)
 
-    # slow EMA
     ks = 2 / (slow + 1)
     e = sum(closes[:slow]) / slow
     es = [None]*(slow-1) + [e]
@@ -172,10 +163,10 @@ def macd(closes, fast=12, slow=26, signal=9):
 
     return dif_clean[-2], dif_clean[-1], dea[-2], dea[-1]
 
-def macd_up(dp,dn,ep,en):   # ตัดขึ้น
+def macd_up(dp,dn,ep,en):
     return dp <= ep and dn > en
 
-def macd_down(dp,dn,ep,en): # ตัดลง
+def macd_down(dp,dn,ep,en):
     return dp >= ep and dn < en
 
 # ============================================================
@@ -196,7 +187,7 @@ def order_size(ex, price):
         return round(qty, 3)
 
 # ============================================================
-# Daily Stats & Report (one time per day)
+# Daily Stats & Report (counts)
 # ============================================================
 def load_stats():
     if os.path.exists(STATS_FILE):
@@ -207,7 +198,8 @@ def load_stats():
     return {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "pnl": 0.0,
-        "trades": []   # list of dict: {time, side, entry, exit, pnl, reason}
+        "trades": [],
+        "counts": {"tp": 0, "sl": 0, "be": 0}
     }
 
 def save_stats(s):
@@ -225,12 +217,11 @@ def mark_sent_today():
 def reset_report_if_new_day(stats):
     today = datetime.now().strftime("%Y-%m-%d")
     if stats.get("date") != today:
-        # reset สถิติใหม่
         stats["date"] = today
         stats["pnl"] = 0.0
         stats["trades"] = []
+        stats["counts"] = {"tp": 0, "sl": 0, "be": 0}
         save_stats(stats)
-        # ล้าง flag ส่งรายงาน
         open(REPORT_SENT_FILE,"w").write("")
 
 def try_send_daily_report(stats):
@@ -239,25 +230,11 @@ def try_send_daily_report(stats):
         return
     if has_sent_today():
         return
-
-    # ถ้ายังไม่มีเทรดเลยในวันนั้น ส่งแค่บอกว่าไม่มี แล้ว mark เลย
-    if not stats["trades"]:
-        tg(f"📊 สรุปผลรายวัน {stats['date']}\nวันนี้ไม่มีออเดอร์")
-        mark_sent_today()
-        return
-
-    total_pnl = stats["pnl"]
-    tp_count = sum(1 for t in stats["trades"] if str(t.get("reason","")).startswith("TP"))
-    sl_count = sum(1 for t in stats["trades"] if t.get("reason") == "SL")
-    be_count = sum(1 for t in stats["trades"] if t.get("reason") == "BE")
-
+    # only summary counts + pnl
     lines = [
         f"📊 สรุปผลรายวัน {stats['date']}",
-        f"TP  : {tp_count} ครั้ง",
-        f"SL  : {sl_count} ครั้ง",
-        f"BE  : {be_count} ครั้ง",
-        "────────────",
-        f"รวมผลลัพธ์: {total_pnl:+.2f} USDT"
+        f"Σ PnL: {stats['pnl']:+.2f} USDT",
+        f"TP: {stats['counts'].get('tp',0)} | SL: {stats['counts'].get('sl',0)} | BE: {stats['counts'].get('be',0)}",
     ]
     tg("\n".join(lines))
     mark_sent_today()
@@ -268,13 +245,12 @@ def try_send_daily_report(stats):
 # ============================================================
 def main():
     ex = setup_exchange()
-    log.info(f"✅ Started Binance Futures NW Bot ({TIMEFRAME}, MACD={MACD_TF}, NW Freeze={UPDATE_FRACTION}, USE_EMA_TREND={USE_EMA_TREND})")
+    log.info(f"✅ Started Binance Futures NW Bot ({TIMEFRAME}, MACD={MACD_TF}, NW Freeze={UPDATE_FRACTION})")
 
     stats = load_stats()
 
-    position = None          # {"side","qty","entry","sl"}
+    position = None          # {"side","qty","entry","sl","be_active":False}
     sl_lock = False
-    sl_lock_ref = None       # บันทึกว่า ตอนโดน SL ราคาอยู่เหนือ/ใต้ mid
     pending = None           # {"side","touch_price","lower","upper","mid","ts"}
 
     last_nw_update = 0
@@ -285,23 +261,18 @@ def main():
             reset_report_if_new_day(stats)
             try_send_daily_report(stats)
 
-            # ---------- ข้อมูล TF หลัก ----------
+            # ---------- TF หลัก ----------
             candles = ex.fetch_ohlcv(SYMBOL, TIMEFRAME, limit=600)
             closes = [c[4] for c in candles]
             last_close = closes[-1]
 
-            # ---------- EMA Trend (ถ้าเปิดใช้) ----------
-            e_fast = e_slow = None
-            trend = None
-            if USE_EMA_TREND:
-                e_fast = ema(closes, EMA_FAST)
-                e_slow = ema(closes, EMA_SLOW)
-                if e_fast is None or e_slow is None:
-                    time.sleep(LOOP_SEC)
-                    continue
-                trend = "BUY" if e_fast > e_slow else "SELL"
+            # ---------- EMA Trend (option) ----------
+            e_fast = ema(closes, EMA_FAST) if EMA_ENABLED else None
+            e_slow = ema(closes, EMA_SLOW) if EMA_ENABLED else None
+            if EMA_ENABLED and (e_fast is None or e_slow is None):
+                time.sleep(LOOP_SEC); continue
 
-            # ---------- Nadaraya Freeze (half TF) ----------
+            # ---------- NW Freeze ----------
             now_ts = time.time()
             if "m" in TIMEFRAME:
                 tf_minutes = int(TIMEFRAME.replace("m",""))
@@ -312,9 +283,7 @@ def main():
             if upper is None or now_ts - last_nw_update > freeze_sec:
                 u,l,m = nwe_luxalgo_repaint(closes)
                 if u is None:
-                    log.info("[DEBUG] NW not ready")
-                    time.sleep(LOOP_SEC)
-                    continue
+                    log.info("[DEBUG] NW not ready"); time.sleep(LOOP_SEC); continue
                 upper,lower,mid = u,l,m
                 last_nw_update = now_ts
                 log.info(f"[DEBUG] NW updated: U={upper:.2f}, L={lower:.2f}, M={mid:.2f}")
@@ -322,13 +291,29 @@ def main():
                 log.info("[DEBUG] Using previous NW band (frozen)")
 
             # ---------- MACD TF ย่อย (ใช้แท่งปิด) ----------
-            macd_vals = None
+            macd_side_ok = None
+            macd_for_be = None
             if MACD_ENABLED:
                 small = ex.fetch_ohlcv(SYMBOL, MACD_TF, limit=200)
-                mcloses = [c[4] for c in small[:-1]]  # ใช้เฉพาะแท่งปิด
-                macd_vals = macd(mcloses)
+                mcloses = [c[4] for c in small[:-1]]
+                mac = macd(mcloses)
+                if mac:
+                    dp,dn,ep,en = mac
+                    # macd_side_ok used for entry confirm when pending exists
+                    if EMA_ENABLED:
+                        trend = "BUY" if e_fast > e_slow else "SELL"
+                    else:
+                        # EMA disabled -> determine trend by price vs mid
+                        trend = "BUY" if last_close > mid else "SELL"
+                    if trend=="BUY":
+                        macd_side_ok = macd_up(dp,dn,ep,en)
+                    else:
+                        macd_side_ok = macd_down(dp,dn,ep,en)
 
-            # ---------- อ่านโพซิชันจริง ----------
+                # For BE via MACD we fetch MACD on the BE TF (may be same as MACD_TF)
+            # ============================================================
+            # Read actual position on exchange (sync)
+            # ============================================================
             try:
                 pos_list = ex.fetch_positions([SYMBOL])
                 amt = 0.0; live_side = None
@@ -340,7 +325,6 @@ def main():
             except:
                 amt=0.0; live_side=None
 
-            # ถ้า exchange ปิด position แต่ local ยังมี -> sync
             if amt == 0 and position is not None:
                 log.info("⚠ Position disappeared on exchange, reset local state.")
                 position = None
@@ -354,18 +338,15 @@ def main():
                 entry = position["entry"]
                 sl = position["sl"]
 
-                # คำนวณ TP ตาม upper/lower -/+ TP_OFFSET
-                long_tp = upper - TP_OFFSET if TP_OFFSET > 0 else upper
-                short_tp = lower + TP_OFFSET if TP_OFFSET > 0 else lower
-
-                # ---------------- SL Touch ----------------
+                # SL Touch
                 if side=="long" and last_price <= sl:
-                    pnl = (last_price-entry)*amt
-                    # เช็กว่า SL นี้เป็น SL กันทุนหรือยัง (BE)
-                    is_be = USE_BREAKEVEN and sl >= entry + BREAKEVEN_OFFSET - 1e-9
-                    reason = "BE" if is_be else "SL"
-
+                    pnl = (last_price-entry)*position["qty"]
                     stats["pnl"] += pnl
+                    reason = "BE" if position.get("be_active") else "SL"
+                    if reason=="BE":
+                        stats["counts"]["be"] = stats["counts"].get("be",0) + 1
+                    else:
+                        stats["counts"]["sl"] = stats["counts"].get("sl",0) + 1
                     stats["trades"].append({
                         "time": datetime.now().strftime("%H:%M:%S"),
                         "side": "LONG",
@@ -374,22 +355,19 @@ def main():
                         "pnl": pnl,
                         "reason": reason
                     })
-                    ex.create_market_order(SYMBOL,"sell",amt,params={"reduceOnly":True})
-                    if is_be:
-                        tg(f"🟡 LONG BE {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
-                    else:
-                        tg(f"🔴 LONG SL {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
-                    position=None
-                    sl_lock=True
-                    sl_lock_ref = last_price > mid if mid is not None else None
+                    ex.create_market_order(SYMBOL,"sell",position["qty"],params={"reduceOnly":True})
+                    tg(f"🔴 LONG {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                    position=None; sl_lock=True
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
                 if side=="short" and last_price >= sl:
-                    pnl = (entry-last_price)*amt
-                    is_be = USE_BREAKEVEN and sl <= entry - BREAKEVEN_OFFSET + 1e-9
-                    reason = "BE" if is_be else "SL"
-
+                    pnl = (entry-last_price)*position["qty"]
                     stats["pnl"] += pnl
+                    reason = "BE" if position.get("be_active") else "SL"
+                    if reason=="BE":
+                        stats["counts"]["be"] = stats["counts"].get("be",0) + 1
+                    else:
+                        stats["counts"]["sl"] = stats["counts"].get("sl",0) + 1
                     stats["trades"].append({
                         "time": datetime.now().strftime("%H:%M:%S"),
                         "side": "SHORT",
@@ -398,96 +376,160 @@ def main():
                         "pnl": pnl,
                         "reason": reason
                     })
-                    ex.create_market_order(SYMBOL,"buy",amt,params={"reduceOnly":True})
-                    if is_be:
-                        tg(f"🟡 SHORT BE {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
-                    else:
-                        tg(f"🔴 SHORT SL {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
-                    position=None
-                    sl_lock=True
-                    sl_lock_ref = last_price > mid if mid is not None else None
+                    ex.create_market_order(SYMBOL,"buy",position["qty"],params={"reduceOnly":True})
+                    tg(f"🔴 SHORT {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                    position=None; sl_lock=True
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                # ---------------- TP จาก Upper/Lower (ก่อนถึงเป้า TP_OFFSET) ----------------
-                if side=="long" and last_price >= long_tp:
-                    pnl = (last_price-entry)*amt
+                # TP using buffer (ก่อนถึง upper/lower)
+                if side=="long" and last_price >= (upper - TP_BUFFER):
+                    pnl = (last_price-entry)*position["qty"]
                     stats["pnl"] += pnl
+                    stats["counts"]["tp"] = stats["counts"].get("tp",0) + 1
                     stats["trades"].append({
                         "time": datetime.now().strftime("%H:%M:%S"),
                         "side": "LONG",
                         "entry": entry,
                         "exit": last_price,
                         "pnl": pnl,
-                        "reason": "TP_upper"
+                        "reason": "TP_upper_buffer"
                     })
-                    ex.create_market_order(SYMBOL,"sell",amt,params={"reduceOnly":True})
-                    tg(f"✅ LONG TP (Upper-Offset) @ {last_price:.2f} PnL={pnl:+.2f}")
+                    ex.create_market_order(SYMBOL,"sell",position["qty"],params={"reduceOnly":True})
+                    tg(f"✅ LONG TP (buffer) @ {last_price:.2f} PnL={pnl:+.2f}")
                     position=None
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                if side=="short" and last_price <= short_tp:
-                    pnl = (entry-last_price)*amt
+                if side=="short" and last_price <= (lower + TP_BUFFER):
+                    pnl = (entry-last_price)*position["qty"]
                     stats["pnl"] += pnl
+                    stats["counts"]["tp"] = stats["counts"].get("tp",0) + 1
                     stats["trades"].append({
                         "time": datetime.now().strftime("%H:%M:%S"),
                         "side": "SHORT",
                         "entry": entry,
                         "exit": last_price,
                         "pnl": pnl,
-                        "reason": "TP_lower"
+                        "reason": "TP_lower_buffer"
                     })
-                    ex.create_market_order(SYMBOL,"buy",amt,params={"reduceOnly":True})
-                    tg(f"✅ SHORT TP (Lower-Offset) @ {last_price:.2f} PnL={pnl:+.2f}")
+                    ex.create_market_order(SYMBOL,"buy",position["qty"],params={"reduceOnly":True})
+                    tg(f"✅ SHORT TP (buffer) @ {last_price:.2f} PnL={pnl:+.2f}")
                     position=None
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                # ---------------- EMA Flip ใช้ mid เป็น TP (ถ้าเปิดใช้ EMA เท่านั้น) ----------------
-                if USE_EMA_TREND and e_fast is not None and e_slow is not None:
-                    trend_now = "BUY" if e_fast > e_slow else "SELL"
+                # ถ้า EMA เปลี่ยนทิศ -> ใช้ mid เป็น TP (เหมือนเดิม)
+                trend_now = None
+                if EMA_ENABLED:
+                    trend_now = "BUY" if ema(closes,EMA_FAST) > ema(closes,EMA_SLOW) else "SELL"
+                else:
+                    trend_now = "BUY" if last_close > mid else "SELL"
 
-                    if side=="long" and trend_now=="SELL":
-                        # รอให้ราคาลงมาชน mid แล้วปิด
-                        if last_price <= mid:
-                            pnl = (last_price-entry)*amt
-                            stats["pnl"] += pnl
-                            stats["trades"].append({
-                                "time": datetime.now().strftime("%H:%M:%S"),
-                                "side": "LONG",
-                                "entry": entry,
-                                "exit": last_price,
-                                "pnl": pnl,
-                                "reason": "TP_mid_trend_flip"
-                            })
-                            ex.create_market_order(SYMBOL,"sell",amt,params={"reduceOnly":True})
-                            tg(f"⚠ LONG EMA Flip TP Mid @ {last_price:.2f} PnL={pnl:+.2f}")
-                            position=None
-                            save_stats(stats); time.sleep(LOOP_SEC); continue
+                if side=="long" and trend_now=="SELL":
+                    if last_price <= mid:
+                        pnl = (last_price-entry)*position["qty"]
+                        stats["pnl"] += pnl
+                        stats["counts"]["tp"] = stats["counts"].get("tp",0) + 1
+                        stats["trades"].append({
+                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "side": "LONG",
+                            "entry": entry,
+                            "exit": last_price,
+                            "pnl": pnl,
+                            "reason": "TP_mid_trend_flip"
+                        })
+                        ex.create_market_order(SYMBOL,"sell",position["qty"],params={"reduceOnly":True})
+                        tg(f"⚠ LONG EMA Flip TP Mid @ {last_price:.2f} PnL={pnl:+.2f}")
+                        position=None
+                        save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                    if side=="short" and trend_now=="BUY":
-                        if last_price >= mid:
-                            pnl = (entry-last_price)*amt
-                            stats["pnl"] += pnl
-                            stats["trades"].append({
-                                "time": datetime.now().strftime("%H:%M:%S"),
-                                "side": "SHORT",
-                                "entry": entry,
-                                "exit": last_price,
-                                "pnl": pnl,
-                                "reason": "TP_mid_trend_flip"
-                            })
-                            ex.create_market_order(SYMBOL,"buy",amt,params={"reduceOnly":True})
-                            tg(f"⚠ SHORT EMA Flip TP Mid @ {last_price:.2f} PnL={pnl:+.2f}")
-                            position=None
-                            save_stats(stats); time.sleep(LOOP_SEC); continue
+                if side=="short" and trend_now=="BUY":
+                    if last_price >= mid:
+                        pnl = (entry-last_price)*position["qty"]
+                        stats["pnl"] += pnl
+                        stats["counts"]["tp"] = stats["counts"].get("tp",0) + 1
+                        stats["trades"].append({
+                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "side": "SHORT",
+                            "entry": entry,
+                            "exit": last_price,
+                            "pnl": pnl,
+                            "reason": "TP_mid_trend_flip"
+                        })
+                        ex.create_market_order(SYMBOL,"buy",position["qty"],params={"reduceOnly":True})
+                        tg(f"⚠ SHORT EMA Flip TP Mid @ {last_price:.2f} PnL={pnl:+.2f}")
+                        position=None
+                        save_stats(stats); time.sleep(LOOP_SEC); continue
 
-                # ---------------- Breakeven / Trailing กันทุน ----------------
+                # Breakeven / Trailing
                 if USE_BREAKEVEN and not sl_lock:
-                    if side=="long" and last_close > mid and position["sl"] < entry + BREAKEVEN_OFFSET:
-                        position["sl"] = entry + BREAKEVEN_OFFSET
-                        log.info(f"🔁 LONG Move SL to BE {position['sl']:.2f}")
-                    if side=="short" and last_close < mid and position["sl"] > entry - BREAKEVEN_OFFSET:
-                        position["sl"] = entry - BREAKEVEN_OFFSET
-                        log.info(f"🔁 SHORT Move SL to BE {position['sl']:.2f}")
+                    # Option A: mid-based (original)
+                    if (not BREAKEVEN_USE_MACD):
+                        if side=="long" and last_close > mid and position["sl"] < entry + BREAKEVEN_OFFSET:
+                            position["sl"] = entry + BREAKEVEN_OFFSET
+                            position["be_active"] = True
+                            log.info(f"🔁 LONG Move SL to BE {position['sl']:.2f}")
+                        if side=="short" and last_close < mid and position["sl"] > entry - BREAKEVEN_OFFSET:
+                            position["sl"] = entry - BREAKEVEN_OFFSET
+                            position["be_active"] = True
+                            log.info(f"🔁 SHORT Move SL to BE {position['sl']:.2f}")
+                    else:
+                        # Option B: MACD-based BE experimental
+                        try:
+                            small_be = ex.fetch_ohlcv(SYMBOL, MACD_FOR_BREAKEVEN_TF, limit=200)
+                            mcloses_be = [c[4] for c in small_be[:-1]]
+                            mac_be = macd(mcloses_be)
+                            if mac_be:
+                                dp_b,dn_b,ep_b,en_b = mac_be
+                                # For long: if macd_down on closed bar -> BE action
+                                if side=="long" and macd_down(dp_b,dn_b,ep_b,en_b):
+                                    # check unrealized PnL by comparing last_close vs entry
+                                    if last_close > entry:
+                                        # move SL to BE
+                                        if position["sl"] < entry + BREAKEVEN_OFFSET:
+                                            position["sl"] = entry + BREAKEVEN_OFFSET
+                                            position["be_active"] = True
+                                            log.info(f"🔁 LONG MACD-BE Move SL to BE {position['sl']:.2f}")
+                                    else:
+                                        # negative -> force close now
+                                        pnl = (last_price-entry)*position["qty"]
+                                        stats["pnl"] += pnl
+                                        stats["counts"]["be"] = stats["counts"].get("be",0) + 1
+                                        stats["trades"].append({
+                                            "time": datetime.now().strftime("%H:%M:%S"),
+                                            "side": "LONG",
+                                            "entry": entry,
+                                            "exit": last_price,
+                                            "pnl": pnl,
+                                            "reason": "BE_force_close"
+                                        })
+                                        ex.create_market_order(SYMBOL,"sell",position["qty"],params={"reduceOnly":True})
+                                        tg(f"🔴 LONG BE force close @ {last_price:.2f} PnL={pnl:+.2f}")
+                                        position=None; sl_lock=True
+                                        save_stats(stats); time.sleep(LOOP_SEC); continue
+
+                                if side=="short" and macd_up(dp_b,dn_b,ep_b,en_b):
+                                    if last_close < entry:
+                                        if position["sl"] > entry - BREAKEVEN_OFFSET:
+                                            position["sl"] = entry - BREAKEVEN_OFFSET
+                                            position["be_active"] = True
+                                            log.info(f"🔁 SHORT MACD-BE Move SL to BE {position['sl']:.2f}")
+                                    else:
+                                        pnl = (entry-last_price)*position["qty"]
+                                        stats["pnl"] += pnl
+                                        stats["counts"]["be"] = stats["counts"].get("be",0) + 1
+                                        stats["trades"].append({
+                                            "time": datetime.now().strftime("%H:%M:%S"),
+                                            "side": "SHORT",
+                                            "entry": entry,
+                                            "exit": last_price,
+                                            "pnl": pnl,
+                                            "reason": "BE_force_close"
+                                        })
+                                        ex.create_market_order(SYMBOL,"buy",position["qty"],params={"reduceOnly":True})
+                                        tg(f"🔴 SHORT BE force close @ {last_price:.2f} PnL={pnl:+.2f}")
+                                        position=None; sl_lock=True
+                                        save_stats(stats); time.sleep(LOOP_SEC); continue
+                        except Exception as e:
+                            log.warning(f"MACD-BE check warn: {e}")
 
                 save_stats(stats)
                 time.sleep(LOOP_SEC)
@@ -497,13 +539,11 @@ def main():
             # NO POSITION
             # ======================================================
             if sl_lock:
-                # ปลดล็อกเมื่อ "ราคาตัด mid" (ข้ามจากเหนือ->ใต้ หรือ ใต้->เหนือ)
-                if mid is not None and sl_lock_ref is not None:
-                    now_above = last_close > mid
-                    if now_above != sl_lock_ref:
-                        sl_lock = False
-                        sl_lock_ref = None
-                        log.info("🔓 SL Lock released (price crossed mid)")
+                # ปลดล็อกเมื่อราคาข้าม mid (ทั้งขา BUY/SELL ตามที่ขอ)
+                if (last_close > mid) or (last_close < mid):
+                    # but we only release when price crosses mid in any direction (user wanted wait until mid cross)
+                    sl_lock = False
+                    log.info("🔓 SL Lock released")
                 time.sleep(LOOP_SEC)
                 continue
 
@@ -511,56 +551,47 @@ def main():
             if MACD_ENABLED and pending is not None:
                 last_price = ex.fetch_ticker(SYMBOL)["last"]
                 side = pending["side"]
-                # ต้องใช้ lower/upper/mid ตอน touch เดิม
                 p_lower = pending["lower"]
                 p_upper = pending["upper"]
                 p_mid   = pending["mid"]
 
-                if macd_vals:
-                    dp,dn,ep,en = macd_vals
+                if macd_side_ok:
                     if side=="long":
-                        macd_side_ok = macd_up(dp,dn,ep,en)
-                    else:
-                        macd_side_ok = macd_down(dp,dn,ep,en)
-
-                    if macd_side_ok:
-                        if side=="long":
-                            # ตอน MACD ตัด ราคา ต้องอยู่ระหว่าง lower..mid และ ห้าม > mid
-                            if last_price < p_lower or last_price > p_mid:
-                                log.info("❌ MACD up but price out of [lower,mid] → cancel pending")
-                                pending=None
-                            else:
-                                qty = order_size(ex, last_price)
-                                ex.create_market_order(SYMBOL,"buy",qty)
-                                position={"side":"long","qty":qty,"entry":last_price,"sl":last_price-SL_DISTANCE}
-                                log.info(f"🚀 OPEN LONG (pending MACD confirm) @ {last_price:.2f}")
-                                pending=None
-                        else:  # short
-                            # ตอน MACD ตัด ราคา ต้องอยู่ระหว่าง mid..upper และ ห้าม < mid
-                            if last_price > p_upper or last_price < p_mid:
-                                log.info("❌ MACD down but price out of [mid,upper] → cancel pending")
-                                pending=None
-                            else:
-                                qty = order_size(ex, last_price)
-                                ex.create_market_order(SYMBOL,"sell",qty)
-                                position={"side":"short","qty":qty,"entry":last_price,"sl":last_price+SL_DISTANCE}
-                                log.info(f"🚀 OPEN SHORT (pending MACD confirm) @ {last_price:.2f}")
-                                pending=None
+                        # ตอน MACD ตัด ราคา ต้องอยู่ระหว่าง lower..mid และ ห้าม > mid
+                        if last_price < p_lower or last_price > p_mid:
+                            log.info("❌ MACD up but price out of [lower,mid] → cancel pending")
+                            pending=None
+                        else:
+                            qty = order_size(ex, last_price)
+                            ex.create_market_order(SYMBOL,"buy",qty)
+                            position={"side":"long","qty":qty,"entry":last_price,"sl":last_price-SL_DISTANCE,"be_active":False}
+                            log.info(f"🚀 OPEN LONG (pending MACD confirm) @ {last_price:.2f}")
+                            pending=None
+                    else:  # short
+                        if last_price > p_upper or last_price < p_mid:
+                            log.info("❌ MACD down but price out of [mid,upper] → cancel pending")
+                            pending=None
+                        else:
+                            qty = order_size(ex, last_price)
+                            ex.create_market_order(SYMBOL,"sell",qty)
+                            position={"side":"short","qty":qty,"entry":last_price,"sl":last_price+SL_DISTANCE,"be_active":False}
+                            log.info(f"🚀 OPEN SHORT (pending MACD confirm) @ {last_price:.2f}")
+                            pending=None
 
                 save_stats(stats)
                 time.sleep(LOOP_SEC)
                 continue
 
             # 2) ไม่มี pending → ตรวจ NW touch ใหม่
-            # NOTE: ถ้า USE_EMA_TREND=False จะไม่กรองด้วย EMA เลย
-            can_long  = (not USE_EMA_TREND) or (trend == "BUY")
-            can_short = (not USE_EMA_TREND) or (trend == "SELL")
+            if EMA_ENABLED:
+                trend = "BUY" if e_fast > e_slow else "SELL"
+            else:
+                trend = "BUY" if last_close > mid else "SELL"
 
             # NW touch LONG
-            if can_long and last_close <= lower:
+            if trend=="BUY" and last_close <= lower:
                 last_price = ex.fetch_ticker(SYMBOL)["last"]
                 if MACD_ENABLED:
-                    # สร้าง pending (จำ band ตอนนี้)
                     pending = {
                         "side":"long",
                         "touch_price": last_price,
@@ -573,14 +604,14 @@ def main():
                 else:
                     qty = order_size(ex, last_price)
                     ex.create_market_order(SYMBOL,"buy",qty)
-                    position={"side":"long","qty":qty,"entry":last_price,"sl":last_price-SL_DISTANCE}
+                    position={"side":"long","qty":qty,"entry":last_price,"sl":last_price-SL_DISTANCE,"be_active":False}
                     log.info(f"🚀 LONG ENTRY (no MACD) @ {last_price:.2f}")
                 save_stats(stats)
                 time.sleep(LOOP_SEC)
                 continue
 
             # NW touch SHORT
-            if can_short and last_close >= upper:
+            if trend=="SELL" and last_close >= upper:
                 last_price = ex.fetch_ticker(SYMBOL)["last"]
                 if MACD_ENABLED:
                     pending = {
@@ -595,7 +626,7 @@ def main():
                 else:
                     qty = order_size(ex, last_price)
                     ex.create_market_order(SYMBOL,"sell",qty)
-                    position={"side":"short","qty":qty,"entry":last_price,"sl":last_price+SL_DISTANCE}
+                    position={"side":"short","qty":qty,"entry":last_price,"sl":last_price+SL_DISTANCE,"be_active":False}
                     log.info(f"🚀 SHORT ENTRY (no MACD) @ {last_price:.2f}")
                 save_stats(stats)
                 time.sleep(LOOP_SEC)
@@ -607,7 +638,6 @@ def main():
         except Exception as e:
             log.exception(f"loop error: {e}")
             time.sleep(2)
-
 
 if __name__ == "__main__":
     main()
