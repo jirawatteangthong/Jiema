@@ -16,20 +16,20 @@ SECRET  = os.getenv("BINANCE_SECRET",    "YOUR_BINANCE_SECRET")
 SYMBOL = "BTC/USDT:USDT"
 TIMEFRAME = "15m"
 MACD_TF = "5m"                         # TF ใช้สำหรับ entry confirm (pending)
-MACD_ENABLED = True
+MACD_ENABLED = False
 
 # --- EMA toggle (ถ้าปิด จะไม่ใช้ EMA เป็นเงื่อนไข trend) ---
-EMA_ENABLED = True
+EMA_ENABLED = False
 EMA_FAST = 50
 EMA_SLOW = 100
 
 # --- Breakeven via MACD experimental ---
-USE_BREAKEVEN_MACD = True              # ถ้า True: ใช้ MACD บน BREAKEVEN_MACD_TF เพื่อตัดสินการกันทุน/ปิด
+USE_BREAKEVEN_MACD = False              # ถ้า True: ใช้ MACD บน BREAKEVEN_MACD_TF เพื่อตัดสินการกันทุน/ปิด
 BREAKEVEN_MACD_TF = "5m"               # TF สำหรับตรวจ MACD เพื่อ BE/close (ทดลอง)
 USE_REPAINT = True
 
-LEVERAGE = 15
-POSITION_MARGIN_FRACTION = 0.65
+LEVERAGE = 10
+POSITION_MARGIN_FRACTION = 0.5
 
 # Nadaraya params
 NW_BANDWIDTH = 8.0
@@ -213,24 +213,29 @@ def reset_report_if_new_day(stats):
 
 def try_send_daily_report(stats):
     now = datetime.now()
-    if not (now.hour == DAILY_REPORT_HH and now.minute == DAILY_REPORT_MM):
+
+    # ส่งเฉพาะวันที่ 25 ของทุกเดือน เวลาเดิม HH:MM
+    if not (now.day == 25 and now.hour == DAILY_REPORT_HH and now.minute == DAILY_REPORT_MM):
         return
+
+    # กันส่งซ้ำเดือนเดียวกัน
     if has_sent_today():
         return
-    # สรุปเฉพาะ: counts of TP / SL / BE และ total pnl
+
     tp_count = sum(1 for t in stats["trades"] if t.get("reason","").startswith("TP"))
     sl_count = sum(1 for t in stats["trades"] if t.get("reason","") == "SL")
     be_count = sum(1 for t in stats["trades"] if t.get("reason","") == "BE")
     total_pnl = stats["pnl"]
+
     lines = [
-        f"📊 สรุปผลรายวัน {stats['date']}",
+        f"📅 รายงานประจำเดือน {stats['date']}",
         f"TP: {tp_count}   SL: {sl_count}   BE: {be_count}",
         f"Σ PnL: {total_pnl:+.2f} USDT"
     ]
     tg("\n".join(lines))
     mark_sent_today()
-    log.info("📨 Daily report sent.")
-
+    log.info("📨 Monthly report sent.")
+    
 # ============================================================
 # Main Loop
 # ============================================================
@@ -355,7 +360,7 @@ def main():
                                         "reason": "SL"
                                     })
                                     ex.create_market_order(SYMBOL,"sell",position["qty"],params={"reduceOnly":True})
-                                    tg(f"🔴 LONG SL (MACD close) {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                                    tg(f"❌ LONG SL (MACD close) {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
                                     position=None; sl_lock=True
                                     save_stats(stats); time.sleep(LOOP_SEC); continue
                             if side == "short" and macd_up(dp,dn,ep,en):
@@ -376,7 +381,7 @@ def main():
                                         "reason": "SL"
                                     })
                                     ex.create_market_order(SYMBOL,"buy",position["qty"],params={"reduceOnly":True})
-                                    tg(f"🔴 SHORT SL (MACD close) {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                                    tg(f"❌ SHORT SL (MACD close) {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
                                     position=None; sl_lock=True
                                     save_stats(stats); time.sleep(LOOP_SEC); continue
                     except Exception as e:
@@ -550,6 +555,7 @@ def main():
                             tp_val = p_upper - TP_BUFFER
                             position={"side":"long","qty":qty,"entry":last_price,"sl":last_price-SL_DISTANCE,"tp":tp_val}
                             log.info(f"🚀 OPEN LONG (pending MACD confirm) @ {last_price:.2f} TP@{tp_val:.2f}")
+                            tg(f"🟢 LONG {last_price:.2f}")
                             pending=None
                     else:
                         if last_price > p_upper or last_price < p_mid:
@@ -561,6 +567,7 @@ def main():
                             tp_val = p_lower + TP_BUFFER
                             position={"side":"short","qty":qty,"entry":last_price,"sl":last_price+SL_DISTANCE,"tp":tp_val}
                             log.info(f"🚀 OPEN SHORT (pending MACD confirm) @ {last_price:.2f} TP@{tp_val:.2f}")
+                            tg(f"🔴 SHORT {last_price:.2f}")
                             pending=None
 
                 save_stats(stats)
@@ -588,6 +595,7 @@ def main():
                     ex.create_market_order(SYMBOL,"buy",qty)
                     position={"side":"long","qty":qty,"entry":last_price,"sl":last_price-SL_DISTANCE,"tp":tp_val}
                     log.info(f"🚀 LONG ENTRY (no MACD) @ {last_price:.2f} TP@{tp_val:.2f}")
+                    tg(f"🟢 LONG {last_price:.2f}")
                 save_stats(stats)
                 time.sleep(LOOP_SEC)
                 continue
@@ -611,6 +619,7 @@ def main():
                     ex.create_market_order(SYMBOL,"sell",qty)
                     position={"side":"short","qty":qty,"entry":last_price,"sl":last_price+SL_DISTANCE,"tp":tp_val}
                     log.info(f"🚀 SHORT ENTRY (no MACD) @ {last_price:.2f} TP@{tp_val:.2f}")
+                    tg(f"🔴 SHORT {last_price:.2f}")
                 save_stats(stats)
                 time.sleep(LOOP_SEC)
                 continue
