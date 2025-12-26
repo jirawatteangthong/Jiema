@@ -29,7 +29,7 @@ BREAKEVEN_MACD_TF = "5m"               # TF สำหรับตรวจ MACD 
 USE_REPAINT = True
 
 LEVERAGE = 10
-POSITION_MARGIN_FRACTION = 0.5
+POSITION_MARGIN_FRACTION = 0.4
 
 # Nadaraya params
 NW_BANDWIDTH = 8.0
@@ -41,7 +41,7 @@ UPDATE_FRACTION = 0.50
 TP_BUFFER = 100                        # Q2: ค่านี้ปรับได้ (tp ก่อนถึง upper/lower)
 SL_DISTANCE = 2000                     # Q1: ปรับได้ (default 2000)
 USE_BREAKEVEN = True      #Trur,False  ยังคงมีเป็นออฟชัน (mid-based) ถ้า USE_BREAKEVEN_MACD False
-BREAKEVEN_OFFSET = 100
+BREAKEVEN_OFFSET = 150
 
 # Daily report (ครั้งเดียว/วัน) - สรุปเฉพาะที่ร้องขอ
 DAILY_REPORT_HH = 23
@@ -402,7 +402,7 @@ def main():
                         "reason": reason
                     })
                     ex.create_market_order(SYMBOL,"sell",position["qty"],params={"reduceOnly":True})
-                    tg(f"🔴 LONG {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                    tg(f"🚨 LONG {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
                     position=None; sl_lock=True
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
@@ -419,7 +419,7 @@ def main():
                         "reason": reason
                     })
                     ex.create_market_order(SYMBOL,"buy",position["qty"],params={"reduceOnly":True})
-                    tg(f"🔴 SHORT {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
+                    tg(f"🚨 SHORT {reason} {entry:.2f}->{last_price:.2f} PnL={pnl:+.2f}")
                     position=None; sl_lock=True
                     save_stats(stats); time.sleep(LOOP_SEC); continue
 
