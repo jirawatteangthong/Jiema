@@ -33,12 +33,12 @@ POSITION_MARGIN_FRACTION = 0.4
 
 # Nadaraya params
 NW_BANDWIDTH = 8.0
-NW_MULT = 3.9
+NW_MULT = 4
 NW_FACTOR = 1.5
 UPDATE_FRACTION = 0.50
 
 # Risk / TP / SL
-TP_BUFFER = 100                        # Q2: ค่านี้ปรับได้ (tp ก่อนถึง upper/lower)
+TP_BUFFER = 250                        # Q2: ค่านี้ปรับได้ (tp ก่อนถึง upper/lower)
 SL_DISTANCE = 2000                     # Q1: ปรับได้ (default 2000)
 USE_BREAKEVEN = True      #Trur,False  ยังคงมีเป็นออฟชัน (mid-based) ถ้า USE_BREAKEVEN_MACD False
 BREAKEVEN_OFFSET = 200
