@@ -29,7 +29,7 @@ BREAKEVEN_MACD_TF = "5m"               # TF สำหรับตรวจ MACD 
 USE_REPAINT = True
 
 LEVERAGE = 10
-POSITION_MARGIN_FRACTION = 0.3
+POSITION_MARGIN_FRACTION = 0.4
 
 # Nadaraya params
 NW_BANDWIDTH = 8.0
@@ -38,10 +38,10 @@ NW_FACTOR = 1.5
 UPDATE_FRACTION = 0.50
 
 # Risk / TP / SL
-TP_BUFFER = 250                        # Q2: ค่านี้ปรับได้ (tp ก่อนถึง upper/lower)
+TP_BUFFER = 300                        # Q2: ค่านี้ปรับได้ (tp ก่อนถึง upper/lower)
 SL_DISTANCE = 2000                     # Q1: ปรับได้ (default 2000)
 USE_BREAKEVEN = True      #True,False  ยังคงมีเป็นออฟชัน (mid-based) ถ้า USE_BREAKEVEN_MACD False
-BREAKEVEN_OFFSET = 200
+BREAKEVEN_OFFSET = 250
 
 # Daily report (ครั้งเดียว/วัน)
 DAILY_REPORT_HH = 23
